@@ -25,7 +25,15 @@ The complete CTest suite covers the following relevant focused groups:
 | Cache/stretch | `audio_page_cache` (deferred/synchronous reader retirement), `scratch_cache` (including 192/48 kHz aliasing), `scratch_motion` (trajectory/spectrum/release), `cached_playback`, `time_stretch` (paused-keylock bypass) |
 | Analysis/waveform | `analysis_lifetime`, `analysis_snapshot`, `library_analysis_manager`, `progressive_waveform_publication`, `waveform_motion`, `waveform_line_*` |
 | Devices/controllers | `audio_device_service`, `alsa_midi_line_parser`, `midi_14bit_accumulator`, `flx10_jog_routing`, `flx10_display_protocol`, `parameter_store` |
-| Workers/lifecycle | `posix_signal_handler`, `audio_thread_scheduling`, `database_worker`, `media_io_scheduler`, `track_loader`, `dj_engine_api_contract` |
+| Workers/lifecycle | `startup_close_smoke`, `startup_early_close_smoke` (full application builds), `posix_signal_handler`, `audio_thread_scheduling`, `database_worker`, `media_io_scheduler`, `track_loader`, `dj_engine_api_contract` |
+
+The startup smokes use isolated temporary settings/database directories and a
+real Qt Quick Software-rendered root. They do not open audio/MIDI devices or
+automatically discover storage. Normal startup closes through the QML close
+policy after readiness; early close verifies partial-runtime cleanup. The
+package's `--ci-smoke-test` runs both paths in subprocesses, as well as its
+resource/FX/SQLite checks. Tests-only builds omit these application-dependent
+CTest entries.
 
 `qml_component` combines source contracts with runtime checks of the shared
 slider (mouse/touch travel, inverted vertical range, disable/cancel and
@@ -83,6 +91,38 @@ install/clear stress. For lifetime-boundary changes, also run that target under
 ThreadSanitizer where the platform toolchain supports it.
 
 ## Manual core scenarios
+
+### Raspberry Pi 4/5 ARM64 acceptance
+
+A native ARM64 CI build proves compilation and automated behavior on its runner,
+not realtime performance on a Raspberry Pi or compatibility with every Pi OS.
+Run this matrix separately on Pi 4 and Pi 5 with a supported 64-bit OS and
+compiler/Qt combination. Record OS version, Qt version, graphics API, display
+resolution/refresh/DPR, cooling, power supply, storage, audio device/backend,
+sample rate, buffer size, and build revision.
+
+- Establish an idle baseline, then play two decks while loading and analyzing
+  another track. Include compressed files on the intended storage device.
+- Exercise forward/reverse scratch, release momentum, CUE holds, beat jumps,
+  loops, keylock and FX while waveform rendering is visible.
+- Repeat at 128, 256 and 512 samples at 48 kHz; report unsupported or unstable
+  profiles explicitly instead of treating a larger working buffer as proof
+  that every profile works.
+- Record XRuns, callback duration against `bufferSize / sampleRate`, realtime
+  violation counters, cache starvation, RSS, render/control-clock pressure,
+  temperature and CPU throttling throughout sustained playback.
+- Compare the same workload and settings before/after an optimization. Keep
+  analysis and raster work limits enabled; do not trade callback safety for a
+  higher benchmark score.
+- Test the default ARM graphics selection and explicit OpenGL/Vulkan where
+  supported. Repeat startup/close during track loading and analysis, and check
+  audio-device disconnection/reconnection and physical MIDI/touch input.
+- Launch the extracted shipping package without developer Qt/library paths.
+  Check the oldest OS intended for that artifact: Ubuntu-built ARM binaries
+  do not establish Raspberry Pi OS Bookworm ABI compatibility.
+
+Keep hardware acceptance marked **unverified** until these measurements exist.
+No file-count reduction or offscreen smoke replaces this matrix.
 
 ### Consolidated UI interactions
 

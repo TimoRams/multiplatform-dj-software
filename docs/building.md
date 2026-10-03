@@ -1,6 +1,6 @@
 # Building BrockDJ
 
-BrockDJ uses CMake 3.24 or newer, Ninja and a portable C++23 baseline. JUCE,
+BrockDJ uses CMake 3.25 or newer, Ninja and a portable C++23 baseline. JUCE,
 Ableton Link, Signalsmith DSP, Signalsmith Linear and Signalsmith Stretch are
 Git submodules. Clone a new checkout with:
 
@@ -26,9 +26,12 @@ a required build dependency. Signalsmith Linear is Stretch's technical
 dependency. All three Signalsmith projects are MIT-licensed; their canonical
 license files remain in the pinned submodules.
 
-The supported native configurations are Linux x86_64, Linux ARM64, macOS
-Apple Silicon, macOS Intel and Windows x64. CI builds and tests all five on
-every pull request, main-branch push, version tag and manual dispatch.
+The configured CI matrix covers Linux x86_64, Linux ARM64, macOS Apple
+Silicon, macOS Intel and Windows x64. Each platform job is configured to
+build, test, deploy and smoke-test its package on pull requests, main-branch
+pushes, version tags and manual dispatches. This matrix is not a claim that
+all platform runs have passed. Package artifacts are uploaded only for
+main-branch pushes, version tags and manual dispatches.
 
 ## Linux
 
@@ -37,17 +40,27 @@ Ubuntu 24.04 dependencies:
 ```bash
 sudo apt update
 sudo apt install -y \
-  build-essential cmake ninja-build ccache pkg-config \
+  build-essential cmake curl ninja-build ccache pkg-config \
   qt6-base-dev qt6-declarative-dev \
   qml6-module-qtqml-workerscript qml6-module-qtquick \
   qml6-module-qtquick-controls qml6-module-qtquick-layouts \
   qml6-module-qtquick-window \
   libasound2-dev libjack-jackd2-dev libusb-1.0-0-dev \
-  libtag1-dev libkeyfinder-dev librubberband-dev libsqlcipher-dev \
+  libtag1-dev librubberband-dev libsqlcipher-dev libfftw3-dev \
   libfontconfig1-dev libfreetype6-dev libgl1-mesa-dev \
-  libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+  imagemagick libx11-dev libxcomposite-dev libxcursor-dev libxext-dev librsvg2-bin \
   libxinerama-dev libxrandr-dev libxrender-dev libxkbcommon-x11-dev
 ```
+
+Ubuntu does not provide the required `libkeyfinder-dev` package on the CI
+images. The pinned `libkeyfinder` 2.2.8 source is built against FFTW3 with:
+
+```bash
+./scripts/ci/install-libkeyfinder.sh
+```
+
+The script verifies the source archive SHA-256 before building and installing
+it under `/usr/local`.
 
 For normal local development, use the app-only build. It does not compile test
 binaries, so incremental UI/audio work stays fast:
@@ -83,13 +96,40 @@ cmake --build --preset ci-linux-arm64 --parallel 2
 ctest --preset ci-linux-arm64
 ```
 
-The ARM64 preset is a native preset. It is not a cross-compilation toolchain;
-run it on an ARM64 host, as CI does with `ubuntu-24.04-arm`.
+The CI-only `ci-linux-sanitizers` preset uses a separate
+`build-ci-linux-sanitizers/` directory and enables the project's
+`BROCKDJ_ENABLE_SANITIZERS` ASan/UBSan option. Its test preset runs the
+focused startup-close, deck-audio-graph, audio-cache, waveform-cache, motion,
+control-clock, neutral waveform analysis, database-worker and media-I/O
+scheduler correctness tests. The sanitizer lane also builds BrockDJ and runs
+`--ci-smoke-test`, which checks QML/database setup and launches the real
+startup-close and early-close subprocesses. Performance- and pacing-sensitive
+tests are excluded. It is not a shipping build.
 
-Raspberry Pi 4 and 5 require a 64-bit Linux installation. The normal ARM64
-build uses portable code generation and runs on both generations. For a build
-that stays on the machine where it was compiled, native CPU tuning can be
-enabled explicitly:
+The ARM64 preset is a native preset. It is not a cross-compilation toolchain;
+run it on an ARM64 host. The configured CI target is Ubuntu 24.04 ARM64
+(`ubuntu-24.04-arm`). It is not a validation of Raspberry Pi 4/5 hardware or
+of Raspberry Pi OS.
+
+Raspberry Pi 4 and 5 require a 64-bit OS for an ARM64 build, but neither
+generation is currently claimed as hardware-validated. Raspberry Pi OS
+Bookworm's GCC 12 and system Qt 6.4 are not an established build/runtime
+combination: the project requires a C++23 standard library with
+`std::expected`, and the minimum compiler/library support is checked during
+CMake configuration. Use GCC 13 or newer and Qt 6.4 or newer only where the
+configure checks pass, and validate the resulting package on the exact Pi OS
+image before treating it as supported. Ubuntu 24.04 ARM64 CI does not establish
+Bookworm ABI or package compatibility.
+
+Linux ARM64 leaves graphics-backend selection to Qt by default; desktop Linux
+retains its Vulkan default. `BROCKDJ_RHI_BACKEND=auto`, `opengl` or `vulkan`
+selects the desired policy explicitly. An existing `QSG_RHI_BACKEND` selection
+is respected when no BrockDJ override is set. Verify the actual backend on the
+target display/driver rather than assuming software-rendered CI proves it.
+
+The normal ARM64 configuration uses portable code generation and does not
+apply CPU-specific tuning. For builds that stay on a machine where they were
+compiled, native CPU tuning can be enabled explicitly:
 
 ```bash
 cmake --preset linux-release -DBROCKDJ_ENABLE_NATIVE_ARCH=ON
@@ -109,7 +149,7 @@ Install Xcode command-line tools, CMake/Ninja, Qt and the native audio-analysis
 dependencies:
 
 ```bash
-brew install cmake ninja ccache pkg-config qt@6 taglib rubberband libkeyfinder sqlcipher
+brew install cmake ninja ccache pkg-config qt@6 taglib rubberband libkeyfinder sqlcipher librsvg imagemagick
 ```
 
 Expose Qt to CMake if Homebrew did not do so already:
@@ -168,6 +208,13 @@ ctest --preset ci-windows-x64
 
 Do not combine MinGW Qt with the MSVC build. The CI and supported Windows
 configuration consistently use MSVC 2022 and `win64_msvc2022_64` Qt.
+On a fresh checkout, install Inkscape and ImageMagick and generate the icon
+resources before configuring:
+
+```powershell
+choco install inkscape imagemagick --yes
+bash ./scripts/generate_icons.sh
+```
 
 ## Headless validation
 

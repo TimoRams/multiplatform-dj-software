@@ -27,6 +27,8 @@ ApplicationWindow {
     property bool exitCleanupTriggered: false
     property bool uncleanShutdownWarningVisible: false
     property bool startupLibraryReady: false
+    property bool startupReady: false
+    property string startupAudioError: ""
     property real exitProgress: 0.0
     readonly property color unifiedGray: UiTheme.bg1
 

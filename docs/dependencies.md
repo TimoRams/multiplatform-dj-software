@@ -2,7 +2,7 @@
 
 ## Language and toolchain
 
-- CMake 3.24 or newer (required by the upstream Signalsmith Stretch CMake target).
+- CMake 3.25 or newer (required by the checked-in schema-6 presets).
 - C++23 is the portable application and test baseline.
 - Supported CI compilers are GCC on Ubuntu, AppleClang/Xcode on macOS and MSVC
   2022 on Windows.
@@ -33,6 +33,13 @@ modules are not part of BrockDJ's dependency surface or deployment.
 CI uses Qt 6.8.3 for Linux x86_64, both macOS architectures and Windows x64.
 Linux ARM64 uses the native Ubuntu 24.04 Qt packages because the Qt online
 installer does not provide an equivalent Linux desktop ARM64 archive.
+The CMake contract requires Qt 6.4 or newer. The Ubuntu 24.04 ARM64 CI build
+and its Qt version do not establish Raspberry Pi OS Bookworm support.
+
+The application requires C++23 library support including `std::expected`;
+CMake checks the compiler/library combination at configure time. GCC 12 on
+Bookworm is not assumed to satisfy this requirement; use GCC 13 or newer only
+after the configure check succeeds.
 
 ## Audio and metadata libraries
 
@@ -44,7 +51,7 @@ installer does not provide an equivalent Linux desktop ARM64 archive.
 | Signalsmith Linear 0.5.0 | submodule commit `0dd6b823783f1fe8768e2700e0937903f4270698` | Stretch's local FFT/linear dependency; MIT |
 | Signalsmith Stretch | submodule commit `57b93f4e9206a089a45387eaa39bdc9f310d3308` | default key-lock time stretching; MIT |
 | TagLib | distro/Homebrew/vcpkg | metadata and cover extraction |
-| libkeyfinder 2.2.8 | distro/Homebrew/vcpkg | musical-key analysis |
+| libkeyfinder 2.2.8 | pinned source build on Linux; Homebrew on macOS; vcpkg on Windows | musical-key analysis |
 | RubberBand | distro/Homebrew/vcpkg | selectable compatibility key-lock backend |
 | SQLCipher | distro/Homebrew | read-only Rekordbox USB nickname and colour access |
 | ALSA | Linux only, required | native audio/MIDI backend |
@@ -58,12 +65,14 @@ run `git submodule sync --recursive` and `git submodule update --init --recursiv
 `git submodule update --remote` is never part of the normal build process.
 
 libkeyfinder 2.2.8 corresponds to upstream commit
-`b33b5a88e04a5182dd19c38c57762925631118fd`. Windows resolves that release via
-the pinned vcpkg registry baseline; the official vcpkg port is available on
-all triplets and depends on FFTW3. Therefore the workflow does not maintain a
-second ad-hoc source build. If that port disappears in a future registry,
-fallback builds must use that exact commit, `BUILD_TESTING=OFF`, and an
-isolated install prefix included through `CMAKE_PREFIX_PATH`.
+`b33b5a88e04a5182dd19c38c57762925631118fd`. Linux CI builds that exact commit
+with FFTW3 using `scripts/ci/install-libkeyfinder.sh`; the downloaded source
+archive is pinned by SHA-256
+`39256d7486ee19fbaad153af99d087ce7c1c94484f197959c3103226d36d1f9c`.
+Ubuntu 24.04 does not provide the `libkeyfinder-dev`/`libkeyfinder2` package
+names previously used by CI. macOS uses Homebrew, and Windows resolves
+libkeyfinder through the pinned vcpkg registry baseline; the vcpkg port also
+depends on FFTW3.
 
 ## Windows manifest
 

@@ -121,10 +121,16 @@ int main(){
         // choose an inline seed. Either way keylock has to return quickly
         // without waiting on a pipeline rebuild.
         int scratchReleaseBlocks = 0;
+        const auto blockPeriod = std::chrono::nanoseconds(
+            static_cast<long long>(1.0e9 * b.getNumSamples() / rate));
+        auto nextReleaseBlock = std::chrono::steady_clock::now();
         while (source.getLatencySamples() == 0 && scratchReleaseBlocks < 64) {
+            // Give the seed worker the time a real device grants between
+            // callbacks; a free-running loop measures scheduler luck instead.
+            nextReleaseBlock += blockPeriod;
+            std::this_thread::sleep_until(nextReleaseBlock);
             source.getNextAudioBlock({&b,0,8192});
             ++scratchReleaseBlocks;
-            std::this_thread::sleep_for(std::chrono::microseconds(200));
         }
         ok&=require(source.getLatencySamples()>0,
                     "scratch release restores keylock after a bounded bridge");

@@ -58,12 +58,14 @@ struct AudioParameters {
     int boothFirstChannel = -1;
 };
 
-// A wait-free audio-thread snapshot. The writer only touches its private back
+// A lock-free audio-thread snapshot. The writer only touches its private back
 // slot, then exchanges it with the mailbox. The reader similarly exchanges its
 // private front slot, so neither side can access the same slot concurrently.
 template <typename Parameters>
 class RealtimeSnapshotStore final {
 public:
+    static_assert(std::atomic<unsigned>::is_always_lock_free,
+                  "Audio snapshots require lock-free mailbox atomics");
     RealtimeSnapshotStore() = default;
 
     template <typename Update>
@@ -132,6 +134,10 @@ template <std::size_t Capacity = 64>
 class AudioCommandQueue final {
 public:
     static_assert(Capacity >= 2);
+    static_assert(std::atomic<std::size_t>::is_always_lock_free,
+                  "Audio commands require lock-free cursor atomics");
+    static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
+                  "Audio commands require lock-free overflow accounting");
 
     [[nodiscard]] bool push(const AudioCommand& command) noexcept
     {

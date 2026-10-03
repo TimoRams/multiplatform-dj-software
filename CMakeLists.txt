@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.24)
+cmake_minimum_required(VERSION 3.25)
 
 set(PROJECT_NAME "BrockDJ")
 if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
@@ -13,7 +13,30 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+include(CheckCXXSourceCompiles)
+check_cxx_source_compiles("
+    #include <expected>
+    int main() {
+        std::expected<int, int> result = 42;
+        return result.value() == 42 ? 0 : 1;
+    }" BROCKDJ_HAS_STD_EXPECTED)
+if(NOT BROCKDJ_HAS_STD_EXPECTED)
+    message(FATAL_ERROR
+        "BrockDJ requires C++23 std::expected support in the compiler and "
+        "standard library. On Linux use GCC 13 or newer, or a Clang toolchain "
+        "with a compatible C++23 standard library.")
+endif()
+
 option(BROCKDJ_ENABLE_NATIVE_ARCH "Enable target-specific -march=native code generation for local release builds" OFF)
+option(BROCKDJ_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer for non-shipping builds" OFF)
+if(BROCKDJ_ENABLE_SANITIZERS)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$" OR WIN32)
+        message(FATAL_ERROR "BROCKDJ_ENABLE_SANITIZERS requires a Unix GCC or Clang toolchain")
+    endif()
+    add_compile_options(-fsanitize=address,undefined -fno-sanitize-recover=undefined
+                        -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
 unset(RDBJ_ENABLE_NATIVE_SIMD CACHE)
 option(RDBJ_ENABLE_QML_CACHEGEN "Compile QML to C++ cache files. Disable for faster local dev builds." ON)
 
@@ -32,13 +55,15 @@ elseif(CCACHE_PROGRAM AND MSVC)
 endif()
 
 # Qt setup
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Concurrent)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Concurrent)
 if(UNIX AND NOT APPLE)
     find_package(Qt6 REQUIRED COMPONENTS DBus)
 endif()
 find_package(Threads REQUIRED)
-if(COMMAND qt_policy)
+if(Qt6_VERSION VERSION_GREATER_EQUAL 6.5)
     qt_policy(SET QTP0001 NEW)
+endif()
+if(Qt6_VERSION VERSION_GREATER_EQUAL 6.8)
     qt_policy(SET QTP0004 NEW)
 endif()
 set(CMAKE_AUTOMOC ON)
@@ -497,6 +522,13 @@ endif()
 include(CTest)
 
 if(BUILD_TESTING)
+
+if(NOT BROCKDJ_TESTS_ONLY)
+    add_test(NAME startup_close_smoke COMMAND BrockDJ --ci-startup-smoke-test)
+    set_tests_properties(startup_close_smoke PROPERTIES TIMEOUT 40)
+    add_test(NAME startup_early_close_smoke COMMAND BrockDJ --ci-startup-early-close-test)
+    set_tests_properties(startup_early_close_smoke PROPERTIES TIMEOUT 20)
+endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Test)
 

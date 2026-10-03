@@ -35,6 +35,12 @@ struct RealtimeScratchSnapshot {
 // legal concurrent read. Writers are serialized away from the audio thread.
 class RealtimeScratchInput final {
 public:
+    static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
+                  "Scratch handoff requires lock-free sequence atomics");
+    static_assert(std::atomic<double>::is_always_lock_free,
+                  "Scratch handoff requires lock-free motion atomics");
+    static_assert(std::atomic<std::uint8_t>::is_always_lock_free,
+                  "Scratch handoff requires lock-free phase atomics");
     [[nodiscard]] static double clockSeconds() noexcept
     {
         return std::chrono::duration<double>(
@@ -230,6 +236,8 @@ private:
 
 class VirtualTurntable {
 public:
+    static_assert(std::atomic<double>::is_always_lock_free,
+                  "Platter position must be lock-free on supported targets");
     static constexpr double kPi = 3.14159265358979323846;
     static constexpr double kNominalRpm = 33.0 + 1.0 / 3.0;
     static constexpr double kNominalDegreesPerSecond = 200.0;

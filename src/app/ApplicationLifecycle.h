@@ -173,6 +173,10 @@ struct ApplicationRuntime {
     CoverArtProvider* coverProviderPtr = nullptr;
     QPointer<QObject> rootObjectForStartup;
     bool runtimeInitStarted = false;
+    bool stopping = false;
+    bool exitTeardownStarted = false;
+    bool exitTeardownComplete = false;
+    bool shutdownStarted = false;
 };
 
 namespace ApplicationLifecycle {

@@ -988,6 +988,8 @@ bool appOverlaysRuntimeTests(const std::string& source)
             property bool exitShutdownInProgress: false
             property bool exitManualBackupRequested: false
             property bool uncleanShutdownWarningVisible: false
+            property bool startupReady: false
+            property string startupAudioError: ""
             property real exitProgress: 0
             property color unifiedGray: "#202020"
             property string confirmedBackup: ""
@@ -1098,10 +1100,32 @@ bool appOverlaysRuntimeTests(const std::string& source)
                       "the live overlay host retains its startup gate and independent local layer ordering");
 
     QMetaObject::invokeMethod(loadingTimer, "finishLoading");
+    ok &= require(!mainLayout->property("visible").toBool()
+                      && !startupItem->property("welcomeActive").toBool(),
+                  "startup overlay cannot report success before runtime readiness");
+    appWindow->setProperty("startupReady", true);
+    QMetaObject::invokeMethod(loadingTimer, "finishLoading");
     ok &= require(mainLayout->property("visible").toBool()
                       && startupItem->property("welcomeActive").toBool()
                       && appWindow->property("uncleanShutdownWarningVisible").toBool(),
-                  "startup completion reveals the real layout, first-run welcome and recovery warning");
+                  "runtime readiness reveals the real layout, first-run welcome and recovery warning");
+    appWindow->setProperty("startupAudioError", QStringLiteral("No output device is active."));
+    QCoreApplication::processEvents();
+    QObject* audioWarningText = nullptr;
+    const auto findAudioWarning = [&audioWarningText](auto&& self, QObject* object) -> void {
+        if (object->property("text").toString().startsWith(QStringLiteral("Audio is unavailable:"))) {
+            audioWarningText = object;
+            return;
+        }
+        for (QObject* child : object->children()) {
+            if (!audioWarningText)
+                self(self, child);
+        }
+    };
+    findAudioWarning(findAudioWarning, host.get());
+    ok &= require(audioWarningText && audioWarningText->property("visible").toBool()
+                      && mainLayout->property("visible").toBool(),
+                  "audio initialization errors remain visible without blocking the ready application");
     appWindow->setProperty("uncleanShutdownWarningVisible", true);
     QCoreApplication::processEvents();
     QObject* warning = statusItem->property("uncleanShutdownWarning").value<QObject*>();
@@ -1677,9 +1701,43 @@ int main(int argc, char** argv)
     const auto turntableIndicator = componentSection(performancePads, "TurntableIndicator");
     const auto crossfader = componentSection(developmentControls, "CrossfaderBar");
     const auto settingsPanel = read("src/qml/settings/SettingsPanel.qml");
+    const auto applicationLifecycleHeader = read("src/app/ApplicationLifecycle.h");
+    const auto applicationLifecycle = read("src/app/ApplicationLifecycle.cpp");
     ok &= audioRoleTests(settingsPanel);
     ok &= qmlMergeRuntimeTests();
     const auto applicationBootstrap = read("src/app/ApplicationBootstrap.cpp");
+    ok &= require(applicationLifecycleHeader.find("bool exitTeardownStarted = false;")
+                      != std::string::npos
+                      && applicationLifecycleHeader.find("bool shutdownStarted = false;")
+                          != std::string::npos
+                      && applicationLifecycle.find("if (runtime.exitTeardownStarted)")
+                          != std::string::npos
+                      && applicationLifecycle.find("if (runtime.shutdownStarted")
+                          != std::string::npos
+                      && applicationLifecycle.find("std::once_flag") == std::string::npos
+                      && applicationLifecycle.find("std::call_once") == std::string::npos,
+                  "exit teardown and shutdown are independently idempotent per runtime, including re-entry");
+    ok &= require(applicationBootstrap.find("qputenv(\"QT_QUICK_BACKEND\", \"software\")")
+                      != std::string::npos
+                      && applicationBootstrap.find("qunsetenv(\"QSG_RHI_BACKEND\")")
+                          != std::string::npos
+                      && applicationBootstrap.find("startupSoftwareFrameRendered")
+                          != std::string::npos
+                      && applicationBootstrap.find("QSGRendererInterface::Software")
+                          != std::string::npos
+                      && applicationBootstrap.find("window->setProperty(\"allowDirectClose\", true)")
+                          != std::string::npos
+                      && applicationBootstrap.find("if (!window->close())") != std::string::npos
+                      && applicationBootstrap.find("if (!startupCloseSmoke)") != std::string::npos
+                      && applicationBootstrap.find("!startupCloseSmoke, nullptr")
+                          != std::string::npos
+                      && applicationBootstrap.find("startupEarlyCloseSmoke")
+                          != std::string::npos
+                      && read("src/main.cpp").find("--ci-startup-early-close-test")
+                          != std::string::npos
+                      && applicationBootstrap.find("runtime.stopping = true;\n                rootWindow->setProperty(\"allowDirectClose\", true)")
+                          != std::string::npos,
+                  "headless smoke verifies Qt Quick software rendering, normal and early QML-policy closes, and skips hardware discovery");
     const auto library = read("src/qml/library/Library.qml");
     ok &= libraryActionTests(library);
     ok &= require(library.find("tr.touchMode && tr.rowSourceTab !== \"usb\" ? 148 : 0")
@@ -1792,6 +1850,10 @@ int main(int argc, char** argv)
                   "shell routes its overlay host and performance workspace");
     ok &= require(componentSection(appOverlays, "StartupOverlay").find("z: 1000")
                       != std::string::npos
+                      && appOverlays.find("elapsedMs() >= 9000") == std::string::npos
+                      && appOverlays.find("if (!window.startupReady)") != std::string::npos
+                      && appOverlays.find("window.startupAudioError.length > 0")
+                          != std::string::npos
                       && componentSection(appOverlays, "StatusOverlay").find("z: 1001")
                           != std::string::npos
                       && componentSection(appOverlays, "ExitOverlay").find("z: 1000")

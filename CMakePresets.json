@@ -2,7 +2,7 @@
   "version": 6,
   "cmakeMinimumRequired": {
     "major": 3,
-    "minor": 24,
+    "minor": 25,
     "patch": 0
   },
   "configurePresets": [
@@ -166,6 +166,20 @@
       }
     },
     {
+      "name": "ci-linux-sanitizers",
+      "displayName": "CI Linux ASan and UBSan",
+      "inherits": "ci-base",
+      "binaryDir": "${sourceDir}/build-ci-linux-sanitizers",
+      "cacheVariables": {
+        "BROCKDJ_ENABLE_SANITIZERS": "ON"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
       "name": "ci-macos-arm64",
       "displayName": "CI macOS Apple Silicon",
       "inherits": "ci-base",
@@ -221,6 +235,7 @@
     { "name": "macos-dev-x86_64-make", "configurePreset": "macos-dev-x86_64-make" },
     { "name": "ci-linux-x64", "configurePreset": "ci-linux-x64" },
     { "name": "ci-linux-arm64", "configurePreset": "ci-linux-arm64" },
+    { "name": "ci-linux-sanitizers", "configurePreset": "ci-linux-sanitizers" },
     { "name": "ci-macos-arm64", "configurePreset": "ci-macos-arm64" },
     { "name": "ci-macos-x86_64", "configurePreset": "ci-macos-x86_64" },
     { "name": "ci-windows-x64", "configurePreset": "ci-windows-x64" }
@@ -247,6 +262,17 @@
     {
       "name": "ci-linux-arm64",
       "configurePreset": "ci-linux-arm64",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "ci-linux-sanitizers",
+      "configurePreset": "ci-linux-sanitizers",
+      "filter": {
+        "include": {
+          "name": "^(startup_close_smoke|startup_early_close_smoke|smoke|deck_audio_graph|audio_page_cache|scratch_cache|cached_playback|waveform_cache_repair|scratch_motion|waveform_motion|control_clock|neutral_waveform_analysis|database_worker|media_io_scheduler)$"
+        }
+      },
       "output": { "outputOnFailure": true },
       "execution": { "noTestsAction": "error" }
     },

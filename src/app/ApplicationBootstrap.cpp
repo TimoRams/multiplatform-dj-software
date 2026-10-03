@@ -4,10 +4,14 @@
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 #include <array>
+#include <atomic>
+#include <cstdio>
 #include <memory>
 
 // Qt Includes
+#include <QByteArray>
 #include <QGuiApplication>
+#include <QLoggingCategory>
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
 #include <QQuickWindow>
@@ -30,6 +34,7 @@
 #include <QQuickGraphicsConfiguration>
 #include <QScreen>
 #include <QSGRendererInterface>
+#include <QTemporaryDir>
 #include <QtGlobal>
 
 #include "deck/DjEngine.h"
@@ -124,7 +129,9 @@ const char* graphicsApiName(QSGRendererInterface::GraphicsApi api)
     case QSGRendererInterface::Vulkan: return "vulkan";
     case QSGRendererInterface::Metal: return "metal";
     case QSGRendererInterface::Null: return "null";
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
     case QSGRendererInterface::Direct3D12: return "d3d12";
+#endif
     case QSGRendererInterface::Unknown: break;
     }
     return "unknown";
@@ -150,7 +157,9 @@ protected:
         case QEvent::Hide:
         case QEvent::WindowStateChange:
         case QEvent::ScreenChangeInternal:
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
         case QEvent::DevicePixelRatioChange:
+#endif
             qInfo() << "[render-diagnostics] window event=" << event->type()
                     << "visible=" << window->isVisible()
                     << "exposed=" << window->isExposed()
@@ -187,6 +196,10 @@ void filteredMessageHandler(QtMsgType type, const QMessageLogContext& context, c
 
     if (g_previousMessageHandler)
         g_previousMessageHandler(type, context, message);
+    else {
+        const QByteArray formatted = qFormatLogMessage(type, context, message).toLocal8Bit();
+        std::fprintf(stderr, "%s\n", formatted.constData());
+    }
 }
 
 #if defined(Q_OS_LINUX)
@@ -195,7 +208,14 @@ void configureLinuxVulkanBackend(bool& useVulkan,
 {
     QString rhiBackend = qEnvironmentVariable("BROCKDJ_RHI_BACKEND").trimmed().toLower();
     if (rhiBackend.isEmpty())
+        rhiBackend = qEnvironmentVariable("QSG_RHI_BACKEND").trimmed().toLower();
+    if (rhiBackend.isEmpty()) {
+#if defined(Q_PROCESSOR_ARM_64)
+        rhiBackend = QStringLiteral("auto");
+#else
         rhiBackend = QStringLiteral("vulkan");
+#endif
+    }
 
     if (rhiBackend == "vulkan") {
         qputenv("QSG_RHI_BACKEND", "vulkan");
@@ -207,9 +227,9 @@ void configureLinuxVulkanBackend(bool& useVulkan,
         QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
         qWarning() << "[startup] RHI backend forced to opengl (diagnostics only)";
     } else if (rhiBackend == "auto") {
-        qDebug() << "[startup] RHI backend auto (BROCKDJ_RHI_BACKEND=auto)";
+        qDebug() << "[startup] RHI backend delegated to Qt";
     } else {
-        qWarning() << "[startup] Unknown BROCKDJ_RHI_BACKEND value; using Qt auto selection:"
+        qWarning() << "[startup] Unknown RHI backend value; preserving Qt backend selection:"
                    << rhiBackend;
     }
 
@@ -225,6 +245,49 @@ void configureLinuxVulkanBackend(bool& useVulkan,
 
 int runApplication(int argc, char *argv[])
 {
+    bool startupCloseSmoke = false;
+    bool startupEarlyCloseSmoke = false;
+    for (int i = 1; i < argc; ++i) {
+        const QString argument = QString::fromLocal8Bit(argv[i]);
+        if (argument == QStringLiteral("--startup-close-smoke")
+            || argument == QStringLiteral("--ci-startup-smoke-test")) {
+            startupCloseSmoke = true;
+            break;
+        } else if (argument == QStringLiteral("--ci-startup-early-close-test")) {
+            startupCloseSmoke = true;
+            startupEarlyCloseSmoke = true;
+            break;
+        }
+    }
+
+    std::unique_ptr<QTemporaryDir> startupSmokeDirectory;
+    if (startupCloseSmoke) {
+        startupSmokeDirectory = std::make_unique<QTemporaryDir>();
+        if (!startupSmokeDirectory->isValid()) {
+            qCritical() << "[startup-smoke] Could not create isolated configuration directory";
+            return 2;
+        }
+        const QString isolatedPath = startupSmokeDirectory->path();
+        const QByteArray isolatedHome = isolatedPath.toLocal8Bit();
+#if defined(Q_OS_WIN)
+        qputenv("USERPROFILE", isolatedHome);
+        qputenv("APPDATA", QDir(isolatedPath)
+                                .filePath(QStringLiteral("AppData/Roaming")).toLocal8Bit());
+#else
+        qputenv("HOME", isolatedHome);
+#endif
+        qputenv("XDG_CONFIG_HOME", QDir(isolatedPath)
+                                       .filePath(QStringLiteral("config")).toLocal8Bit());
+        qputenv("XDG_DATA_HOME", QDir(isolatedPath)
+                                     .filePath(QStringLiteral("data")).toLocal8Bit());
+        qputenv("XDG_CACHE_HOME", QDir(isolatedPath)
+                                      .filePath(QStringLiteral("cache")).toLocal8Bit());
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+        qputenv("QT_QUICK_BACKEND", "software");
+        qunsetenv("QSG_RHI_BACKEND");
+        qputenv("BROCKDJ_RHI_BACKEND", "auto");
+    }
+
     bool useVulkan = false;
     QString requestedVkIcd;
     QElapsedTimer startupTimer;
@@ -242,15 +305,21 @@ int runApplication(int argc, char *argv[])
 
     qDebug() << "Essentia disabled by project policy; using internal analysis pipeline.";
 
-    g_previousMessageHandler = qInstallMessageHandler(filteredMessageHandler);
+    const QtMessageHandler previousHandler =
+        qInstallMessageHandler(filteredMessageHandler);
+    if (previousHandler != filteredMessageHandler)
+        g_previousMessageHandler = previousHandler;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
     QQuickWindow::setTextRenderType(QQuickWindow::CurveTextRendering);
+#else
+    QQuickWindow::setTextRenderType(QQuickWindow::QtTextRendering);
+#endif
 
     configureQtRuntimeDefaults();
 
 #if defined(Q_OS_LINUX)
-    // Preserve the current Vulkan production default while keeping auto and
-    // OpenGL available for the Wayland comparison matrix. Qt owns whichever
-    // backend is selected; do not manufacture a second Vulkan lifecycle here.
+    // Keep desktop Vulkan as the default; ARM64 delegates backend selection to
+    // Qt unless an explicit BrockDJ or Qt backend override is present.
     configureLinuxVulkanBackend(useVulkan, requestedVkIcd);
 #endif
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::RoundPreferFloor);
@@ -261,10 +330,22 @@ int runApplication(int argc, char *argv[])
     QGuiApplication app(argc, argv);
     const bool renderDiagnostics = renderDiagnosticsEnabled();
     if (renderDiagnostics) {
+        QString requestedRhi = qEnvironmentVariable("BROCKDJ_RHI_BACKEND").trimmed();
+        if (requestedRhi.isEmpty())
+            requestedRhi = qEnvironmentVariable("QSG_RHI_BACKEND").trimmed();
+        if (requestedRhi.isEmpty()) {
+#if defined(Q_OS_LINUX) && defined(Q_PROCESSOR_ARM_64)
+            requestedRhi = QStringLiteral("auto");
+#elif defined(Q_OS_LINUX)
+            requestedRhi = QStringLiteral("vulkan");
+#else
+            requestedRhi = QStringLiteral("Qt default");
+#endif
+        }
         qInfo() << "[render-diagnostics] Qt=" << qVersion()
                 << "platform=" << QGuiApplication::platformName()
                 << "session=" << qEnvironmentVariable("XDG_SESSION_TYPE")
-                << "requestedRhi=" << qEnvironmentVariable("BROCKDJ_RHI_BACKEND", "vulkan")
+                << "requestedRhi=" << requestedRhi
                 << "renderLoop=" << qEnvironmentVariable("QSG_RENDER_LOOP", "default")
                 << "pipelineCache=" << qEnvironmentVariable("BROCKDJ_VK_CACHE", "on")
                 << "icdOverride=" << qEnvironmentVariable("VK_ICD_FILENAMES");
@@ -341,7 +422,8 @@ int runApplication(int argc, char *argv[])
     runtime.libraryDb = std::make_unique<LibraryDatabase>();
     runtime.libraryTableModel = std::make_unique<LibraryTableModel>();
     runtime.libraryAnalysisManager = std::make_unique<LibraryAnalysisManager>();
-    runtime.deviceLibraryManager = std::make_unique<DeviceLibraryManager>();
+    runtime.deviceLibraryManager = std::make_unique<DeviceLibraryManager>(
+        !startupCloseSmoke, nullptr);
     runtime.fxManager = std::make_unique<FxManager>();
     runtime.controlClock = std::make_unique<ControlClock>();
     runtime.linkManager = std::make_unique<LinkManager>(*runtime.controlClock);
@@ -371,12 +453,19 @@ int runApplication(int argc, char *argv[])
                              runtime.audioDeviceService->currentBufferSize());
                      });
     runtime.audioEngine = std::make_unique<AudioEngine>(*runtime.audioPageCache);
+    QObject::connect(runtime.audioDeviceService.get(), &AudioDeviceService::errorChanged,
+                     &app, [&runtime]() {
+                         if (runtime.rootObjectForStartup && runtime.audioDeviceService)
+                             runtime.rootObjectForStartup->setProperty(
+                                 "startupAudioError", runtime.audioDeviceService->lastError());
+                     });
     runtime.renderPressurePolicy = std::make_unique<RenderPressurePolicy>(
         *runtime.controlClock, *runtime.audioDeviceService);
     QObject::connect(runtime.audioDeviceService.get(), &AudioDeviceService::configurationChanged,
                      &app, [&runtime, &app] {
                          QTimer::singleShot(50, &app, [&runtime] {
-                             if (!runtime.audioEngine || !runtime.audioDeviceService
+                             if (runtime.stopping || !runtime.audioEngine
+                                 || !runtime.audioDeviceService
                                  || !runtime.audioDeviceService->manager().getCurrentAudioDevice()) {
                                  return;
                              }
@@ -530,6 +619,8 @@ int runApplication(int argc, char *argv[])
         engine, QmlContextProperty::LibraryCover, runtime.libraryCoverService.get());
 
     const auto url = QUrl(u"qrc:/DJSoftware/src/qml/main.qml"_s);
+    bool startupSmokeReady = false;
+    std::atomic_bool startupSoftwareFrameRendered{false};
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
                      &app, [url](QObject* obj, const QUrl& objUrl) {
         if (!obj && url == objUrl)
@@ -537,8 +628,14 @@ int runApplication(int argc, char *argv[])
     }, Qt::QueuedConnection);
 
     auto initialiseRuntime = [&]() {
-        if (runtime.runtimeInitStarted)
+        if (runtime.runtimeInitStarted || runtime.stopping)
             return;
+        if (startupCloseSmoke
+            && !startupSoftwareFrameRendered.load(std::memory_order_acquire)) {
+            qCritical() << "[startup-smoke] Qt Quick did not render a software frame";
+            app.exit(2);
+            return;
+        }
         runtime.runtimeInitStarted = true;
 
         if (!runtime.libraryDb->open())
@@ -561,6 +658,8 @@ int runApplication(int argc, char *argv[])
             runtime.rootObjectForStartup->setProperty("startupLibraryReady", true);
 
         QTimer::singleShot(0, &app, [&]() {
+            if (runtime.stopping)
+                return;
             runtime.deckA = std::make_unique<DjEngine>(*runtime.audioDeviceService, *runtime.audioPageCache,
                                                        runtime.audioEngine->deck(0),
                                                        *runtime.controlClock,
@@ -594,28 +693,34 @@ int runApplication(int argc, char *argv[])
             ApplicationLifecycle::setQmlContextProperty(
                 engine, QmlContextProperty::DeckD, runtime.deckD.get());
 
-            auto* midi = new MidiControllerManager(runtime.parameterStore.get(),
-                                                   *runtime.controlClock, &app);
-            QQmlEngine::setObjectOwnership(midi, QQmlEngine::CppOwnership);
-            runtime.midiManager = midi;
-            runtime.midiManager->connectDecks(
-                runtime.deckA.get(), runtime.deckB.get(),
-                runtime.deckC.get(), runtime.deckD.get());
-            ApplicationLifecycle::setQmlContextProperty(
-                engine, QmlContextProperty::MidiManager, runtime.midiManager.data());
+            if (!startupCloseSmoke) {
+                auto* midi = new MidiControllerManager(runtime.parameterStore.get(),
+                                                       *runtime.controlClock, &app);
+                QQmlEngine::setObjectOwnership(midi, QQmlEngine::CppOwnership);
+                runtime.midiManager = midi;
+                runtime.midiManager->connectDecks(
+                    runtime.deckA.get(), runtime.deckB.get(),
+                    runtime.deckC.get(), runtime.deckD.get());
+                ApplicationLifecycle::setQmlContextProperty(
+                    engine, QmlContextProperty::MidiManager, runtime.midiManager.data());
 
-            runtime.controllerManager = std::make_unique<ControllerIntegrationManager>(
-                *runtime.controlClock);
-            runtime.controllerManager->setDecks(runtime.deckA.get(), runtime.deckB.get());
-            ApplicationLifecycle::setQmlContextProperty(
-                engine, QmlContextProperty::ControllerManager, runtime.controllerManager.get());
-            QObject::connect(&settingsManager,
-                             &SettingsManager::controllerSettingsChanged,
-                             runtime.controllerManager.get(),
-                             [&settingsManager, controller = runtime.controllerManager.get()] {
-                                 controller->setFlx10Enabled(settingsManager.flx10ControllerSupportEnabled());
-                             });
-            runtime.controllerManager->setFlx10Enabled(settingsManager.flx10ControllerSupportEnabled());
+                runtime.controllerManager = std::make_unique<ControllerIntegrationManager>(
+                    *runtime.controlClock);
+                runtime.controllerManager->setDecks(runtime.deckA.get(), runtime.deckB.get());
+                ApplicationLifecycle::setQmlContextProperty(
+                    engine, QmlContextProperty::ControllerManager, runtime.controllerManager.get());
+                QObject::connect(&settingsManager,
+                                 &SettingsManager::controllerSettingsChanged,
+                                 runtime.controllerManager.get(),
+                                 [&settingsManager, controller = runtime.controllerManager.get()] {
+                                     controller->setFlx10Enabled(
+                                         settingsManager.flx10ControllerSupportEnabled());
+                                 });
+                runtime.controllerManager->setFlx10Enabled(
+                    settingsManager.flx10ControllerSupportEnabled());
+            } else {
+                qInfo() << "[startup-smoke] MIDI and controller hardware discovery skipped";
+            }
 
             const auto applyTimeStretchBackend = [&runtime, &settingsManager] {
                 const auto backend = timeStretchBackendForSetting(settingsManager.timeStretchBackend());
@@ -641,7 +746,8 @@ int runApplication(int argc, char *argv[])
 
             runtime.fxManager->registerEngines(runtime.deckA.get(), runtime.deckB.get(),
                                                runtime.deckC.get(), runtime.deckD.get());
-            runtime.midiManager->connectFxManager(runtime.fxManager.get());
+            if (runtime.midiManager)
+                runtime.midiManager->connectFxManager(runtime.fxManager.get());
 
             runtime.libraryPreviewPlayer = std::make_unique<LibraryPreviewPlayer>(
                 *runtime.controlClock, *runtime.audioPageCache, &app);
@@ -671,31 +777,40 @@ int runApplication(int argc, char *argv[])
             // startup: AudioDeviceService publishes the active configuration.
             const QString preferredAudioType = settingsManager.getAudioMasterDeviceType();
             const QString preferredAudioOutput = settingsManager.getAudioMasterOutputDevice();
-            const bool audioSettingsApplied = runtime.deckA->applyAudioDeviceSettings(
-                preferredAudioType,
-                preferredAudioOutput,
-                settingsManager.getAudioSampleRate(),
-                settingsManager.getAudioBufferSize(),
-                settingsManager.getAudioMasterFirstChannel(),
-                settingsManager.getAudioHeadphonesFirstChannel(),
-                settingsManager.getAudioBoothFirstChannel());
+            const bool audioSettingsApplied = startupCloseSmoke
+                || runtime.deckA->applyAudioDeviceSettings(
+                    preferredAudioType,
+                    preferredAudioOutput,
+                    settingsManager.getAudioSampleRate(),
+                    settingsManager.getAudioBufferSize(),
+                    settingsManager.getAudioMasterFirstChannel(),
+                    settingsManager.getAudioHeadphonesFirstChannel(),
+                    settingsManager.getAudioBoothFirstChannel());
 
-            if (audioSettingsApplied) {
+            if (startupCloseSmoke) {
+                qInfo() << "[startup-smoke] Audio hardware initialization skipped";
+            } else if (audioSettingsApplied
+                       && !runtime.audioDeviceService->currentOutputDevice().trimmed().isEmpty()) {
                 qDebug() << "[startup] Audio preference restored:"
                          << "preferred=" << preferredAudioType << "/" << preferredAudioOutput
                          << "active=" << runtime.audioDeviceService->currentDeviceType()
                          << "/" << runtime.audioDeviceService->currentOutputDevice();
             } else {
+                const QString audioError = runtime.audioDeviceService->lastError().isEmpty()
+                    ? QStringLiteral("No audio output device is active.")
+                    : runtime.audioDeviceService->lastError();
+                if (runtime.rootObjectForStartup)
+                    runtime.rootObjectForStartup->setProperty("startupAudioError", audioError);
                 qWarning() << "[startup] Audio preference could not be restored:"
                            << preferredAudioType << "/" << preferredAudioOutput
-                           << runtime.audioDeviceService->lastError();
+                           << audioError;
 
                 // Some Linux audio backends become enumerable shortly after the
                 // GUI is ready. Retry a bounded number of times; never poll or
                 // replace the user's preferred device with a fallback.
                 for (const int delayMs : {750, 2500}) {
                     QTimer::singleShot(delayMs, &app, [&runtime, &settingsManager, delayMs]() {
-                        if (!runtime.audioDeviceService || !runtime.deckA
+                        if (runtime.stopping || !runtime.audioDeviceService || !runtime.deckA
                             || !runtime.audioDeviceService->currentOutputDevice().isEmpty()) {
                             return;
                         }
@@ -710,15 +825,24 @@ int runApplication(int argc, char *argv[])
                             settingsManager.getAudioMasterFirstChannel(),
                             settingsManager.getAudioHeadphonesFirstChannel(),
                             settingsManager.getAudioBoothFirstChannel());
-                        if (restored) {
+                        if (restored && !runtime.audioDeviceService->currentOutputDevice()
+                                              .trimmed().isEmpty()) {
+                            if (runtime.rootObjectForStartup)
+                                runtime.rootObjectForStartup->setProperty("startupAudioError", QString());
                             qDebug() << "[startup] Audio preference restored on retry"
                                      << delayMs << "ms:"
                                      << runtime.audioDeviceService->currentDeviceType()
                                      << "/" << runtime.audioDeviceService->currentOutputDevice();
                         } else {
+                            const QString audioError = runtime.audioDeviceService->lastError().isEmpty()
+                                ? QStringLiteral("No audio output device is active.")
+                                : runtime.audioDeviceService->lastError();
+                            if (runtime.rootObjectForStartup)
+                                runtime.rootObjectForStartup->setProperty(
+                                    "startupAudioError", audioError);
                             qWarning() << "[startup] Audio preference retry failed after"
                                        << delayMs << "ms:"
-                                       << runtime.audioDeviceService->lastError();
+                                       << audioError;
                         }
                     });
                 }
@@ -726,8 +850,42 @@ int runApplication(int argc, char *argv[])
 
             runtime.controlClock->start();
             qDebug() << "[startup] Audio device setup finished" << startupTimer.elapsed() << "ms";
+            if (runtime.rootObjectForStartup)
+                runtime.rootObjectForStartup->setProperty("startupReady", true);
+            if (startupCloseSmoke) {
+                startupSmokeReady = true;
+                qInfo() << "[startup-smoke] Runtime ready; closing initialized root";
+                if (!startupEarlyCloseSmoke) {
+                    QTimer::singleShot(0, &app, [&runtime, &app] {
+                        auto* window = qobject_cast<QWindow*>(
+                            runtime.rootObjectForStartup.data());
+                        if (!window) {
+                            qCritical() << "[startup-smoke] Initialized root is not a window";
+                            app.exit(2);
+                            return;
+                        }
+                        window->setProperty("allowDirectClose", true);
+                        if (!window->close()) {
+                            qCritical() << "[startup-smoke] Initialized root rejected close";
+                            app.exit(2);
+                            return;
+                        }
+                        qInfo() << "[startup-smoke] Initialized root close accepted";
+                    });
+                }
+            }
         });
     };
+
+    QTimer startupSmokeTimeout;
+    if (startupCloseSmoke) {
+        startupSmokeTimeout.setSingleShot(true);
+        QObject::connect(&startupSmokeTimeout, &QTimer::timeout, &app, [&app]() {
+            qCritical() << "[startup-smoke] Startup/close path exceeded its deadline";
+            app.exit(2);
+        });
+        startupSmokeTimeout.start(startupEarlyCloseSmoke ? 10000 : 30000);
+    }
 
     engine.load(url);
     logStartupStep("QML load requested");
@@ -787,13 +945,14 @@ int runApplication(int argc, char *argv[])
                     &QQuickWindow::sceneGraphInitialized,
                     &app,
                     [quickWindow, &startupTimer, renderDiagnostics]() {
-                    qDebug() << "[startup] Scene graph initialized" << startupTimer.elapsed() << "ms";
+                    const auto* renderer = quickWindow->rendererInterface();
+                    const auto graphicsApi = renderer
+                        ? renderer->graphicsApi() : QSGRendererInterface::Unknown;
+                    qInfo() << "[startup] Scene graph initialized"
+                            << startupTimer.elapsed() << "ms"
+                            << "backend=" << graphicsApiName(graphicsApi);
                     if (renderDiagnostics) {
-                        const auto* renderer = quickWindow->rendererInterface();
                         qInfo() << "[render-diagnostics] scene graph initialized"
-                                << "api=" << graphicsApiName(
-                                       renderer ? renderer->graphicsApi()
-                                                : QSGRendererInterface::Unknown)
                                 << "thread=" << QThread::currentThread();
                     }
 
@@ -823,9 +982,12 @@ int runApplication(int argc, char *argv[])
                     quickWindow,
                     &QQuickWindow::sceneGraphError,
                     &app,
-                    [&startupTimer](QQuickWindow::SceneGraphError error, const QString& message) {
+                    [&app, &startupTimer](QQuickWindow::SceneGraphError error,
+                                          const QString& message) {
                     qWarning() << "[startup] Scene graph error" << error << message
                                << "at" << startupTimer.elapsed() << "ms";
+                    QMetaObject::invokeMethod(&app, [&app] { app.exit(-1); },
+                                              Qt::QueuedConnection);
                     },
                     Qt::DirectConnection);
 
@@ -842,8 +1004,23 @@ int runApplication(int argc, char *argv[])
                     quickWindow,
                     &QQuickWindow::afterRendering,
                     &app,
-                    [&startupTimer]() {
+                    [&startupTimer, quickWindow, startupCloseSmoke,
+                     &startupSoftwareFrameRendered, &app]() {
                     qDebug() << "[startup] FIRST FRAME RENDERED" << startupTimer.elapsed() << "ms";
+                    if (startupCloseSmoke) {
+                        const auto* renderer = quickWindow->rendererInterface();
+                        if (!renderer
+                            || renderer->graphicsApi() != QSGRendererInterface::Software) {
+                            qCritical() << "[startup-smoke] First frame used a non-software backend:"
+                                        << graphicsApiName(renderer
+                                            ? renderer->graphicsApi()
+                                            : QSGRendererInterface::Unknown);
+                            QMetaObject::invokeMethod(&app, [&app] { app.exit(2); },
+                                                      Qt::QueuedConnection);
+                            return;
+                        }
+                        startupSoftwareFrameRendered.store(true, std::memory_order_release);
+                    }
                     },
                     static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::SingleShotConnection));
 
@@ -860,6 +1037,19 @@ int runApplication(int argc, char *argv[])
             rootWindow->show();
             logStartupStep("Root window shown");
 
+            if (startupEarlyCloseSmoke) {
+                runtime.stopping = true;
+                rootWindow->setProperty("allowDirectClose", true);
+                QTimer::singleShot(0, &app, [rootWindow, &runtime, &app] {
+                    if (!rootWindow->close()) {
+                        qCritical() << "[startup-smoke] Early root close was rejected";
+                        app.exit(2);
+                        return;
+                    }
+                    qInfo() << "[startup-smoke] Early root close accepted";
+                });
+            }
+
 #if defined(Q_OS_MACOS)
             // macOS requires extra steps to properly show the window
             rootWindow->raise();
@@ -867,13 +1057,13 @@ int runApplication(int argc, char *argv[])
             qDebug() << "[main] macOS: Window raised and activated";
 #endif
         } else {
-            qWarning() << "[main] Root object is not a QWindow!";
+            qCritical() << "[main] Root object is not a QWindow!";
+            ApplicationLifecycle::shutdownApplication(runtime);
+            return -1;
         }
     } else {
         qCritical() << "[main] No root objects found after loading QML!";
-        settingsManager.markCleanShutdown();
-        settingsManager.shutdown();
-        QCoreApplication::exit(-1);
+        ApplicationLifecycle::shutdownApplication(runtime);
         return -1;
     }
 
@@ -887,7 +1077,10 @@ int runApplication(int argc, char *argv[])
         engine, QmlContextProperty::AppExit, exitGate);
 
     const int ret = app.exec();
+    startupSmokeTimeout.stop();
     ApplicationLifecycle::shutdownApplication(runtime);
 
+    if (startupCloseSmoke && !startupEarlyCloseSmoke && !startupSmokeReady && ret == 0)
+        return 2;
     return ret;
 }

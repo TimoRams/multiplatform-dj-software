@@ -41,24 +41,9 @@ Item {
             running: true
             repeat: true
 
-            property real startedAtMs: Date.now()
-            readonly property int minStageMs: 1000
-            readonly property int minTotalMs: 5200
-
-            function elapsedMs() {
-                return Date.now() - startedAtMs
-            }
-
-            function coreReady() {
-                return typeof libraryDb !== "undefined" && libraryDb
-                    && typeof deckA !== "undefined" && deckA
-                    && typeof deckB !== "undefined" && deckB
-                    && typeof deckC !== "undefined" && deckC
-                    && typeof deckD !== "undefined" && deckD
-                    && typeof midiManager !== "undefined" && midiManager
-            }
-
             function finishLoading() {
+                if (!window.startupReady)
+                    return
                 loadingIndicator.running = false
                 loadingIndicator.activeStage = loadingIndicator.startupStages.length - 1
                 loadingIndicator.stageProgress = 1.0
@@ -74,7 +59,7 @@ Item {
 
             onTriggered: {
                 loadingIndicator.refreshStatus()
-                if ((coreReady() && elapsedMs() >= minTotalMs) || elapsedMs() >= 9000) {
+                if (window.startupReady) {
                     stop()
                     finishLoading()
                 }
@@ -268,7 +253,6 @@ Item {
         z: 1000
 
         function refreshStatus() {
-            var elapsed = loadingTimer.elapsedMs()
             var readyStage = 0
 
             if (typeof libraryDb !== "undefined" && libraryDb) {
@@ -284,11 +268,8 @@ Item {
                 readyStage = 4
             }
 
-            var visualStage = Math.min(readyStage, Math.floor(elapsed / loadingTimer.minStageMs))
-            visualStage = Math.max(0, Math.min(startupStages.length - 1, visualStage))
+            var visualStage = Math.max(0, Math.min(startupStages.length - 1, readyStage))
 
-            // Never regress — avoids the progress bar snapping back when parent width
-            // collapses as the overlay hides (NumberAnimation on width).
             activeStage = Math.max(activeStage, visualStage)
             stageProgress = Math.max(stageProgress, Math.max(0.04, (activeStage + 1) / startupStages.length))
             statusTitle = startupStages[visualStage].title
@@ -446,6 +427,30 @@ Item {
         required property var appWindow
         readonly property var window: appWindow
         property alias uncleanShutdownWarning: uncleanShutdownWarning
+
+    Rectangle {
+        anchors.top: parent.top
+        anchors.topMargin: window.uncleanShutdownWarningVisible ? 82 : 18
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: Math.min(parent.width * 0.92, 640)
+        height: audioStartupWarningText.implicitHeight + 24
+        radius: 6
+        color: "#1a1200"
+        border.color: "#7a4800"
+        z: 1000
+        visible: window.startupReady && window.startupAudioError.length > 0
+
+        Text {
+            id: audioStartupWarningText
+            anchors.fill: parent
+            anchors.margins: 12
+            text: "Audio is unavailable: " + window.startupAudioError
+                  + ". Open Audio Settings to choose an output device."
+            color: "#e0bd75"
+            font.pixelSize: window.sp(12)
+            wrapMode: Text.WordWrap
+        }
+    }
 
     // ── Previous unsafe shutdown notification ───────────────────────────────
     Rectangle {

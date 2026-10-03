@@ -33,6 +33,15 @@ if [[ " $actual_archs " != *" $expected_arch "* ]]; then
     exit 1
 fi
 
+[[ -n "$(find "$app/Contents" -type f -iname 'libqsqlite.dylib' -print -quit)" ]] || {
+    echo "QSQLITE plugin is missing from the macOS bundle" >&2
+    exit 1
+}
+[[ -n "$(find "$app/Contents" -type f -iname '*sqlcipher*.dylib' -print -quit)" ]] || {
+    echo "SQLCipher runtime is missing from the macOS bundle" >&2
+    exit 1
+}
+
 while IFS= read -r mach_o; do
     if ! file "$mach_o" | grep -q 'Mach-O'; then
         continue
@@ -66,5 +75,8 @@ ditto -x -k "$output" "$verification_dir"
 packaged_app="$verification_dir/BrockDJ.app"
 packaged_binary="$packaged_app/Contents/MacOS/BrockDJ"
 codesign --verify --deep --strict --verbose=2 "$packaged_app"
-QT_QPA_PLATFORM=offscreen BROCKDJ_RHI_BACKEND=auto \
+env -u DYLD_LIBRARY_PATH -u DYLD_FALLBACK_LIBRARY_PATH -u DYLD_FRAMEWORK_PATH \
+    -u QTDIR -u QT_ROOT_DIR -u QT_PLUGIN_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH \
+    -u QML_IMPORT_PATH -u QML2_IMPORT_PATH QT_QPA_PLATFORM=offscreen \
+    BROCKDJ_RHI_BACKEND=auto \
     "$packaged_binary" --ci-smoke-test

@@ -104,6 +104,10 @@ done < <(find "$real_plugins" -type f -name '*.so' -print0)
 [[ -f "$plugin_stage/platforms/libqxcb.so" ]] || { echo "Qt xcb platform plugin is missing or unresolved" >&2; exit 1; }
 [[ -f "$plugin_stage/platforms/libqoffscreen.so" ]] || { echo "Qt offscreen platform plugin is missing or unresolved" >&2; exit 1; }
 [[ -f "$plugin_stage/sqldrivers/libqsqlite.so" ]] || { echo "Qt SQLite plugin is missing or unresolved" >&2; exit 1; }
+[[ -n "$(ldd "$binary" | grep -E 'libsqlcipher\.so' || true)" ]] || {
+    echo "BrockDJ is not linked to the required SQLCipher runtime" >&2
+    exit 1
+}
 
 export QMAKE_REAL="$real_qmake"
 export QT_PLUGIN_STAGE="$plugin_stage"
@@ -127,6 +131,102 @@ find "$appdir" -type f \( \
     -name 'libqsqlpsql.so' \
 \) -delete
 
+[[ -n "$(find "$appdir" -type f -name 'libqsqlite.so' -print -quit)" ]] || {
+    echo "QSQLITE plugin is missing from AppDir" >&2
+    exit 1
+}
+[[ -n "$(find "$appdir" -type f -name 'libsqlcipher.so*' -print -quit)" ]] || {
+    echo "SQLCipher runtime is missing from AppDir" >&2
+    exit 1
+}
+
+appdir_real="$(realpath -e "$appdir")"
+check_runtime_closure() {
+    local elf="$1" report line soname resolved resolved_real
+    if ! report="$(env -u LD_PRELOAD LD_LIBRARY_PATH="$appdir_real/usr/lib" ldd "$elf" 2>&1)"; then
+        printf '%s\n' "$report" >&2
+        echo "could not inspect ELF runtime dependencies: $elf" >&2
+        return 1
+    fi
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*([^[:space:]]+)[[:space:]]+\=\>[[:space:]]+([^[:space:]]+) ]]; then
+            soname="${BASH_REMATCH[1]}"
+            resolved="${BASH_REMATCH[2]}"
+            if [[ "$resolved" == "not" ]]; then
+                echo "unresolved runtime dependency in AppDir: $soname required by $elf" >&2
+                return 1
+            fi
+        elif [[ "$line" =~ ^[[:space:]]*(/[^[:space:]]+)[[:space:]]+\( ]]; then
+            resolved="${BASH_REMATCH[1]}"
+            soname="${resolved##*/}"
+        elif [[ "$line" =~ ^[[:space:]]*([^[:space:]]+)[[:space:]]+\( ]]; then
+            soname="${BASH_REMATCH[1]}"
+            resolved=""
+        else
+            continue
+        fi
+
+        if [[ -n "$resolved" ]]; then
+            resolved_real="$(realpath -e "$resolved")" || {
+                echo "runtime dependency path does not exist: $resolved (required by $elf)" >&2
+                return 1
+            }
+            if [[ "$resolved_real" == "$appdir_real/"* ]]; then
+                continue
+            fi
+            case "$resolved_real" in
+                /lib/*|/lib64/*|/usr/lib/*|/usr/lib64/*) ;;
+                *)
+                    echo "dependency resolved outside the AppDir and Ubuntu system library directories: $soname -> $resolved_real (required by $elf)" >&2
+                    return 1
+                    ;;
+            esac
+        fi
+
+        case "${soname##*/}" in
+            linux-vdso.so.*|libc.so.*|libm.so.*|libmvec.so.*|libpthread.so.*|libdl.so.*|\
+            librt.so.*|libresolv.so.*|libgcc_s.so.*|libstdc++.so.*|\
+            ld-linux*.so.*|libX11.so.*|libX11-xcb.so.*|libICE.so.*|libSM.so.*|libXau.so.*|libXdmcp.so.*|\
+            libXext.so.*|libXrender.so.*|libXfixes.so.*|libXcursor.so.*|\
+            libXi.so.*|libXinerama.so.*|libXrandr.so.*|libXcomposite.so.*|\
+            libXdamage.so.*|libxcb*.so.*|libxkbcommon*.so.*|libGL*.so.*|\
+            libEGL*.so.*|libOpenGL.so.*|libdrm.so.*|libgbm.so.*|\
+            libasound.so.*|libjack.so.*|libusb-1.0.so.*|libudev.so.*|\
+            libpulse.so.*|libpipewire*.so.*|libwayland*.so.*|libxshmfence.so.*|\
+            libfontconfig.so.*|libfreetype.so.*|libexpat.so.*|libz.so.*|\
+            libzstd.so.*|libbz2.so.*|libpng*.so.*|libharfbuzz*.so.*|\
+            libbrotli*.so.*|libgraphite2.so.*|libglib-2.0.so.*|\
+            libgobject-2.0.so.*|libpcre2-8.so.*|libffi.so.*|\
+            libdbus-1.so.*|libsystemd.so.*|libcap.so.*|libgcrypt.so.*|\
+            libgpg-error.so.*|liblzma.so.*|libmount.so.*|libblkid.so.*|\
+            libselinux.so.*|libuuid.so.*|libcom_err.so.*|libkeyutils.so.*)
+            ;;
+            *)
+            echo "dependency is resolved only from the runner or is not allowlisted, not the AppDir: $soname -> ${resolved:-<unresolved>} (required by $elf)" >&2
+            return 1
+            ;;
+        esac
+    done <<< "$report"
+}
+
+while IFS= read -r -d '' elf; do
+    check_runtime_closure "$elf"
+done < <(find "$appdir" -type f \( -name '*.so*' -o -name BrockDJ \) -print0)
+
+[[ -n "$(find "$appdir" -type f -name 'libkeyfinder.so*' -print -quit)" ]] || {
+    echo "libkeyfinder runtime is missing from AppDir" >&2
+    exit 1
+}
+[[ -n "$(find "$appdir" -type f -name 'libtag.so*' -print -quit)" ]] || {
+    echo "TagLib runtime is missing from AppDir" >&2
+    exit 1
+}
+[[ -n "$(find "$appdir" -type f -name 'librubberband.so*' -print -quit)" ]] || {
+    echo "RubberBand runtime is missing from AppDir" >&2
+    exit 1
+}
+
 mkdir -p "$appdir/usr/share/metainfo"
 cp "$repo_root/resources/packaging/net.ramsbrock.BrockDJ.metainfo.xml" \
     "$appdir/usr/share/metainfo/net.ramsbrock.BrockDJ.appdata.xml"
@@ -141,5 +241,14 @@ export LDAI_NO_APPSTREAM=1
 
 [[ -s "$output" ]] || { echo "AppImage was not created: $output" >&2; exit 1; }
 file "$output"
-APPIMAGE_EXTRACT_AND_RUN=1 QT_QPA_PLATFORM=offscreen BROCKDJ_RHI_BACKEND=auto \
-    "$output" --ci-smoke-test
+extract_root="${runner_temp}/brockdj-appimage-package-smoke-${tool_arch}"
+rm -rf "$extract_root"
+mkdir -p "$extract_root"
+(
+    cd "$extract_root"
+    "$output" --appimage-extract >/dev/null
+)
+env -u LD_LIBRARY_PATH -u LD_PRELOAD -u QTDIR -u QT_ROOT_DIR \
+    -u QT_PLUGIN_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH -u QML_IMPORT_PATH \
+    -u QML2_IMPORT_PATH QT_QPA_PLATFORM=offscreen BROCKDJ_RHI_BACKEND=auto \
+    "$extract_root/squashfs-root/AppRun" --ci-smoke-test

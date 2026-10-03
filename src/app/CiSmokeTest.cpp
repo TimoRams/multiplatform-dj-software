@@ -8,6 +8,7 @@
 #include <QMetaProperty>
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QProcess>
 #include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -127,8 +128,8 @@ int runCiSmokeTest(int argc, char* argv[])
 {
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
         qputenv("QT_QPA_PLATFORM", "offscreen");
-    if (qEnvironmentVariableIsEmpty("QSG_RHI_BACKEND"))
-        qputenv("QSG_RHI_BACKEND", "software");
+    if (qEnvironmentVariableIsEmpty("QT_QUICK_BACKEND"))
+        qputenv("QT_QUICK_BACKEND", "software");
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
 
     QGuiApplication app(argc, argv);
@@ -174,7 +175,46 @@ int runCiSmokeTest(int argc, char* argv[])
     }
     QSqlDatabase::removeDatabase(connectionName);
 
+    const auto runStartupSubprocess = [](const QString& flag, int timeoutMs,
+                                         QString& error) {
+        QProcess process;
+        process.start(QCoreApplication::applicationFilePath(), {flag});
+        if (!process.waitForStarted(5000)) {
+            error = QStringLiteral("isolated startup smoke could not start: %1")
+                        .arg(process.errorString());
+            return false;
+        }
+        if (!process.waitForFinished(timeoutMs)) {
+            process.terminate();
+            if (!process.waitForFinished(2000)) {
+                process.kill();
+                process.waitForFinished(2000);
+            }
+            const QString output = QString::fromLocal8Bit(process.readAllStandardOutput())
+                + QString::fromLocal8Bit(process.readAllStandardError());
+            error = QStringLiteral("isolated startup smoke exceeded its deadline (%1):\n%2")
+                        .arg(flag, output);
+            return false;
+        }
+        if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+            error = QStringLiteral("isolated startup smoke failed (%1):\n%2")
+                        .arg(flag,
+                             QString::fromLocal8Bit(process.readAllStandardOutput())
+                                 + QString::fromLocal8Bit(process.readAllStandardError()));
+            return false;
+        }
+        return true;
+    };
+
+    QString startupSmokeError;
+    if (!runStartupSubprocess(QStringLiteral("--ci-startup-smoke-test"), 35000,
+                              startupSmokeError))
+        return fail(startupSmokeError);
+    if (!runStartupSubprocess(QStringLiteral("--ci-startup-early-close-test"), 15000,
+                              startupSmokeError))
+        return fail(startupSmokeError);
+
     qInfo().noquote() << "BrockDJ" << BROCKDJ_VERSION << BROCKDJ_BUILD_ARCH
-                      << "package smoke test passed";
+                      << "package, startup-close, and early-close smoke tests passed";
     return 0;
 }

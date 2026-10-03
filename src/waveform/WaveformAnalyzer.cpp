@@ -29,9 +29,9 @@ int maxConcurrentAnalyses()
     const unsigned hw = std::thread::hardware_concurrency();
     if (hw == 0)
         return 1;
-    // A single analysis may itself use two envelope workers. Only very large
-    // hosts can safely run two analyses while leaving predictable headroom for
-    // two live decks, cache decoding, Qt and the render thread.
+    // Only very large hosts can safely run two sequential full-track analyses
+    // while leaving predictable headroom for two live decks, cache decoding,
+    // Qt and the render thread.
     return hw < 16 ? 1 : 2;
 }
 
@@ -319,10 +319,6 @@ void WaveformAnalyzer::run()
     if (!haveFullWaveform) {
         const waveform_internal::EnvelopePassInput envelopeInput{
             *reader,
-            [this, file]() -> std::unique_ptr<juce::AudioFormatReader> {
-                return std::unique_ptr<juce::AudioFormatReader>(
-                    m_formatManager->createReaderFor(file));
-            },
             &working,
             *this,
             m_pointsPerSecond,

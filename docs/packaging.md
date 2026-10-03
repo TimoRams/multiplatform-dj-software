@@ -1,12 +1,21 @@
 # Packaging and CI artifacts
 
-The cross-platform workflow separates compilation from deployment. Five build
-jobs compile, test and run the build-tree smoke test. Five dependent package
-jobs download those products and deploy them on the same OS and architecture.
-There is no `continue-on-error`; a failed platform is a failed workflow.
+Each native platform job builds, tests, deploys and smoke-tests its final
+package in the same environment. Linux and macOS retain architecture matrices;
+Windows uses the same build-and-package job. This avoids intermediate
+executable artifacts and repeated dependency provisioning. There is no
+`continue-on-error`; a failed platform is a failed workflow.
 
-Pull requests run workflow lint plus all five build/test jobs. Packaging runs
-only for pushes to `main`, `v*` tags and manual `workflow_dispatch` runs.
+The workflow is configured to run workflow lint plus all five complete
+build/package checks on pull requests. Final package artifacts are uploaded
+only for pushes to `main`, `v*` tags and manual `workflow_dispatch` runs;
+pull requests exercise deployment and launch the package without publishing
+an artifact. This describes the configured checks, not successful remote
+workflow results.
+
+Each fresh-checkout build generates its required icon assets before CMake
+configuration. Linux uses `librsvg` and ImageMagick, macOS uses Homebrew
+`librsvg` and `iconutil`, and Windows provisions Inkscape and ImageMagick.
 
 ## Final artifacts
 
@@ -36,9 +45,12 @@ remains. Nothing is deleted from the runner's global Qt installation. Optional
 stripping is disabled because linuxdeploy's embedded binutils may predate
 modern ELF `DT_RELR` sections. AppStream metadata is checked with the runner's
 `appstreamcli`; the older validator embedded in the pinned appimagetool is
-disabled. The finished AppImage is executed with
-`APPIMAGE_EXTRACT_AND_RUN=1` and `--ci-smoke-test`, avoiding any FUSE
-requirement in CI.
+disabled. The final AppImage is extracted with its Type-2 runtime and its
+`AppRun` launches with developer library/plugin search paths removed, avoiding
+any FUSE requirement in CI. Packaging fails unless QSQLITE, SQLCipher and
+every deployed ELF shared object have a complete runtime closure. Dependencies
+may resolve from the AppDir or from the explicit Linux ABI/desktop-driver
+allowlist; accidental reliance on other runner-installed libraries fails.
 
 ## macOS bundles
 
@@ -52,7 +64,8 @@ CMake creates `BrockDJ.app` directly for both architectures. The package job:
    file using `lipo`;
 5. applies an ad-hoc recursive signature and verifies it with `codesign`;
 6. creates the ZIP with `ditto`, extracts that exact ZIP into a clean temporary
-   directory, verifies its signature again, and runs its executable smoke test.
+   directory, verifies its signature again, and runs its executable smoke test
+   with Qt/developer library search paths removed.
 
 Ad-hoc signing makes the bundle structurally verifiable but is not Apple
 notarization. A future public release can add Developer ID signing and notary
@@ -62,14 +75,16 @@ credentials without changing the build/package separation.
 
 Windows uses MSVC 2022, Qt's `win64_msvc2022_64` package and the pinned vcpkg
 manifest. `scripts/ci/package-windows.ps1` runs `windeployqt` with `src/qml`,
-then follows `dumpbin /dependents` recursively. It copies only DLLs actually
-referenced from the vcpkg runtime directory and fails on an unresolved
-non-system dependency. It does not copy the entire vcpkg `bin` directory.
+then follows `dumpbin /dependents` for every staged PE image, including Qt
+platform and QML plugin DLLs. It copies only referenced DLLs from the vcpkg or
+Qt runtime directories and fails on an unresolved non-system dependency or a
+non-x64 PE image. It does not copy the entire vcpkg `bin` directory.
 
 The completed ZIP is extracted into a clean temporary directory and its
-`BrockDJ.exe --ci-smoke-test` must pass. This checks the exact uploaded archive,
-including Qt platform/QML/SQLite deployment, without requiring an audio device
-or touching user data.
+`BrockDJ.exe --ci-smoke-test` must pass with Qt/developer paths removed from
+`PATH` and the Qt plugin search variables cleared. This checks the exact
+uploaded archive, including Qt platform/QML/SQLite deployment, without
+requiring an audio device or touching user data.
 
 ## Local package checks
 

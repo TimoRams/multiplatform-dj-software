@@ -3,18 +3,11 @@
 #include <QDebug>
 #include <algorithm>
 #include <array>
-#include <atomic>
+#include <chrono>
 #include <cmath>
-#include <mutex>
-#include <numeric>
+#include <exception>
 #include <thread>
 #include <vector>
-
-#ifdef __linux__
-#include <sys/resource.h>
-#include <sys/syscall.h>
-#include <unistd.h>
-#endif
 
 struct FiltState {
     std::vector<float> low1, low2;
@@ -46,8 +39,8 @@ struct RawBin {
 struct RawPeak { float minRaw = 0.0f; float maxRaw = 0.0f; };
 
 // Fixed filter coefficients for the 4-band bank described below. They depend
-// only on the sample rate, so every segment worker shares one instance while
-// keeping its own FiltState.
+// only on the sample rate; the priority prologue and sequential pass each keep
+// their own FiltState.
 struct BandCoefficients {
     float low = 0.0f;
     float high = 0.0f;
@@ -220,28 +213,6 @@ bool processBin(const BandCoefficients& c,
     out.mid = std::sqrt(static_cast<float>(midSquares) * inverseCount);
     out.treble = std::sqrt(static_cast<float>(trebleSquares) * inverseCount);
     return true;
-}
-
-// Segments of the full-track pass decode and filter in parallel. The DSP chain
-// is stateful, so each worker replays a short warm-up prefix before its own
-// range; that costs a fraction of a percent of the bins and leaves no visible
-// seam. The budget deliberately keeps cores free for audio, Qt and the Vulkan
-// render thread, and a worker only pays for itself once it owns several store
-// chunks.
-int envelopeWorkerCount(int sourceChunkCount)
-{
-    static_cast<void>(sourceChunkCount);
-    // Full-track analysis is background work. One sequential decoder avoids
-    // competing with live deck decoding and keeps load cost predictable.
-    return 1;
-}
-
-void lowerCurrentThreadPriority()
-{
-#ifdef __linux__
-    (void)setpriority(PRIO_PROCESS,
-                      static_cast<id_t>(syscall(SYS_gettid)), 15);
-#endif
 }
 
 } // namespace
@@ -545,8 +516,8 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     std::vector<bool> priorityAnalyzed(
         static_cast<std::size_t>(sourceChunkCount), false);
 
-    // The prologue is strictly single-threaded and finishes before the parallel
-    // pass starts, so it may keep one decode window on the caller's reader.
+    // The priority prologue finishes before the sequential pass starts and
+    // uses a separate window so neither pass disturbs the other's filter state.
     DecodeWindow priorityWindow(reader, totalSamples);
     const auto processPriorityBin = [&](int bin, FiltState& filter,
                                         RawBin& raw) {
@@ -646,91 +617,30 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         return false;
     // ─────────────────────────────────────────────────────────────────────
 
-    // ─── Full-track pass, split into independently decoded segments ───────
-    //
-    // Each segment owns a whole number of store chunks, so its published
-    // batches line up with the immutable store exactly as the old sequential
-    // pass did. Before touching its own range a segment replays a warm-up
-    // prefix, long enough for the filter bank and the envelope followers to
-    // settle (the slowest release constant is 35 ms), which is what keeps the
-    // segment boundaries invisible.
-    //
-    // The sequential pass used to re-check the seek hint every 128 bins and
-    // interrupt itself with a priority chunk. That existed because a full pass
-    // took long enough for the playhead to outrun it; with the whole track
-    // finishing in a fraction of that time the playhead prologue above is
-    // enough, and dropping it keeps the segments independent.
-    struct Segment {
-        int binBegin = 0;
-        int binEnd = 0;
-        float maxPeak = 0.001f;
-        float maxSample = 0.001f;
-    };
-
-    std::vector<std::unique_ptr<juce::AudioFormatReader>> segmentReaders;
-    if (input.createReader) {
-        const int desiredWorkers = envelopeWorkerCount(sourceChunkCount);
-        for (int i = 1; i < desiredWorkers; ++i) {
-            auto extra = input.createReader();
-            if (!extra)
-                break;
-            segmentReaders.push_back(std::move(extra));
-        }
-    }
-
-    const int workerCount = 1 + static_cast<int>(segmentReaders.size());
-    std::vector<Segment> segments;
-    segments.reserve(static_cast<std::size_t>(workerCount));
-    for (int i = 0; i < workerCount; ++i) {
-        const int chunkBegin = static_cast<int>(
-            (static_cast<juce::int64>(i) * sourceChunkCount) / workerCount);
-        const int chunkEnd = static_cast<int>(
-            (static_cast<juce::int64>(i + 1) * sourceChunkCount) / workerCount);
-        if (chunkBegin >= chunkEnd)
-            continue;
-        segments.push_back(Segment{chunkBegin * kChunk,
-                                   std::min(numPoints, chunkEnd * kChunk),
-                                   0.001f, 0.001f});
-    }
-
-    const int segmentWarmupBins = std::max(warmupBins, m_pointsPerSecond / 2);
-    std::mutex publishMutex;
-    std::atomic<int> completedBins{0};
-    std::atomic<bool> segmentFailed{false};
-
-    const auto runSegment = [&](Segment& segment,
-                                juce::AudioFormatReader& segmentReader) {
+    // ─── Sequential full-track pass ───────────────────────────────────────
+    // Start from zero and carry filter state across every chunk. The prologue
+    // above has its own warm-up/state and does not seed this full-track pass.
+    // Chunk publication stays aligned with the immutable store.
+    try {
         FiltState filter;
         filter.reset(numCh, sampleRate);
-        DecodeWindow window(segmentReader, totalSamples);
+        DecodeWindow window(reader, totalSamples);
         RawBin raw;
         std::array<RawPeak, 8> peaks{};
         juce::int64 binStart = 0;
         int length = 0;
 
-        for (int bin = std::max(0, segment.binBegin - segmentWarmupBins);
-             bin < segment.binBegin; ++bin) {
-            if (threadShouldExit())
-                return;
-            binSampleRange(bin, binStart, length);
-            if (!processBin(coefficients, filter, window, numCh, binStart,
-                            length, raw, nullptr, 0)) {
-                segmentFailed.store(true, std::memory_order_relaxed);
-                return;
-            }
-        }
-
         QVector<TrackData::WaveformBin> binBatch;
         QVector<TrackData::SpectralWaveformPoint> fullRateSpectralBatch;
         binBatch.reserve(kChunk);
         fullRateSpectralBatch.reserve(kChunk);
-        int batchStart = segment.binBegin;
+        int batchStart = 0;
+        int completedBins = 0;
 
         const auto flush = [&]() {
             if (binBatch.isEmpty())
                 return;
             const auto spectralBatch = downsampleSpectral(fullRateSpectralBatch);
-            const std::lock_guard<std::mutex> lock(publishMutex);
             if (input.retainLegacyWaveform) {
                 m_trackData->writeWaveformRange(batchStart, binBatch);
                 m_trackData->writeSpectralWaveformRange(
@@ -738,16 +648,15 @@ bool runEnvelopePass(const EnvelopePassInput& input)
             }
             publishChunk(batchStart, binBatch, spectralBatch);
             m_trackData->reportAnalysisProgress(
-                (static_cast<double>(
-                     completedBins.load(std::memory_order_relaxed))
+                (static_cast<double>(completedBins)
                  / static_cast<double>(numPoints)) * 0.50, true);
             binBatch.clear();
             fullRateSpectralBatch.clear();
         };
 
-        for (int bin = segment.binBegin; bin < segment.binEnd; ++bin) {
+        for (int bin = 0; bin < numPoints; ++bin) {
             if (threadShouldExit())
-                return;
+                return false;
 
             if ((bin & 0x1F) == 0)
                 cooperateWithRealtime();
@@ -762,8 +671,7 @@ bool runEnvelopePass(const EnvelopePassInput& input)
                             length, raw,
                             peakRatio > 0 ? peaks.data() : nullptr,
                             peakRatio)) {
-                segmentFailed.store(true, std::memory_order_relaxed);
-                return;
+                return false;
             }
 
             if (peakRatio > 0) {
@@ -771,62 +679,27 @@ bool runEnvelopePass(const EnvelopePassInput& input)
                 for (int pb = 0; pb < peakRatio; ++pb) {
                     const auto& peak = peaks[static_cast<std::size_t>(pb)];
                     rawPeakBuf[static_cast<std::size_t>(peakBinBase + pb)] = peak;
-                    segment.maxSample = std::max(
-                        {segment.maxSample, peak.maxRaw, -peak.minRaw});
+                    globalMaxSample = std::max(
+                        {globalMaxSample, peak.maxRaw, -peak.minRaw});
                 }
             }
-            segment.maxPeak = std::max(
-                segment.maxPeak,
+            globalMaxPeak = std::max(
+                globalMaxPeak,
                 std::max({raw.bass, raw.mid, raw.treble}));
 
             if (binBatch.isEmpty())
                 batchStart = bin;
             binBatch.append(makeGeometry(raw));
             fullRateSpectralBatch.append(makeSpectral(raw));
-            completedBins.fetch_add(1, std::memory_order_relaxed);
+            ++completedBins;
 
             if (binBatch.size() >= kChunk)
                 flush();
         }
         flush();
-    };
-
-    {
-        std::vector<std::thread> workers;
-        workers.reserve(segments.empty() ? 0 : segments.size() - 1);
-        for (std::size_t i = 1; i < segments.size(); ++i) {
-            workers.emplace_back([&, i]() {
-                lowerCurrentThreadPriority();
-                try {
-                    runSegment(segments[i], *segmentReaders[i - 1]);
-                } catch (const std::exception& e) {
-                    segmentFailed.store(true, std::memory_order_relaxed);
-                    qWarning() << "[WaveformAnalyzer] Envelope segment failed:"
-                               << e.what();
-                }
-            });
-        }
-        // The caller's own segment must not escape with an exception while
-        // workers are still running: unwinding past a joinable std::thread
-        // terminates the process.
-        try {
-            if (!segments.empty())
-                runSegment(segments.front(), reader);
-        } catch (const std::exception& e) {
-            segmentFailed.store(true, std::memory_order_relaxed);
-            qWarning() << "[WaveformAnalyzer] Envelope segment failed:"
-                       << e.what();
-        }
-        for (auto& worker : workers)
-            worker.join();
-    }
-
-    if (segmentFailed.load(std::memory_order_relaxed))
+    } catch (const std::exception& e) {
+        qWarning() << "[WaveformAnalyzer] Envelope pass failed:" << e.what();
         return false;
-
-    for (const auto& segment : segments) {
-        globalMaxPeak = std::max(globalMaxPeak, segment.maxPeak);
-        globalMaxSample = std::max(globalMaxSample, segment.maxSample);
     }
 
     if (threadShouldExit()) return false;
