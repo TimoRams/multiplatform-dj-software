@@ -10,7 +10,6 @@ target_sources(${PROJECT_NAME} PRIVATE
     DeckTrackLoader.h
     DeckTransport.cpp
     DeckTransport.h
-    JogNudgePolicy.h
     sync/DeckSyncController.cpp
     sync/DeckSyncController.h
     sync/SyncCoordinator.cpp
@@ -20,6 +19,5 @@ target_sources(${PROJECT_NAME} PRIVATE
     scratch/ScratchSession.cpp
     scratch/ScratchController.h
     scratch/ScratchController.cpp
-    scratch/VirtualTurntable.h
-    scratch/VirtualTurntable.cpp
+    scratch/ScratchInput.h
 )

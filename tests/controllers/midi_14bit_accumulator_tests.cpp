@@ -1,4 +1,4 @@
-#include "controllers/midi/Midi14BitAccumulator.h"
+#include "controllers/midi/MidiInputState.h"
 
 #include <iostream>
 

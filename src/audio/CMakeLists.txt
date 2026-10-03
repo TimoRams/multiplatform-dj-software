@@ -4,17 +4,15 @@ target_sources(${PROJECT_NAME} PRIVATE
     cache/AudioCacheTypes.h
     cache/AudioPageCache.h
     cache/AudioPageCache.cpp
-    cache/AudioCacheWorker.h
-    cache/AudioCacheWorker.cpp
     cache/CachedPlaybackAudioSource.h
     cache/CachedPlaybackAudioSource.cpp
     DeckAudioPipeline.cpp
     device/AudioDeviceUtils.cpp
     AudioEngine.h
     AudioEngine.cpp
-    MasterMixer.cpp
-    HeadphoneBus.cpp
-    AudioOutputRouter.cpp
+    AudioBusMixer.h
+    AudioBusMixer.cpp
+    AudioOutputRouter.h
     TimeStretchProcessor.cpp
     DeckChannelProcessor.cpp
     internal/BrickwallLimiter.h

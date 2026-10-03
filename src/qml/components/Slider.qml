@@ -80,6 +80,8 @@ Controls.Slider {
         }
     }
 
+    Component.onDestruction: sliderDrag.finishDrag(false)
+
     MouseArea {
         id: sliderDrag
         anchors.fill: parent
@@ -87,10 +89,32 @@ Controls.Slider {
         acceptedButtons: Qt.LeftButton
         preventStealing: true
 
+        PointHandler {
+            id: sliderTouch
+            acceptedDevices: PointerDevice.TouchScreen
+        }
+
         property real _pressGX:  0
         property real _pressGY:  0
         property real _pressVal: 0
         property bool _active:   false
+        property bool _touchDrag: false
+        property bool _cursorHidden: false
+        property var _cursorService: null
+
+        function finishDrag(restorePosition) {
+            _active = false
+            _touchDrag = false
+            control.dragActive = false
+            if (_cursorHidden) {
+                var cursor = _cursorService
+                _cursorHidden = false
+                _cursorService = null
+                cursor.restoreCursor()
+                if (restorePosition)
+                    cursor.moveCursor(_pressGX, _pressGY)
+            }
+        }
 
         onPressed: (mouse) => {
             var g    = sliderDrag.mapToGlobal(mouse.x, mouse.y)
@@ -98,10 +122,13 @@ Controls.Slider {
             _pressGY  = g.y
             _pressVal = control.value
             _active   = false
+            _touchDrag = sliderTouch.active
             mouse.accepted = true
         }
 
         onPositionChanged: (mouse) => {
+            if (!pressed)
+                return
             var g     = sliderDrag.mapToGlobal(mouse.x, mouse.y)
             var isV   = control.orientation === Qt.Vertical
             var delta = isV ? (_pressGY - g.y) : (g.x - _pressGX)
@@ -109,7 +136,12 @@ Controls.Slider {
                 if (Math.abs(delta) < 4) return
                 _active = true
                 control.dragActive = true
-                cursorControl.hideCursor()
+                if (!_touchDrag) {
+                    // Context properties can be cleared before QML teardown.
+                    _cursorService = cursorControl
+                    _cursorHidden = true
+                    _cursorService.hideCursor()
+                }
             }
             var newVal = _pressVal + delta * (control.to - control.from) / 150.0
             var lo = Math.min(control.from, control.to)
@@ -117,14 +149,8 @@ Controls.Slider {
             control.value = Math.max(lo, Math.min(hi, newVal))
         }
 
-        onReleased: {
-            if (_active) {
-                _active = false
-                control.dragActive = false
-                cursorControl.restoreCursor()
-                cursorControl.moveCursor(_pressGX, _pressGY)
-            }
-        }
+        onReleased: finishDrag(true)
+        onCanceled: finishDrag(false)
 
         onDoubleClicked: {
             control.enabled = false

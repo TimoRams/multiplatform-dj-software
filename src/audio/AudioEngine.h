@@ -1,10 +1,9 @@
 #pragma once
 
+#include "audio/AudioBusMixer.h"
 #include "audio/AudioOutputRouter.h"
 #include "audio/AudioParameters.h"
 #include "audio/DeckAudioPipeline.h"
-#include "audio/HeadphoneBus.h"
-#include "audio/MasterMixer.h"
 #include "fx/FxTypes.h"
 #include "platform/AudioThreadScheduling.h"
 

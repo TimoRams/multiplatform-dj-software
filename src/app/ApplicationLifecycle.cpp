@@ -48,34 +48,23 @@ void stopQuickWindowRendering(QQuickWindow* window)
         window->releaseResources();
 }
 
+void setQmlContextProperty(QQmlApplicationEngine& engine,
+                           QmlContextProperty property,
+                           QObject* object)
+{
+    const auto index = static_cast<std::size_t>(property);
+    engine.rootContext()->setContextProperty(kQmlContextPropertyContract[index].name, object);
+}
+
 void clearQmlContextProperties(QQmlApplicationEngine& engine)
 {
-    engine.rootContext()->setContextProperty("settingsManager", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("appConfig", QVariant());
-    engine.rootContext()->setContextProperty("appExit", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("deckA", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("deckB", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("deckC", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("deckD", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("libraryManager", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("libraryDb", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("libraryModel", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("libraryAnalyzer", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("deviceLibraryManager", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("fxManager", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("linkManager", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("sysMonitor", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("parameterStore", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("midiManager", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("controllerManager", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("cursorControl", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("uiScaleController", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("waveformZoomController", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("renderPressurePolicy", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("mixerControl", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("controlClock", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("libraryCover", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("libraryPreview", static_cast<QObject*>(nullptr));
+    for (std::size_t index = 0; index < kQmlContextPropertyContract.size(); ++index) {
+        const auto& property = kQmlContextPropertyContract[index];
+        if (property.clearAsInvalidVariant)
+            engine.rootContext()->setContextProperty(property.name, QVariant());
+        else
+            engine.rootContext()->setContextProperty(property.name, static_cast<QObject*>(nullptr));
+    }
 }
 
 void performExitTeardown(ApplicationRuntime& runtime, bool manualBackup)
@@ -119,10 +108,8 @@ void performExitTeardown(ApplicationRuntime& runtime, bool manualBackup)
             runtime.libraryDb->shutdown(manualBackup);
 
         if (runtime.engine) {
-            runtime.engine->rootContext()->setContextProperty("midiManager",
-                                                               static_cast<QObject*>(nullptr));
-            runtime.engine->rootContext()->setContextProperty("controllerManager",
-                                                               static_cast<QObject*>(nullptr));
+            setQmlContextProperty(*runtime.engine, QmlContextProperty::MidiManager, nullptr);
+            setQmlContextProperty(*runtime.engine, QmlContextProperty::ControllerManager, nullptr);
         }
 
         if (runtime.controllerManager && runtime.settingsManager) {

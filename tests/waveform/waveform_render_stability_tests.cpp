@@ -3,8 +3,8 @@
 #include <iostream>
 
 #include "waveform/render/WaveformRenderMath.h"
-#include "waveform/WaveformDemand.h"
-#include "waveform/WaveformLodPyramid.h"
+#include "waveform/WaveformTypes.h"
+#include "waveform/WaveformAggregator.h"
 
 namespace {
 bool require(bool condition, const char* message)

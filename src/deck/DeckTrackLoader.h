@@ -3,7 +3,7 @@
 #include "TrackData.h"
 #include "waveform/WaveformCache.h"
 #include "audio/cache/AudioCacheTypes.h"
-#include "waveform/WaveformDemand.h"
+#include "waveform/WaveformTypes.h"
 
 #include <QByteArray>
 #include <QImage>

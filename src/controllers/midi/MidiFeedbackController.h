@@ -1,6 +1,6 @@
 #pragma once
 
-#include "controllers/midi/feedback/LevelMeterBallistics.h"
+#include "controllers/midi/LevelMeterBallistics.h"
 
 #include <QObject>
 #include <QString>

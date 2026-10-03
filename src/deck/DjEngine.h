@@ -22,7 +22,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "domain/DomainTypes.h"
-#include "waveform/WaveformDemand.h"
+#include "waveform/WaveformTypes.h"
 
 class AudioDeviceService;
 class AudioPageCache;

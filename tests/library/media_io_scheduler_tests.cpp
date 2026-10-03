@@ -1,9 +1,12 @@
 #include "library/MediaIoScheduler.h"
+#include "library/LibraryCoverService.h"
 
+#include <QBuffer>
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
+#include <QQmlEngine>
 #include <QTemporaryDir>
 #include <QThread>
 
@@ -116,6 +119,53 @@ int main(int argc, char** argv)
     require(scheduler.enqueue(std::move(disappeared)), "missing path request");
     const auto errors = waitFor(scheduler, 2);
     require(!errors[0].success && !errors[1].success, "portable errors returned");
+
+    {
+        QQmlEngine engine;
+        auto* provider = new CoverArtProvider;
+        engine.addImageProvider(QStringLiteral("coverart"), provider);
+        LibraryCoverService covers(provider, scheduler);
+        require(engine.imageProvider(QStringLiteral("coverart")) == provider,
+                "QML engine owns the registered cover provider");
+        QByteArray encoded;
+        QBuffer encodedBuffer(&encoded);
+        require(encodedBuffer.open(QIODevice::WriteOnly)
+                    && image.save(&encodedBuffer, "PNG"),
+                "cover publication fixture");
+        covers.publishCover(QStringLiteral("deck-cover"), encoded);
+        const auto deckUrl = covers.urlForPath({}, QStringLiteral("deck-cover"));
+        require(deckUrl.startsWith(QStringLiteral("image://coverart/track_deck-cover?t=")),
+                "deck cover URL retains provider and revision");
+        QSize requested;
+        const auto deckImage = provider->requestImage(
+            deckUrl.mid(QStringLiteral("image://coverart/").size()),
+            &requested, QSize(32, 32));
+        require(deckImage.size() == QSize(32, 16) && requested == deckImage.size(),
+                "provider strips revision and scales with aspect ratio");
+        bool libraryReady = false;
+        QObject::connect(&covers, &LibraryCoverService::coverReady, &covers,
+                         [&](const QString& path, const QString& id, const QString& url) {
+            if (path == imagePath && id == QStringLiteral("library-cover"))
+                libraryReady = url == covers.urlForPath(path, id);
+        });
+        covers.preload(imagePath, QStringLiteral("library-cover"));
+        QElapsedTimer timer;
+        timer.start();
+        while (!libraryReady && timer.elapsed() < 10000) {
+            QCoreApplication::processEvents();
+            QThread::msleep(1);
+        }
+        require(libraryReady && provider->hasCover(QStringLiteral("track_library-cover")),
+                "scheduler result publishes library cover through the same provider");
+        covers.clearCache();
+        require(covers.urlForPath(imagePath, QStringLiteral("library-cover")).isEmpty(),
+                "clearing service cache invalidates URLs");
+        provider->clearCover(QStringLiteral("track_deck-cover"));
+        const auto missing = provider->requestImage(QStringLiteral("track_deck-cover"),
+                                                    nullptr, {});
+        require(missing.size() == QSize(1, 1) && missing.pixelColor(0, 0).alpha() == 0,
+                "missing cover remains transparent");
+    }
 
     lifecycle.restart();
     scheduler.requestStop();

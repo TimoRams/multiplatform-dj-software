@@ -15,7 +15,6 @@
 #include "TrackData.h"
 #include "analysis/AnalysisTypes.h"
 #include "waveform/WaveformTypes.h"
-#include "waveform/WaveformDemand.h"
 
 class WaveformAnalyzer : public juce::Thread
 {

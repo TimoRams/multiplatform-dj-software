@@ -1,12 +1,72 @@
+#include <QGuiApplication>
+#include <QMouseEvent>
+#include <QColor>
+#include <QQmlComponent>
+#include <QQmlContext>
+#include <QQmlEngine>
+#include <QQmlExpression>
+#include <QQuickItem>
+#include <QQuickWindow>
+#include <QUrl>
+#include <QtTest/qtest.h>
+#include <QtTest/qtesttouch.h>
+
 #include <algorithm>
+#include <cmath>
 #include <fstream>
+#include <initializer_list>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <string>
 
 #ifndef BROCKDJ_SOURCE_DIR
 #error BROCKDJ_SOURCE_DIR is required
 #endif
+
+class ScrollingWaveformItemStub : public QQuickItem
+{
+    Q_OBJECT
+    Q_PROPERTY(QObject* engine READ engine WRITE setEngine)
+    Q_PROPERTY(qreal pixelsPerPoint READ pixelsPerPoint WRITE setPixelsPerPoint)
+    Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor)
+    Q_PROPERTY(int renderStyle READ renderStyle WRITE setRenderStyle)
+    Q_PROPERTY(bool rasterWorkEnabled READ rasterWorkEnabled WRITE setRasterWorkEnabled)
+    Q_PROPERTY(bool slipPreview READ slipPreview WRITE setSlipPreview)
+    Q_PROPERTY(bool contentReady READ contentReady CONSTANT)
+    Q_PROPERTY(qreal effectivePixelsPerSecond READ effectivePixelsPerSecond CONSTANT)
+
+public:
+    QObject* engine() const { return m_engine; }
+    void setEngine(QObject* value) { m_engine = value; }
+    qreal pixelsPerPoint() const { return m_pixelsPerPoint; }
+    void setPixelsPerPoint(qreal value) { m_pixelsPerPoint = value; }
+    QColor backgroundColor() const { return m_backgroundColor; }
+    void setBackgroundColor(const QColor& value) { m_backgroundColor = value; }
+    int renderStyle() const { return m_renderStyle; }
+    void setRenderStyle(int value) { m_renderStyle = value; }
+    bool rasterWorkEnabled() const { return m_rasterWorkEnabled; }
+    void setRasterWorkEnabled(bool value) { m_rasterWorkEnabled = value; }
+    bool slipPreview() const { return m_slipPreview; }
+    void setSlipPreview(bool value) { m_slipPreview = value; }
+    bool contentReady() const { return true; }
+    qreal effectivePixelsPerSecond() const { return 100.0; }
+
+    Q_INVOKABLE void requestUpdate() {}
+    Q_INVOKABLE qreal screenDeltaToSeconds(qreal delta) const { return delta / 100.0; }
+    Q_INVOKABLE qreal timelineSecondsAtX(qreal x, qreal playhead) const
+    {
+        return playhead + (x - width() * 0.5) / effectivePixelsPerSecond();
+    }
+
+private:
+    QObject* m_engine = nullptr;
+    qreal m_pixelsPerPoint = 0.22;
+    QColor m_backgroundColor;
+    int m_renderStyle = 0;
+    bool m_rasterWorkEnabled = true;
+    bool m_slipPreview = false;
+};
 
 namespace {
 std::string read(const char* relative)
@@ -29,34 +89,936 @@ std::size_t occurrences(const std::string& value, const std::string& needle)
     }
     return count;
 }
+
+std::string componentSection(const std::string& source, const std::string& name)
+{
+    const auto begin = source.find("component " + name + ":");
+    if (begin == std::string::npos)
+        return {};
+    const auto open = source.find('{', begin);
+    if (open == std::string::npos)
+        return {};
+
+    std::size_t depth = 0;
+    char quote = '\0';
+    bool escaped = false;
+    bool lineComment = false;
+    bool blockComment = false;
+    for (std::size_t index = open; index < source.size(); ++index) {
+        const char current = source[index];
+        const char next = index + 1 < source.size() ? source[index + 1] : '\0';
+        if (lineComment) {
+            if (current == '\n')
+                lineComment = false;
+            continue;
+        }
+        if (blockComment) {
+            if (current == '*' && next == '/') {
+                blockComment = false;
+                ++index;
+            }
+            continue;
+        }
+        if (quote != '\0') {
+            if (escaped)
+                escaped = false;
+            else if (current == '\\')
+                escaped = true;
+            else if (current == quote)
+                quote = '\0';
+            continue;
+        }
+        if (current == '/' && next == '/') {
+            lineComment = true;
+            ++index;
+        } else if (current == '/' && next == '*') {
+            blockComment = true;
+            ++index;
+        } else if (current == '"' || current == '\'') {
+            quote = current;
+        } else if (current == '{') {
+            ++depth;
+        } else if (current == '}' && --depth == 0) {
+            return source.substr(begin, index + 1 - begin);
+        }
+    }
+    return {};
 }
 
-int main()
+bool extractFunctions(const std::string& source,
+                      std::initializer_list<const char*> names, QString& methods)
 {
+    for (const char* name : names) {
+        const auto begin = source.find(std::string("    function ") + name + "(");
+        const auto end = source.find("\n    }", begin);
+        if (!require(begin != std::string::npos && end != std::string::npos,
+                     "QML function under test exists"))
+            return false;
+        methods += QString::fromStdString(source.substr(begin, end + 6 - begin));
+        methods += '\n';
+    }
+    return true;
+}
+
+bool libraryActionTests(const std::string& source)
+{
+    QString actions;
+    if (!extractFunctions(source, {"deckLetterForModifiers", "loadCursorTrackToDeck",
+                                   "confirmLibrarySelection"}, actions))
+        return false;
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    // Execute the production action bodies with observable deck/navigation sinks.
+    component.setData((QStringLiteral(R"(
+        import QtQuick
+        QtObject {
+            property string activeTab: "library"
+            property string usbFocusArea: "tracks"
+            property string cursorPath: "fixture.wav"
+            property string cursorTrackId: "local-id"
+            property string lastDeck: ""
+            property string lastPath: ""
+            property string lastTrackId: ""
+            property int loads: 0
+            property int navigations: 0
+            function getCursorFilePath() { return cursorPath }
+            function getCursorTrackId() { return cursorTrackId }
+            function activateUsbCursor() { ++navigations }
+            function loadTrackToDeck(deck, path, trackId) {
+                lastDeck = deck
+                lastPath = path
+                lastTrackId = trackId
+                ++loads
+            }
+        )") + actions + '}').toUtf8(), QUrl());
+    std::unique_ptr<QObject> library(component.create());
+    if (!require(library != nullptr, "library action harness instantiates")) {
+        std::cerr << component.errorString().toStdString();
+        return false;
+    }
+    const struct {
+        int modifiers;
+        const char* deck;
+    } cases[] {
+        {Qt::NoModifier, "A"},
+        {Qt::ShiftModifier, "B"},
+        {Qt::ControlModifier, "C"},
+        {Qt::AltModifier, "D"},
+        {Qt::ShiftModifier | Qt::ControlModifier, "B"},
+        {Qt::ShiftModifier | Qt::AltModifier, "B"},
+        {Qt::ControlModifier | Qt::AltModifier, "C"},
+        {Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier, "B"}
+    };
     bool ok = true;
+    for (const auto& test : cases) {
+        QVariant result;
+        ok &= require(QMetaObject::invokeMethod(library.get(), "deckLetterForModifiers",
+            Q_RETURN_ARG(QVariant, result), Q_ARG(QVariant, QVariant(test.modifiers)))
+                && result.toString() == QString::fromLatin1(test.deck),
+            "library keyboard deck selection preserves modifier priority");
+    }
+    const auto confirm = [&library](const char* deck) {
+        return QMetaObject::invokeMethod(library.get(), "confirmLibrarySelection",
+            Q_ARG(QVariant, QVariant(QString::fromLatin1(deck))));
+    };
+    ok &= require(confirm("B") && library->property("loads").toInt() == 1
+                      && library->property("lastDeck").toString() == QStringLiteral("B")
+                      && library->property("lastPath").toString() == QStringLiteral("fixture.wav")
+                      && library->property("lastTrackId").toString() == QStringLiteral("local-id"),
+                  "shared library action forwards local track identity unchanged");
+    library->setProperty("activeTab", "usb");
+    library->setProperty("usbFocusArea", "primary");
+    library->setProperty("cursorPath", "rekordbox:device:track");
+    library->setProperty("cursorTrackId", "external-id");
+    ok &= require(confirm("C") && library->property("loads").toInt() == 1
+                      && library->property("navigations").toInt() == 1,
+                  "USB confirmation outside tracks navigates instead of loading");
+    library->setProperty("usbFocusArea", "tracks");
+    ok &= require(confirm("D") && library->property("loads").toInt() == 2
+                      && library->property("lastDeck").toString() == QStringLiteral("D")
+                      && library->property("lastPath").toString() == QStringLiteral("rekordbox:device:track")
+                      && library->property("lastTrackId").toString() == QStringLiteral("external-id"),
+                  "USB track confirmation forwards external identity unchanged");
+    return ok;
+}
+
+bool audioRoleTests(const std::string& source)
+{
+    const auto begin = source.find("    readonly property var audioRoleDefinitions:");
+    const auto end = source.find("\n    ]", begin);
+    if (!require(begin != std::string::npos && end != std::string::npos,
+                 "settings audio-role definitions exist"))
+        return false;
+    QString methods = QString::fromStdString(source.substr(begin, end + 6 - begin));
+    methods += '\n';
+    if (!extractFunctions(source, {"getRoleSelections", "setRoleSelections",
+            "roleDefinition", "roleRow", "selectedRoleSelections", "parseFirstChannel",
+            "pairTextForFirstChannel", "indexForText", "firstRealOutput",
+            "getOutputPairOptions", "outputPairCacheKey", "refreshRoleChannelPairs",
+            "refreshRoleOutputAndPairs"}, methods))
+        return false;
+    const auto roleModel = source.find("model: settingsWindow.audioRoleDefinitions");
+    const auto roleRepeater = source.rfind("Repeater {", roleModel);
+    const auto repeaterId = source.find("id: audioRoleRepeater", roleRepeater);
+    const auto repeaterEnd = source.find("\n                              }", roleModel);
+    const auto rowBegin = source.find("    component AudioRoleRow: RowLayout {");
+    const auto rowEnd = source.find("\n    }", rowBegin);
+    if (!require(roleModel != std::string::npos && roleRepeater != std::string::npos
+                      && repeaterId < roleModel && repeaterEnd != std::string::npos
+                      && rowBegin != std::string::npos && rowEnd != std::string::npos,
+                 "audio-role lookup is wired to its row repeater, not the category repeater"))
+        return false;
+    qmlRegisterType(QUrl::fromLocalFile(QString::fromUtf8(BROCKDJ_SOURCE_DIR)
+        + QStringLiteral("/src/qml/components/ComboBox.qml")),
+        "DJSoftware", 1, 0, "ComboBox");
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    const QString properties = QStringLiteral(R"(
+            id: settingsWindow
+            property string pendingAudioDeviceType: "ALSA"
+            property string pendingMasterOutputDevice: ""
+            property int pendingMasterFirstChannel: 1
+            property string pendingHeadphonesOutputDevice: ""
+            property int pendingHeadphonesFirstChannel: -1
+            property string pendingBoothOutputDevice: ""
+            property int pendingBoothFirstChannel: -1
+            property var audioOutputDeviceOptions: ["None", "USB", "Other"]
+            property var masterChannelPairOptions: ["None", "1-2", "3-4"]
+            property var headphonesChannelPairOptions: ["None", "1-2", "3-4"]
+            property var boothChannelPairOptions: ["None", "7-8"]
+            property var outputChannelPairsCache: ({})
+            property bool audioUiSyncing: false
+            property var rows: [
+                {outputCombo: {currentIndex: 0}, channelCombo: {currentIndex: 0}},
+                {outputCombo: {currentIndex: 0}, channelCombo: {currentIndex: 0}},
+                {outputCombo: {currentIndex: 0}, channelCombo: {currentIndex: 0}}
+            ]
+            property var deckA: ({
+                getAvailableAudioOutputDevices: function(type) {
+                    return settingsWindow.audioOutputDeviceOptions
+                },
+                getAvailableOutputChannelPairs: function(type, device) {
+                    if (device === "USB") return ["None", "1-2", "3-4"]
+                    if (device === "Other") return ["None", "7-8"]
+                    return ["None"]
+                }
+            })
+        )");
+    component.setData((QStringLiteral("import QtQuick\nQtObject {")
+        + properties + QStringLiteral(R"(
+            property var audioRoleRepeater: ({
+                itemAt: function(index) { return settingsWindow.rows[index] }
+            })
+        )") + methods + '}').toUtf8(), QUrl());
+    std::unique_ptr<QObject> settings(component.create());
+    if (!require(settings != nullptr, "audio-role action harness instantiates")) {
+        std::cerr << component.errorString().toStdString();
+        return false;
+    }
+    const auto evaluate = [&settings](const char* script) {
+        QQmlExpression expression(QQmlEngine::contextForObject(settings.get()),
+                                  settings.get(), QString::fromUtf8(script));
+        const QVariant result = expression.evaluate();
+        if (expression.hasError()) {
+            std::cerr << expression.error().toString().toStdString() << '\n';
+            return false;
+        }
+        return result.toBool();
+    };
+    bool ok = true;
+    ok &= require(evaluate(
+        "setRoleSelections('master', 'USB', 1);"
+        "setRoleSelections('headphones', 'Other', 7);"
+        "setRoleSelections('booth', 'None', -1);"
+        "pendingMasterOutputDevice === 'USB' && pendingMasterFirstChannel === 1"
+        " && pendingHeadphonesOutputDevice === 'Other' && pendingHeadphonesFirstChannel === 7"
+        " && pendingBoothOutputDevice === 'None' && pendingBoothFirstChannel === -1"),
+        "audio-role setters update independent pending properties");
+    ok &= require(evaluate(
+        "roleRow('master') === rows[0] && roleRow('headphones') === rows[1]"
+        " && roleRow('booth') === rows[2]"),
+        "role rows resolve through the repeater without a second lifetime registry");
+    ok &= require(evaluate(
+        "var s = selectedRoleSelections('master');"
+        "s.outputDevice === 'None' && s.firstChannel === -1"
+        " && pendingMasterOutputDevice === 'USB' && pendingMasterFirstChannel === 1"),
+        "Apply selection reads combos without mutating pending preferences");
+    ok &= require(evaluate(
+        "rows[0].outputCombo.currentIndex = 1; rows[0].channelCombo.currentIndex = 2;"
+        "var s = selectedRoleSelections('master');"
+        "s.outputDevice === 'USB' && s.firstChannel === 3"),
+        "selected role returns the actual output and channel pair");
+    ok &= require(evaluate(
+        "rows[0].outputCombo.currentIndex = 99; rows[0].channelCombo.currentIndex = 99;"
+        "var s = selectedRoleSelections('master');"
+        "s.outputDevice === 'USB' && s.firstChannel === 1"),
+        "stale combo indexes cannot replace pending routing with undefined values");
+    ok &= require(evaluate(
+        "rows[1] = null; var s = selectedRoleSelections('headphones');"
+        "s.outputDevice === 'Other' && s.firstChannel === 7"),
+        "rows not yet instantiated retain their pending selection");
+    ok &= require(evaluate(
+        "rows[1] = {outputCombo: {currentIndex: 0}, channelCombo: {currentIndex: 0}};"
+        "setRoleSelections('master', 'USB', -1); refreshRoleChannelPairs('master');"
+        "pendingMasterFirstChannel === 1 && rows[0].channelCombo.currentIndex === 1"
+        " && masterChannelPairOptions.length === 3 && !audioUiSyncing"),
+        "Master on a real device normalizes None to its first available pair");
+    ok &= require(evaluate(
+        "setRoleSelections('headphones', 'USB', -1); refreshRoleChannelPairs('headphones');"
+        "pendingHeadphonesFirstChannel === -1 && rows[1].channelCombo.currentIndex === 0"
+        " && headphonesChannelPairOptions.length === 3 && !audioUiSyncing"),
+        "Headphones None remains disabled rather than inheriting Master normalization");
+    ok &= require(evaluate(
+        "setRoleSelections('booth', 'Other', 7); refreshRoleChannelPairs('booth');"
+        "pendingBoothFirstChannel === 7 && rows[2].channelCombo.currentIndex === 1"
+        " && boothChannelPairOptions[1] === '7-8' && !audioUiSyncing"),
+        "Booth retains its independent device channel pairs");
+    ok &= require(evaluate(
+        "audioOutputDeviceOptions = ['None'];"
+        "setRoleSelections('master', 'Saved USB', 3); refreshRoleOutputAndPairs('master');"
+        "pendingMasterOutputDevice === 'Saved USB' && rows[0].outputCombo.currentIndex === 0"),
+        "incomplete device enumeration does not overwrite a saved output name");
+    ok &= require(evaluate(
+        "audioOutputDeviceOptions = ['None', 'USB', 'Other'];"
+        "setRoleSelections('master', 'Unavailable', 3); refreshRoleOutputAndPairs('master');"
+        "pendingMasterOutputDevice === 'USB' && pendingMasterFirstChannel === 3"
+        " && rows[0].outputCombo.currentIndex === 1 && rows[0].channelCombo.currentIndex === 2"
+        " && !audioUiSyncing"),
+        "completed device enumeration reconciles output and pair indexes together");
+    ok &= require(evaluate(
+        "try { getRoleSelections('unknown'); false }"
+        " catch (error) { error.message === 'Unknown audio output role: unknown' }"),
+        "invalid internal roles report errors instead of looking like disabled outputs");
+
+    QQmlComponent visualComponent(&engine);
+    visualComponent.setData((QStringLiteral(
+        "import QtQuick\nimport QtQuick.Layouts\nimport DJSoftware\nItem {")
+        + properties + methods
+        + QString::fromStdString(source.substr(rowBegin, rowEnd + 6 - rowBegin)) + '\n'
+        + QString::fromStdString(source.substr(roleRepeater, repeaterEnd + 32 - roleRepeater))
+        + '}').toUtf8(), QUrl());
+    settings.reset(visualComponent.create());
+    if (!require(settings != nullptr, "production audio-role rows instantiate")) {
+        std::cerr << visualComponent.errorString().toStdString();
+        return false;
+    }
+    ok &= require(evaluate(
+        "audioRoleRepeater.count === 3 && roleRow('master').roleDefinition.key === 'master'"
+        " && roleRow('headphones').roleDefinition.key === 'headphones'"
+        " && roleRow('booth').roleDefinition.key === 'booth'"),
+        "the real row repeater exposes all three independent roles");
+    ok &= require(evaluate(
+        "setRoleSelections('master', 'USB', 3); refreshRoleOutputAndPairs('master');"
+        "var s = selectedRoleSelections('master');"
+        "s.outputDevice === 'USB' && s.firstChannel === 3"
+        " && roleRow('master').outputCombo.currentIndex === 1"
+        " && roleRow('master').channelCombo.currentIndex === 2"),
+        "device refresh updates the actual role combos used by Apply");
+    ok &= require(evaluate(
+        "roleRow('headphones').outputCombo.currentIndex = 2;"
+        "roleRow('headphones').channelCombo.currentIndex = 1;"
+        "pendingHeadphonesOutputDevice === 'Other' && pendingHeadphonesFirstChannel === 7"
+        " && pendingMasterOutputDevice === 'USB' && pendingMasterFirstChannel === 3"),
+        "production combo callbacks update only their assigned role");
+    return ok;
+}
+
+bool sliderCleanupTests()
+{
+    const QString componentDirectory = QString::fromUtf8(BROCKDJ_SOURCE_DIR)
+        + QStringLiteral("/src/qml/components/");
+    qmlRegisterSingletonType(QUrl::fromLocalFile(
+        componentDirectory + QStringLiteral("UiTheme.qml")),
+        "DJSoftware", 1, 0, "UiTheme");
+
+    QQmlEngine engine;
+    QQmlComponent cursorComponent(&engine);
+    cursorComponent.setData(R"(
+        import QtQml
+        QtObject {
+            property int hideCalls: 0
+            property int restoreCalls: 0
+            property int moveCalls: 0
+            property real lastX: 0
+            property real lastY: 0
+            function hideCursor() { ++hideCalls }
+            function restoreCursor() { ++restoreCalls }
+            function moveCursor(x, y) {
+                ++moveCalls
+                lastX = x
+                lastY = y
+            }
+        })", QUrl());
+    std::unique_ptr<QObject> cursor(cursorComponent.create());
+    if (!require(cursor != nullptr, "slider test cursor loads")) {
+        std::cerr << cursorComponent.errorString().toStdString();
+        return false;
+    }
+    engine.rootContext()->setContextProperty(QStringLiteral("cursorControl"),
+                                             cursor.get());
+    QQmlComponent sliderComponent(&engine, QUrl::fromLocalFile(
+        componentDirectory + QStringLiteral("Slider.qml")));
+    std::unique_ptr<QObject> slider(sliderComponent.create());
+    if (!require(slider != nullptr, "shared slider instantiates")) {
+        std::cerr << sliderComponent.errorString().toStdString();
+        return false;
+    }
+    const auto evaluate = [&slider](const char* script) {
+        QQmlExpression expression(QQmlEngine::contextForObject(slider.get()),
+                                  slider.get(), QString::fromUtf8(script));
+        const QVariant value = expression.evaluate();
+        if (expression.hasError()) {
+            std::cerr << expression.error().toString().toStdString() << '\n';
+            return false;
+        }
+        return value.toBool();
+    };
+    bool ok = true;
+    ok &= require(evaluate(
+        "sliderDrag._active = true; sliderDrag._cursorHidden = true;"
+        "sliderDrag._cursorService = cursorControl;"
+        "dragActive = true; sliderDrag.canceled();"
+        "!dragActive && !sliderDrag._active && !sliderDrag._cursorHidden"),
+        "cancellation clears slider drag and restores its cursor");
+    ok &= require(cursor->property("restoreCalls").toInt() == 1
+                      && cursor->property("moveCalls").toInt() == 0,
+                  "cancellation never teleports the cursor");
+    ok &= require(evaluate(
+        "sliderDrag._active = true; sliderDrag._cursorHidden = true;"
+        "sliderDrag._cursorService = cursorControl;"
+        "sliderDrag._pressGX = 123; sliderDrag._pressGY = 45;"
+        "dragActive = true; sliderDrag.released(null);"
+        "!dragActive && !sliderDrag._active && !sliderDrag._cursorHidden"),
+        "mouse release clears drag state");
+    ok &= require(cursor->property("restoreCalls").toInt() == 2
+                      && cursor->property("moveCalls").toInt() == 1
+                      && cursor->property("lastX").toDouble() == 123
+                      && cursor->property("lastY").toDouble() == 45,
+                  "mouse release restores the press position once");
+    ok &= require(evaluate(
+        "sliderDrag._active = true; dragActive = true;"
+        "sliderDrag.released(null); sliderDrag.canceled();"
+        "!dragActive && !sliderDrag._active"),
+        "drag without a hidden cursor and repeated cleanup are safe");
+    ok &= require(cursor->property("restoreCalls").toInt() == 2
+                      && cursor->property("moveCalls").toInt() == 1,
+                  "touch-style release and redundant cleanup leave the cursor alone");
+
+    QQuickWindow window;
+    window.resize(400, 300);
+    auto* sliderItem = qobject_cast<QQuickItem*>(slider.get());
+    if (!require(sliderItem != nullptr, "slider is a visual item"))
+        return false;
+    sliderItem->setParentItem(window.contentItem());
+    sliderItem->setPosition(QPointF(10, 10));
+    sliderItem->setSize(QSizeF(150, 22));
+    slider->setProperty("value", 0.5);
+    window.show();
+    QCoreApplication::processEvents();
+    const auto sendMouse = [&window](QEvent::Type type, QPointF position,
+                                    Qt::MouseButton button, Qt::MouseButtons buttons) {
+        QMouseEvent event(type, position, window.mapToGlobal(position),
+                          button, buttons, Qt::NoModifier);
+        QCoreApplication::sendEvent(&window, &event);
+    };
+    sendMouse(QEvent::MouseButtonPress, {50, 20}, Qt::LeftButton, Qt::LeftButton);
+    sendMouse(QEvent::MouseMove, {80, 20}, Qt::NoButton, Qt::LeftButton);
+    ok &= require(slider->property("dragActive").toBool()
+                      && std::abs(slider->property("value").toDouble() - 0.7) < 1e-6,
+                  "shared slider keeps relative mouse drag scaling");
+    sendMouse(QEvent::MouseButtonRelease, {80, 20}, Qt::LeftButton, Qt::NoButton);
+    ok &= require(!slider->property("dragActive").toBool()
+                      && cursor->property("hideCalls").toInt() == 1
+                      && cursor->property("restoreCalls").toInt() == 3
+                      && cursor->property("moveCalls").toInt() == 2,
+                  "real mouse drag restores the hidden cursor exactly once");
+
+    sliderItem->setSize(QSizeF(22, 150));
+    slider->setProperty("orientation", Qt::Vertical);
+    slider->setProperty("from", 1.0);
+    slider->setProperty("to", -1.0);
+    slider->setProperty("value", 0.0);
+    sendMouse(QEvent::MouseButtonPress, {20, 70}, Qt::LeftButton, Qt::LeftButton);
+    sendMouse(QEvent::MouseMove, {20, 40}, Qt::NoButton, Qt::LeftButton);
+    ok &= require(slider->property("dragActive").toBool()
+                      && std::abs(slider->property("value").toDouble() + 0.4) < 1e-6,
+                  "vertical inverted sliders retain their direction and scaling");
+    sliderItem->setEnabled(false);
+    ok &= require(!slider->property("dragActive").toBool()
+                      && cursor->property("hideCalls").toInt() == 2
+                      && cursor->property("restoreCalls").toInt() == 4
+                      && cursor->property("moveCalls").toInt() == 2,
+                  "disabling a dragging slider cancels without teleporting");
+    sendMouse(QEvent::MouseButtonRelease, {20, 40}, Qt::LeftButton, Qt::NoButton);
+    sliderItem->setEnabled(true);
+    sliderItem->setSize(QSizeF(150, 22));
+    slider->setProperty("orientation", Qt::Horizontal);
+    slider->setProperty("from", 0.0);
+    slider->setProperty("to", 1.0);
+
+    auto* touchDevice = QTest::createTouchDevice(QInputDevice::DeviceType::TouchScreen);
+    slider->setProperty("value", 0.5);
+    QTest::touchEvent(&window, touchDevice).press(0, {50, 20}, &window);
+    ok &= require(evaluate("sliderTouch.active && sliderDrag._touchDrag"),
+                  "slider records the touchscreen source when the press begins");
+    QTest::touchEvent(&window, touchDevice).move(0, {80, 20}, &window);
+    const bool touchMoved = QTest::qWaitFor([&slider] {
+        return slider->property("dragActive").toBool();
+    }, 1000);
+    if (!slider->property("dragActive").toBool()
+        || std::abs(slider->property("value").toDouble() - 0.7) >= 1e-6) {
+        QQmlExpression state(QQmlEngine::contextForObject(slider.get()), slider.get(),
+            QStringLiteral("JSON.stringify({value: value, active: dragActive,"
+                           "pressed: sliderDrag.pressed, pressValue: sliderDrag._pressVal,"
+                           "pressX: sliderDrag._pressGX, point: sliderTouch.point.position})"));
+        std::cerr << "Touch drag state: "
+                  << state.evaluate().toString().toStdString() << '\n';
+    }
+    ok &= require(touchMoved
+                      && std::abs(slider->property("value").toDouble() - 0.7) < 1e-6,
+                  "touch drag shares the mouse relative scaling");
+    QTest::touchEvent(&window, touchDevice).release(0, {80, 20}, &window);
+    const bool touchReleased = QTest::qWaitFor([&slider] {
+        return !slider->property("dragActive").toBool();
+    }, 1000);
+    ok &= require(touchReleased
+                      && cursor->property("hideCalls").toInt() == 2
+                      && cursor->property("restoreCalls").toInt() == 4
+                      && cursor->property("moveCalls").toInt() == 2,
+                  "real touch release never hides or teleports the mouse cursor");
+    QTest::touchEvent(&window, touchDevice).press(0, {50, 20}, &window);
+    QTest::touchEvent(&window, touchDevice).release(0, {80, 20}, &window);
+    const bool shortTouchReleased = QTest::qWaitFor([&evaluate] {
+        return evaluate("!sliderTouch.active && !sliderDrag.pressed");
+    }, 1000);
+    ok &= require(shortTouchReleased
+                      && cursor->property("hideCalls").toInt() == 2
+                      && cursor->property("restoreCalls").toInt() == 4
+                      && cursor->property("moveCalls").toInt() == 2,
+                  "touch release without an intermediate move cannot become a mouse drag");
+
+    ok &= require(evaluate(
+        "sliderDrag._active = true; sliderDrag._cursorHidden = true;"
+        "sliderDrag._cursorService = cursorControl;"
+        "dragActive = true; true"),
+        "destruction case arms the drag");
+    engine.rootContext()->setContextProperty(QStringLiteral("cursorControl"),
+                                             static_cast<QObject*>(nullptr));
+    slider.reset();
+    ok &= require(cursor->property("restoreCalls").toInt() == 5
+                      && cursor->property("moveCalls").toInt() == 2,
+                  "active slider teardown restores even after context bindings are cleared");
+    return ok;
+}
+
+std::unique_ptr<QObject> createQmlObject(QQmlEngine& engine, const QString& source,
+                                         const char* description)
+{
+    QQmlComponent component(&engine);
+    component.setData(source.toUtf8(), QUrl());
+    std::unique_ptr<QObject> object(component.create());
+    if (!require(object != nullptr, description))
+        std::cerr << component.errorString().toStdString() << '\n';
+    return object;
+}
+
+bool clickItem(QQuickWindow& window, QObject* object, const char* description)
+{
+    auto* item = qobject_cast<QQuickItem*>(object);
+    if (!require(item != nullptr && item->isVisible(), description))
+        return false;
+    const QPointF center = item->mapToScene(item->boundingRect().center());
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, center.toPoint());
+    QCoreApplication::processEvents();
+    return true;
+}
+
+bool qmlMergeRuntimeTests()
+{
+    const QString qmlDirectory = QString::fromUtf8(BROCKDJ_SOURCE_DIR)
+        + QStringLiteral("/src/qml/");
+    qmlRegisterType<ScrollingWaveformItemStub>("DJSoftware", 1, 0,
+                                               "ScrollingWaveformItem");
+    qmlRegisterType(QUrl::fromLocalFile(qmlDirectory + QStringLiteral("components/Knob.qml")),
+                    "DJSoftware", 1, 0, "Knob");
+    qmlRegisterType(QUrl::fromLocalFile(qmlDirectory
+                        + QStringLiteral("waveform/EnlargedWaveform.qml")),
+                    "DJSoftware", 1, 0, "EnlargedWaveform");
+
+    QQmlEngine engine;
+    auto windowContext = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject { property int fxBarHeight: 96 }
+    )"), "QML merge window context instantiates");
+    auto fxManager = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool syncEnabled1: false
+            property bool syncEnabled2: false
+            property real beatDiv1: 0.25
+            property real beatDiv2: 0.25
+            property real displayBpm1: 120
+            property real displayBpm2: 120
+            property real primaryParam1: 0.5
+            property real primaryParam2: 0.5
+            property bool enabled1: false
+            property bool enabled2: false
+            property string effectType1: "---"
+            property string effectType2: "---"
+            property string soundColorMode: "Filter"
+            property real soundColorParam: 0.5
+            function setEffectType(unit, value) {
+                if (unit === 1) effectType1 = value; else effectType2 = value
+            }
+            function setDeckAssignment(unit, deck, value) {}
+            function setWetDry(unit, value) {}
+            function unitEnabled(unit) { return unit === 1 ? enabled1 : enabled2 }
+            function setUnitEnabled(unit, value) {
+                if (unit === 1) enabled1 = value; else enabled2 = value
+            }
+            function setSyncEnabled(unit, value) {
+                if (unit === 1) syncEnabled1 = value; else syncEnabled2 = value
+            }
+            function setBeatDivision(unit, value) {
+                if (unit === 1) beatDiv1 = value; else beatDiv2 = value
+            }
+            function setPrimaryParam(unit, value) {
+                if (unit === 1) primaryParam1 = value; else primaryParam2 = value
+            }
+            function setSoundColorMode(value) { soundColorMode = value }
+            function setSoundColorParam(value) { soundColorParam = value }
+        }
+    )"), "QML merge FX context instantiates");
+    auto waveformZoom = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property real zoomFraction: 0.5
+            property string zoomLabel: "1.0x"
+            function zoomIn() {}
+            function zoomOut() {}
+        }
+    )"), "QML merge zoom context instantiates");
+    auto deviceLibrary = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject { property var devices: [] }
+    )"), "QML merge device context instantiates");
+    auto deckA = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool hasTrack: true
+            property bool readOnlyExternalTrack: false
+            property bool isPlaying: false
+            property string externalSourceId: ""
+            property string trackKey: "Am"
+            property real currentBpm: 128.4
+            property real beatJumpBeats: 4
+            property bool quantizeEnabled: false
+            property bool beatgridLocked: false
+            property real pixelsPerSecond: 0
+            property var trackData: ({ isBpmAnalyzed: true, bpm: 128.4 })
+            property int ejectCalls: 0
+            property int lastBeatNudge: 0
+            function ejectTrack() { ++ejectCalls }
+            function beatJump(value) {}
+            function halveBpm() {}
+            function doubleBpm() {}
+            function nudgeBeatgridBeats(value) { lastBeatNudge = value }
+            function nudgeBeatgridMs(value) {}
+            function setDownbeatAtCurrentPosition() {}
+            function setManualBpm(value) {}
+        }
+    )"), "QML merge deck A context instantiates");
+    auto deckB = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool hasTrack: true
+            property bool readOnlyExternalTrack: false
+            property bool isPlaying: false
+            property string externalSourceId: ""
+            property string trackKey: "C"
+            property real currentBpm: 124
+            property real beatJumpBeats: 8
+            property bool quantizeEnabled: false
+            property bool beatgridLocked: false
+            property real pixelsPerSecond: 0
+            property var trackData: ({ isBpmAnalyzed: true, bpm: 124 })
+            property int ejectCalls: 0
+            property int lastBeatNudge: 0
+            function ejectTrack() { ++ejectCalls }
+            function beatJump(value) {}
+            function halveBpm() {}
+            function doubleBpm() {}
+            function nudgeBeatgridBeats(value) { lastBeatNudge = value }
+            function nudgeBeatgridMs(value) {}
+            function setDownbeatAtCurrentPosition() {}
+            function setManualBpm(value) {}
+        }
+    )"), "QML merge deck B context instantiates");
+    if (!windowContext || !fxManager || !waveformZoom || !deviceLibrary
+        || !deckA || !deckB)
+        return false;
+
+    QQmlContext context(engine.rootContext());
+    context.setContextProperty(QStringLiteral("window"), windowContext.get());
+    context.setContextProperty(QStringLiteral("fxManager"), fxManager.get());
+    context.setContextProperty(QStringLiteral("waveformZoomController"), waveformZoom.get());
+    context.setContextProperty(QStringLiteral("deviceLibraryManager"),
+                               deviceLibrary.get());
+
+    bool ok = true;
+    QQuickWindow performanceWindow;
+    performanceWindow.resize(900, 600);
+    QQmlComponent performanceComponent(&engine, QUrl::fromLocalFile(
+        qmlDirectory + QStringLiteral("performance/PerformanceWaveformScreen.qml")));
+    std::unique_ptr<QObject> performance(performanceComponent.create(&context));
+    if (!require(performance != nullptr, "performance waveform host instantiates")) {
+        std::cerr << performanceComponent.errorString().toStdString() << '\n';
+        return false;
+    }
+    performance->setProperty("deckAEngine", QVariant::fromValue(deckA.get()));
+    performance->setProperty("deckBEngine", QVariant::fromValue(deckB.get()));
+    auto* performanceItem = qobject_cast<QQuickItem*>(performance.get());
+    if (!require(performanceItem != nullptr, "performance waveform host is visual"))
+        return false;
+    performanceItem->setParentItem(performanceWindow.contentItem());
+    performanceItem->setSize(QSizeF(900, 600));
+    performanceWindow.show();
+    QCoreApplication::processEvents();
+
+    QObject* quickA = performance->findChild<QObject*>(QStringLiteral("deckQuickPanelA"));
+    QObject* quickB = performance->findChild<QObject*>(QStringLiteral("deckQuickPanelB"));
+    ok &= require(quickA != nullptr && quickB != nullptr,
+                  "the screen owns two separate quick-panel instances");
+    ok &= require(quickB && QMetaObject::invokeMethod(quickB, "selectedRequested")
+                      && performance->property("selectedDeck").toString() == QStringLiteral("B"),
+                  "deck B quick-panel selection updates the screen's selected deck");
+    if (quickA)
+        QMetaObject::invokeMethod(quickA, "selectedRequested");
+    ok &= require(performance->property("selectedDeck").toString() == QStringLiteral("A"),
+                  "deck A quick-panel selection remains independent");
+
+    QObject* ejectArea = performance->findChild<QObject*>(QStringLiteral("deckEjectArea"));
+    ok &= require(ejectArea && ejectArea->property("enabled").toBool(),
+                  "a stopped deck exposes its eject action");
+    deckA->setProperty("isPlaying", true);
+    QCoreApplication::processEvents();
+    ok &= require(ejectArea && !ejectArea->property("enabled").toBool(),
+                  "a playing deck gates its eject action");
+    deckA->setProperty("isPlaying", false);
+
+    QObject* jumpMinus = performance->findChild<QObject*>(QStringLiteral("beatJumpMinus"));
+    ok &= clickItem(performanceWindow, jumpMinus, "the real Beat Jump minus control is visible");
+    ok &= require(std::abs(deckA->property("beatJumpBeats").toDouble() - 2.0) < 1e-6,
+                  "the embedded quick panel changes its deck's Beat Jump range");
+
+    QMetaObject::invokeMethod(performance.get(), "openGrid");
+    QCoreApplication::processEvents();
+    QObject* gridPanel = performance->findChild<QObject*>(
+        QStringLiteral("beatgridPanelInstance"));
+    QObject* gridNudge = performance->findChild<QObject*>(
+        QStringLiteral("gridNudgeMinusBeat"));
+    ok &= require(gridPanel && gridPanel->property("visible").toBool(),
+                  "the beatgrid inline panel is shown by its real host");
+    ok &= clickItem(performanceWindow, gridNudge,
+                    "the real beatgrid nudge control is visible");
+    ok &= require(deckA->property("lastBeatNudge").toInt() == -1,
+                  "the beatgrid button dispatches its nudge to the selected engine");
+    QObject* gridLock = performance->findChild<QObject*>(
+        QStringLiteral("gridLockButton"));
+    ok &= clickItem(performanceWindow, gridLock,
+                    "the real beatgrid lock control is visible");
+    ok &= require(deckA->property("beatgridLocked").toBool(),
+                  "the beatgrid lock control updates its selected engine");
+    ok &= require(gridPanel && QMetaObject::invokeMethod(gridPanel, "closeRequested")
+                      && performance->property("leftPanel").toString() == QStringLiteral("closed"),
+                  "the beatgrid close signal reaches the screen owner");
+    performance->setProperty("rightPanelOpen", true);
+    QCoreApplication::processEvents();
+    QObject* beatFxPanel = performance->findChild<QObject*>(
+        QStringLiteral("beatFxPanelInstance"));
+    ok &= require(beatFxPanel && QTest::qWaitFor([&] {
+                      return beatFxPanel->property("visible").toBool();
+                  }),
+                  "the right-side Beat FX panel remains host-controlled");
+
+    QQuickWindow waveformWindow;
+    waveformWindow.resize(800, 320);
+    QQmlComponent waveformComponent(&engine, QUrl::fromLocalFile(
+        qmlDirectory + QStringLiteral("waveform/EnlargedWaveform.qml")));
+    std::unique_ptr<QObject> waveform(waveformComponent.create(&context));
+    if (!require(waveform != nullptr, "enlarged waveform host instantiates")) {
+        std::cerr << waveformComponent.errorString().toStdString() << '\n';
+        return false;
+    }
+    auto* waveformItem = qobject_cast<QQuickItem*>(waveform.get());
+    if (!require(waveformItem != nullptr, "enlarged waveform host is visual"))
+        return false;
+    waveformItem->setParentItem(waveformWindow.contentItem());
+    waveformItem->setSize(QSizeF(800, 320));
+    waveformWindow.show();
+    QCoreApplication::processEvents();
+    QObject* editor = waveform->findChild<QObject*>(
+        QStringLiteral("beatgridEditorPanel"));
+    ok &= require(editor && std::abs(editor->property("occupiedWidth").toDouble() - 30.0) < 1e-6,
+                  "the inline waveform editor preserves its collapsed occupied width");
+    if (editor)
+        editor->setProperty("expanded", true);
+    QCoreApplication::processEvents();
+    ok &= require(editor && editor->property("occupiedWidth").toDouble() > 30.0,
+                  "the inline waveform editor expands its occupied width at runtime");
+
+    QQuickWindow fxWindow;
+    fxWindow.resize(1000, 96);
+    QQmlComponent fxBarComponent(&engine, QUrl::fromLocalFile(
+        qmlDirectory + QStringLiteral("mixer/FxBar.qml")));
+    std::unique_ptr<QObject> fxBar(fxBarComponent.create(&context));
+    if (!require(fxBar != nullptr, "FX bar host instantiates")) {
+        std::cerr << fxBarComponent.errorString().toStdString() << '\n';
+        return false;
+    }
+    auto* fxBarItem = qobject_cast<QQuickItem*>(fxBar.get());
+    if (!require(fxBarItem != nullptr, "FX bar host is visual"))
+        return false;
+    fxBarItem->setParentItem(fxWindow.contentItem());
+    fxBarItem->setWidth(1000);
+    fxWindow.show();
+    fxWindow.requestActivate();
+    QCoreApplication::processEvents();
+    ok &= require(fxBarItem->isVisible()
+                      && std::abs(fxBarItem->height() - 96.0) < 1e-6,
+                  "the real FX bar host is visible at its configured height");
+    QObject* unit1 = fxBar->findChild<QObject*>(QStringLiteral("fxUnit1"));
+    QObject* unit2 = fxBar->findChild<QObject*>(QStringLiteral("fxUnit2"));
+    ok &= require(unit1 && unit2
+                      && unit1->metaObject()->indexOfProperty("wetDry") >= 0
+                      && unit1->metaObject()->indexOfSignal("deck1Toggled(bool)") >= 0,
+                  "FX units preserve their public alias and signals");
+    if (unit1 && unit2) {
+        unit1->setProperty("wetDry", 0.25);
+        unit2->setProperty("wetDry", 0.75);
+        ok &= require(std::abs(unit1->property("wetDry").toDouble() - 0.25) < 1e-6
+                          && std::abs(unit2->property("wetDry").toDouble() - 0.75) < 1e-6,
+                      "the two local FX units retain separate aliased parameter state");
+    }
+    QObject* effectCombo = unit1
+        ? unit1->findChild<QObject*>(QStringLiteral("fxEffectCombo")) : nullptr;
+    QObject* effectPopup = effectCombo
+        ? effectCombo->property("popup").value<QObject*>() : nullptr;
+    ok &= clickItem(fxWindow, effectCombo, "the real FX selector is visible");
+    QCoreApplication::processEvents();
+    const bool popupReady = effectPopup && QTest::qWaitFor([&] {
+                      return effectPopup->property("visible").toBool();
+                  });
+    if (!popupReady && effectCombo) {
+        std::cerr << "FX selector: size=" << effectCombo->property("width").toDouble()
+                  << 'x' << effectCombo->property("height").toDouble()
+                  << " popup=" << (effectPopup != nullptr);
+        if (effectPopup)
+            std::cerr << " visible=" << effectPopup->property("visible").toBool()
+                      << " focus=" << effectPopup->property("focus").toBool();
+        std::cerr << '\n';
+    }
+    ok &= require(popupReady, "the embedded FX selector opens its controls popup");
+    if (popupReady) {
+        const int highlighted = effectCombo->property("highlightedIndex").toInt();
+        QTest::keyClick(&fxWindow, Qt::Key_Down);
+        ok &= require(QTest::qWaitFor([&] {
+                          return effectCombo->property("highlightedIndex").toInt()
+                              == highlighted + 1;
+                      }), "the embedded FX popup receives keyboard navigation");
+        QTest::keyClick(&fxWindow, Qt::Key_Escape);
+        ok &= require(QTest::qWaitFor([&] {
+                          return !effectPopup->property("visible").toBool();
+                      }), "Escape closes the embedded FX popup");
+    }
+    return ok;
+}
+}
+
+int main(int argc, char** argv)
+{
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
+        qputenv("QT_QPA_PLATFORM", "offscreen");
+    if (qEnvironmentVariableIsEmpty("QT_QUICK_BACKEND"))
+        qputenv("QT_QUICK_BACKEND", "software");
+    QGuiApplication app(argc, argv);
+    bool ok = sliderCleanupTests();
     const auto main = read("src/qml/main.qml");
     const auto topHeader = read("src/qml/shell/TopHeader.qml");
     const auto deckControl = read("src/qml/deck/DeckControl.qml");
+    const auto slider = read("src/qml/components/Slider.qml");
     const auto mixerSection = read("src/qml/mixer/MixerSection.qml");
     const auto workspace = read("src/qml/performance/PerformanceWorkspace.qml");
     const auto shortcuts = read("src/qml/components/UiShortcutManager.qml");
     const auto enlargedWaveform = read("src/qml/waveform/EnlargedWaveform.qml");
     const auto turntableIndicator = read("src/qml/deck/TurntableIndicator.qml");
     const auto settingsPanel = read("src/qml/settings/SettingsPanel.qml");
+    ok &= audioRoleTests(settingsPanel);
+    ok &= qmlMergeRuntimeTests();
     const auto applicationBootstrap = read("src/app/ApplicationBootstrap.cpp");
     const auto performancePads = read("src/qml/performance/PerformancePads.qml");
     const auto library = read("src/qml/library/Library.qml");
+    ok &= libraryActionTests(library);
+    ok &= require(library.find("tr.touchMode && tr.rowSourceTab !== \"usb\" ? 148 : 0")
+                      != std::string::npos
+                      && library.find("tr.miscActionW > 0 && tr.swipeX") != std::string::npos,
+                  "USB rows retain deck swipes but do not expose local mutation actions");
     const auto sourcePage = read("src/qml/library/SourcePage.qml");
     const auto waveformScreen = read("src/qml/performance/PerformanceWaveformScreen.qml");
-    const auto beatFxPanel = read("src/qml/performance/PerformanceBeatFxPanel.qml");
-    const auto deckQuickPanel = read("src/qml/performance/PerformanceDeckQuickPanel.qml");
+    const auto beatgridPanel = componentSection(
+        waveformScreen, "PerformanceBeatgridPanel");
+    const auto performanceActionButton = componentSection(
+        waveformScreen, "PerformanceActionButton");
+    const auto beatFxPanel = componentSection(
+        waveformScreen, "PerformanceBeatFxPanel");
+    const auto deckQuickPanel = componentSection(
+        waveformScreen, "PerformanceDeckQuickPanel");
+    const auto beatgridEditor = componentSection(
+        enlargedWaveform, "BeatgridEditorPanel");
+    const auto fxBar = read("src/qml/mixer/FxBar.qml");
+    const auto fxUnit = componentSection(fxBar, "FxUnit");
+    const auto fxDarkButton = componentSection(fxBar, "FxDarkBtn");
+    const auto fxAssignButton = componentSection(fxBar, "FxAssignBtn");
+    const auto qmlCmake = read("src/qml/CMakeLists.txt");
     const auto deckTrackInfoPanel = read("src/qml/deck/DeckTrackInfoPanel.qml");
     const auto developmentControls = read("src/qml/development/DevelopmentControlsWindow.qml");
-    const auto flx10Mapping = read("src/controllers/mappings/midi/DDJ-FLX10.brockdj.xml");
+    const auto flx10Mapping = read("src/controllers/mappings/DDJ-FLX10.brockdj.xml");
     const auto flx10MidiBridge = read("src/controllers/flx10/Flx10MidiBridge.cpp");
     const auto engineHeader = read("src/deck/DjEngine.h");
     const auto engineTransport = read("src/deck/DjEngineTransport.cpp");
     const auto midiManagerHeader = read("src/controllers/midi/MidiControllerManager.h");
+    ok &= require(deckControl.find("component DeckSlider: Slider {") != std::string::npos
+                      && deckControl.find("dsDragLock") == std::string::npos,
+                  "deck tempo reuses shared slider interaction with styling overrides");
+    ok &= require(slider.find("acceptedDevices: PointerDevice.TouchScreen") != std::string::npos
+                      && slider.find("_touchDrag = sliderTouch.active") != std::string::npos
+                      && slider.find("if (!_touchDrag)") != std::string::npos
+                      && slider.find("if (!pressed)") != std::string::npos,
+                  "slider excludes hover and avoids hiding the mouse cursor for touch");
+    ok &= require(!beatgridPanel.empty() && !beatFxPanel.empty()
+                      && !deckQuickPanel.empty() && !beatgridEditor.empty()
+                      && !fxUnit.empty()
+                      && occurrences(beatgridPanel, "component ") == 1
+                      && occurrences(fxUnit, "component ") == 1
+                      && performanceActionButton.find("required property real rowHeight")
+                          != std::string::npos
+                      && performanceActionButton.find("required property color accent")
+                          != std::string::npos
+                      && fxDarkButton.find("required property color accent")
+                          != std::string::npos
+                      && fxAssignButton.find("required property color accent")
+                          != std::string::npos
+                      && occurrences(beatgridPanel, "PerformanceActionButton {") == 8
+                      && occurrences(beatgridPanel, "rowHeight: root.rowHeight") == 8
+                      && occurrences(beatgridPanel, "accent: \"#E99128\"") == 8
+                      && occurrences(fxUnit, "accent: root.accentColor") == 2,
+                  "merged QML components remain local, independently scoped, and non-nested");
+    ok &= require(qmlCmake.find("PerformanceBeatgridPanel.qml") == std::string::npos
+                      && qmlCmake.find("PerformanceDeckQuickPanel.qml") == std::string::npos
+                      && qmlCmake.find("PerformanceBeatFxPanel.qml") == std::string::npos
+                      && qmlCmake.find("BeatgridEditorPanel.qml") == std::string::npos
+                      && qmlCmake.find("FxUnit.qml") == std::string::npos,
+                  "removed QML files are no longer packaged as module resources");
     ok &= require(deckQuickPanel.find("property real beatJumpBeats") == std::string::npos
                       && deckQuickPanel.find("root.engine.beatJumpBeats") != std::string::npos
                       && engineHeader.find("Q_PROPERTY(double beatJumpBeats") != std::string::npos,
@@ -72,7 +1034,11 @@ int main()
     ok &= require(workspace.find("MixerSection") == std::string::npos
                       && workspace.find("CrossfaderBar") == std::string::npos
                       && workspace.find("FxBar") == std::string::npos
-                      && developmentControls.find("MixerSection") != std::string::npos,
+                      && developmentControls.find("MixerSection") != std::string::npos
+                      && developmentControls.find("FxBar {") != std::string::npos
+                      && developmentControls.find(
+                             "visible: appWindow && appWindow.showDevelopmentControls")
+                          != std::string::npos,
                   "production workspace omits hidden mixer and FX trees while development retains them");
     ok &= require(developmentControls.find("minimumWidth: 1280") != std::string::npos
                       && developmentControls.find("maximumWidth: 1280") != std::string::npos
@@ -452,3 +1418,5 @@ int main()
                   "deck side panel can eject a stopped deck");
     return ok ? 0 : 1;
 }
+
+#include "qml_component_tests.moc"

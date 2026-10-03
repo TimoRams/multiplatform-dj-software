@@ -12,7 +12,6 @@
 #include "analysis/AnalysisTypes.h"
 #include "waveform/WaveformLineBuilder.h"
 #include "waveform/WaveformTypes.h"
-#include "waveform/WaveformDemand.h"
 
 class WaveformCache
 {

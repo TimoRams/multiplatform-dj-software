@@ -4,6 +4,8 @@
 
 #include <QElapsedTimer>
 
+#include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <cstdint>
 
@@ -160,3 +162,30 @@ private:
     std::atomic<double> m_publishedPreRoll {0.0};
     std::atomic<double> m_publishedSourceRate {44100.0};
 };
+
+namespace engine::deck {
+
+constexpr double kJogNudgePercentPerTick = 0.625;
+constexpr double kJogNudgeMaxPercent = 6.0;
+constexpr double kJogNudgeHoldSeconds = 0.080;
+constexpr double kJogNudgeDecayTauSeconds = 0.080;
+constexpr double kJogNudgeStopPercent = 0.05;
+
+inline double jogNudgeCommandPercent(double signedTicks) noexcept
+{
+    return std::clamp(signedTicks * kJogNudgePercentPerTick,
+                      -kJogNudgeMaxPercent,
+                      kJogNudgeMaxPercent);
+}
+
+inline double decayedJogNudgePercent(double commandPercent, double idleSeconds) noexcept
+{
+    if (idleSeconds <= kJogNudgeHoldSeconds)
+        return commandPercent;
+
+    const double percent = commandPercent
+        * std::exp(-(idleSeconds - kJogNudgeHoldSeconds) / kJogNudgeDecayTauSeconds);
+    return std::abs(percent) < kJogNudgeStopPercent ? 0.0 : percent;
+}
+
+} // namespace engine::deck

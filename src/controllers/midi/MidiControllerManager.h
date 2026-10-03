@@ -3,17 +3,15 @@
 #include <QtGlobal>
 
 #if defined(Q_OS_LINUX)
-#include "AlsaMidiInput.h"
+#include "AlsaMidiTransport.h"
 #include "AlsaMidiLineParser.h"
-#include "AlsaMidiOutput.h"
 #endif
 
-#include "feedback/MidiFeedbackController.h"
+#include "MidiFeedbackController.h"
 #include "app/ControlClock.h"
 #include "controllers/flx10/Flx10JogRouter.h"
 #include "controllers/flx10/Flx10RealtimeScratchIngress.h"
-#include "Midi14BitAccumulator.h"
-#include "MidiEchoGuard.h"
+#include "MidiInputState.h"
 
 #include <QObject>
 #include <QPointer>

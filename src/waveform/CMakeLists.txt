@@ -1,11 +1,9 @@
 target_sources(${PROJECT_NAME} PRIVATE
-    WaveformDemand.h
     WaveformTypes.h
     WaveformLineBuilder.h
     WaveformVisualStyle.h
-    WaveformLodPyramid.h
+    WaveformAggregator.h
     WaveformAggregator.cpp
-    WaveformLodPyramid.cpp
     WaveformLineStore.cpp
     WaveformAnalyzer.h
     WaveformAnalyzer.cpp

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "controllers/flx10/Flx10JogRouter.h"
-#include "deck/scratch/RealtimeScratchInput.h"
+#include "deck/scratch/ScratchInput.h"
 
 #include <array>
 #include <cmath>

@@ -3,7 +3,6 @@
 #include "WaveformRenderMath.h"
 #include "waveform/WaveformLineStore.h"
 #include "waveform/WaveformAggregator.h"
-#include "waveform/WaveformLodPyramid.h"
 #include "waveform/WaveformVisualStyle.h"
 
 #include <QElapsedTimer>

@@ -1,30 +1,77 @@
 #pragma once
 
+#include "waveform/WaveformAggregator.h"
+
 #include <QObject>
 #include <QString>
 #include <algorithm>
+#include <array>
 #include <cmath>
-#include "waveform/WaveformLodPyramid.h"
 
 class SettingsManager;
+
+class UiScaleController final : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(double scale READ scale WRITE setScale NOTIFY scaleChanged)
+    Q_PROPERTY(int percent READ percent NOTIFY scaleChanged)
+
+public:
+    static constexpr std::array<double, 7> kScaleSteps {0.80, 0.90, 1.00, 1.10, 1.20, 1.30, 1.40};
+
+    explicit UiScaleController(SettingsManager* settings = nullptr, QObject* parent = nullptr);
+
+    [[nodiscard]] double scale() const noexcept { return m_scale; }
+    [[nodiscard]] int percent() const noexcept;
+    [[nodiscard]] static double validatedScale(double value) noexcept
+    {
+        if (!std::isfinite(value))
+            return 1.0;
+        const auto closest = std::ranges::min_element(kScaleSteps, [value](double a, double b) {
+            return std::abs(a - value) < std::abs(b - value);
+        });
+        return closest != kScaleSteps.end() ? *closest : 1.0;
+    }
+    [[nodiscard]] static double increasedScale(double value) noexcept
+    {
+        value = validatedScale(value);
+        const auto next = std::ranges::find_if(kScaleSteps, [value](double step) { return step > value + 0.001; });
+        return next == kScaleSteps.end() ? kScaleSteps.back() : *next;
+    }
+    [[nodiscard]] static double decreasedScale(double value) noexcept
+    {
+        value = validatedScale(value);
+        for (auto it = kScaleSteps.rbegin(); it != kScaleSteps.rend(); ++it)
+            if (*it < value - 0.001)
+                return *it;
+        return kScaleSteps.front();
+    }
+
+    Q_INVOKABLE void setScale(double value);
+    Q_INVOKABLE void increase();
+    Q_INVOKABLE void decrease();
+    Q_INVOKABLE void reset();
+
+signals:
+    void scaleChanged();
+
+private:
+    void persist();
+
+    SettingsManager* m_settings = nullptr;
+    double m_scale = 1.0;
+};
 
 class WaveformZoomController final : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(double zoom READ zoom WRITE setZoom NOTIFY zoomChanged)
-    // Human-readable zoom, relative to the default detail view: "1.0x" is that
-    // default, larger is zoomed in. The raw value is a pixels-per-line scale and
-    // means nothing to anyone reading it off a button.
+    // Relative to the default detail view; the raw value is pixels per line.
     Q_PROPERTY(QString zoomLabel READ zoomLabel NOTIFY zoomChanged)
-    // Position within the zoom range, 0 fully out to 1 fully in. The detents are
-    // geometric, so this is measured on a log scale — a linear one would sit
-    // near zero across most of the useful range.
+    // Geometric detents use a logarithmic fraction across the zoom range.
     Q_PROPERTY(double zoomFraction READ zoomFraction NOTIFY zoomChanged)
 
 public:
-    // CDJ-style long overview: roughly twelve more zoom-out detents below the
-    // previous 0.030075 limit. At 1280 px this exposes about three minutes of
-    // timeline while the normal 0.22 detail view remains unchanged.
     static constexpr double kMinimum = 0.0056;
     static constexpr double kMaximum = 10.0;
     static constexpr double kDefault = 0.22;
@@ -39,8 +86,7 @@ public:
     [[nodiscard]] static QString zoomLabelFor(double value)
     {
         const double relative = validatedZoom(value) / kDefault;
-        // Below 1x the steps are small in absolute terms, so a single decimal
-        // would show the same number for several detents.
+        // Two decimals keep the small zoom-out detents distinguishable.
         return QStringLiteral("%1x").arg(relative,
                                          0,
                                          'f',

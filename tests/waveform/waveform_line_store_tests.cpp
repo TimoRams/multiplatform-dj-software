@@ -1,5 +1,5 @@
 #include "waveform/WaveformLineStore.h"
-#include "waveform/WaveformLodPyramid.h"
+#include "waveform/WaveformAggregator.h"
 
 #include <algorithm>
 #include <array>

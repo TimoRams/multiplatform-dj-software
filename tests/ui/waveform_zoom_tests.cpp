@@ -1,4 +1,4 @@
-#include "app/WaveformZoomController.h"
+#include "app/UiPreferences.h"
 
 #include <cmath>
 #include <iostream>

@@ -1,4 +1,5 @@
 #include "audio/DeckChannelProcessor.h"
+#include "fx/FxPrimitives.h"
 
 #include <chrono>
 #include <cmath>
@@ -34,6 +35,57 @@ private:
     std::atomic<float> amplitude { 0.2f };
 };
 bool finite(const juce::AudioBuffer<float>&b){for(int c=0;c<b.getNumChannels();++c)for(int i=0;i<b.getNumSamples();++i)if(!std::isfinite(b.getSample(c,i)))return false;return true;}
+void testFxPrimitives(bool& ok)
+{
+    dsp::SsDelay delay;
+    delay.prepare(8);
+    delay.reset();
+    delay.write(0.25f);
+    delay.write(0.75f);
+    ok &= require(std::abs(delay.read(1) - 0.25f) < 1.0e-6f,
+                  "fractional delay wrapper preserves integer tap");
+    ok &= require(std::abs(delay.readFrac(1.5f) - 0.125f) < 1.0e-6f,
+                  "fractional delay wrapper preserves linear interpolation");
+    delay.reset();
+    ok &= require(std::abs(delay.read(1)) < 1.0e-6f,
+                  "fractional delay wrapper reset clears history");
+
+    dsp::SsLfo lfo;
+    lfo.prepare(4.0);
+    lfo.setRateImmediate(1.0f);
+    lfo.tick();
+    ok &= require(std::abs(lfo.sine() - 1.0f) < 1.0e-6f,
+                  "LFO wrapper advances phase by rate over sample rate");
+    ok &= require(std::abs(lfo.sineUnipolar(0.5f)) < 1.0e-6f,
+                  "LFO wrapper retains phase offset and unipolar mapping");
+
+    constexpr int sampleCount = 2048;
+    constexpr double sampleRate = 48000.0;
+    juce::AudioBuffer<float> lowPass(2, sampleCount);
+    juce::AudioBuffer<float> highPass(2, sampleCount);
+    for (int sample = 0; sample < sampleCount; ++sample) {
+        const float value = static_cast<float>(
+            std::sin(juce::MathConstants<double>::twoPi * 12000.0 * sample / sampleRate));
+        lowPass.setSample(0, sample, value);
+        lowPass.setSample(1, sample, value);
+        highPass.setSample(0, sample, value);
+        highPass.setSample(1, sample, value);
+    }
+
+    dsp::SvfSmoothed lowPassFilter;
+    dsp::SvfSmoothed highPassFilter;
+    lowPassFilter.prepare(sampleRate);
+    highPassFilter.prepare(sampleRate);
+    lowPassFilter.setTargets(500.0f, 0.707f);
+    highPassFilter.setTargets(500.0f, 0.707f);
+    lowPassFilter.process(lowPass, 0, sampleCount, dsp::SvfSmoothed::Mode::LowPass);
+    highPassFilter.process(highPass, 0, sampleCount, dsp::SvfSmoothed::Mode::HighPass);
+    ok &= require(finite(lowPass) && finite(highPass),
+                  "smoothed SVF wrapper remains finite");
+    ok &= require(lowPass.getRMSLevel(0, 0, sampleCount) <
+                      highPass.getRMSLevel(0, 0, sampleCount) * 0.1f,
+                  "smoothed SVF wrapper distinguishes low-pass and high-pass modes");
+}
 float render(DeckChannelProcessor&m,int size){juce::AudioBuffer<float>b(2,size);m.getNextAudioBlock({&b,0,size});return b.getMagnitude(0,0,size);}
 float renderStereoDifference(DeckChannelProcessor& mixer, int size)
 {
@@ -57,6 +109,7 @@ double eqResponseDb(MixerFilterTargets t,double hz,double sr=48000.0){
  return 20.0*std::log10(std::max(std::sqrt(sum/n)*std::numbers::sqrt2,1e-9));}
 }
 int main(){bool ok=true;
+ testFxPrimitives(ok);
  for(double sr:{44100.0,48000.0,96000.0,192000.0})for(auto t:{MixerFilterTargets{},MixerFilterTargets{-1,0,0,-1},MixerFilterTargets{0,-1,0,1},MixerFilterTargets{1,1,1,0}}){auto s=buildMixerCoefficientSnapshot(t,sr,1,1);ok&=require(s.valid(),"finite stable coefficients");}
  // Musical channel EQ uses overlapping shelves and a broad mid bell; each band
  // spans -26 dB through +6 dB and never becomes an isolator-style full kill.

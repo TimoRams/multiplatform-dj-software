@@ -2,14 +2,12 @@ target_sources(${PROJECT_NAME} PRIVATE
     ControllerIntegrationManager.h
     ControllerIntegrationManager.cpp
     midi/ParameterStore.h
-    midi/ParameterStore.cpp
-    midi/AlsaMidiInput.h
-    midi/AlsaMidiInput.cpp
-    midi/AlsaMidiOutput.h
-    midi/AlsaMidiOutput.cpp
-    midi/feedback/MidiFeedbackController.h
-    midi/feedback/MidiFeedbackController.cpp
-    midi/feedback/LevelMeterBallistics.h
+    midi/AlsaMidiTransport.h
+    midi/AlsaMidiTransport.cpp
+    midi/MidiFeedbackController.h
+    midi/MidiFeedbackController.cpp
+    midi/LevelMeterBallistics.h
+    midi/MidiInputState.h
     midi/MidiControllerManager.h
     midi/MidiParameterDispatch.h
     midi/MidiControllerManager.cpp
@@ -24,9 +22,12 @@ target_sources(${PROJECT_NAME} PRIVATE
     flx10/Flx10MidiBridge.cpp
 )
 
+set_source_files_properties(mappings/DDJ-FLX10.brockdj.xml PROPERTIES
+    QT_RESOURCE_ALIAS "mappings/midi/DDJ-FLX10.brockdj.xml")
+
 qt_add_resources(${PROJECT_NAME} "BrockDJ_controller_mappings"
     PREFIX "/controllers"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}"
     FILES
-        mappings/midi/DDJ-FLX10.brockdj.xml
+        mappings/DDJ-FLX10.brockdj.xml
 )

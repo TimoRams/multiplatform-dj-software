@@ -438,7 +438,21 @@ Rectangle {
             activateUsbCursor()
             return
         }
+        loadCursorTrackToDeck(deckLetter)
+    }
+
+    function loadCursorTrackToDeck(deckLetter) {
         loadTrackToDeck(deckLetter, getCursorFilePath(), getCursorTrackId())
+    }
+
+    function deckLetterForModifiers(modifiers) {
+        if (modifiers & Qt.ShiftModifier)
+            return "B"
+        if (modifiers & Qt.ControlModifier)
+            return "C"
+        if (modifiers & Qt.AltModifier)
+            return "D"
+        return "A"
     }
 
     function closeAllSwipes() {
@@ -1887,14 +1901,9 @@ Rectangle {
                         libraryRoot.moveCursor(value)
                     }
                 }
-            } else if (id === "library_load_deck_a") {
-                if (value > 0) libraryRoot.confirmLibrarySelection("A")
-            } else if (id === "library_load_deck_b") {
-                if (value > 0) libraryRoot.confirmLibrarySelection("B")
-            } else if (id === "library_load_deck_c") {
-                if (value > 0) libraryRoot.confirmLibrarySelection("C")
-            } else if (id === "library_load_deck_d") {
-                if (value > 0) libraryRoot.confirmLibrarySelection("D")
+            } else if (/^library_load_deck_[abcd]$/.test(id)) {
+                if (value > 0)
+                    libraryRoot.confirmLibrarySelection(id.slice(-1).toUpperCase())
             } else if (id === "library_playlist_next") {
                 if (value > 0) libraryRoot.selectNextPlaylist(1)
             } else if (id === "library_playlist_prev") {
@@ -1980,10 +1989,7 @@ Rectangle {
             }
             if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
                 if (aioFocusZone === "tracks" && (event.modifiers & (Qt.ShiftModifier | Qt.ControlModifier | Qt.AltModifier))) {
-                    loadTrackToDeck(event.modifiers & Qt.ShiftModifier ? "B"
-                        : (event.modifiers & Qt.ControlModifier ? "C"
-                        : (event.modifiers & Qt.AltModifier ? "D" : "A")),
-                        getCursorFilePath(), getCursorTrackId())
+                    loadCursorTrackToDeck(deckLetterForModifiers(event.modifiers))
                 } else {
                     aioBrowseCursorActivate()
                 }
@@ -2008,10 +2014,7 @@ Rectangle {
             } else if (event.key === Qt.Key_Down) {
                 moveCursor(1); event.accepted = true
             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                loadTrackToDeck(event.modifiers & Qt.ShiftModifier ? "B"
-                    : (event.modifiers & Qt.ControlModifier ? "C"
-                    : (event.modifiers & Qt.AltModifier ? "D" : "A")),
-                    getCursorFilePath(), getCursorTrackId())
+                loadCursorTrackToDeck(deckLetterForModifiers(event.modifiers))
                 event.accepted = true
             } else if (event.key === Qt.Key_P) {
                 togglePreview(getCursorFilePath()); event.accepted = true
@@ -2557,7 +2560,7 @@ Rectangle {
                                               && libraryPreview.playing
                                               && libraryPreview.currentPath === tr.rowFilePath
         readonly property int deckActionW: tr.touchMode ? 184 : 0
-        readonly property int miscActionW: tr.touchMode ? 148 : 0
+        readonly property int miscActionW: tr.touchMode && tr.rowSourceTab !== "usb" ? 148 : 0
         readonly property real slideX: tr.touchMode ? (-tr.deckActionW + tr.swipeX) : 0
         property string rowCoverUrl: ""
 
@@ -3125,7 +3128,7 @@ Rectangle {
                 if (tr.swipeActive) {
                     if (tr.swipeX >= tr.deckActionW * 0.30)
                         tr.swipeX = tr.deckActionW
-                    else if (tr.swipeX <= -tr.miscActionW * 0.30)
+                    else if (tr.miscActionW > 0 && tr.swipeX <= -tr.miscActionW * 0.30)
                         tr.swipeX = -tr.miscActionW
                     else
                         tr.closeSwipe()

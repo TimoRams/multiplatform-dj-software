@@ -3,8 +3,7 @@
 This folder is for native controller support that sits beside the generic MIDI
 mapping system.
 
-- `mappings/midi/` is reserved for built-in MIDI mapping files.
-- `mappings/hid/` is reserved for HID/vendor-specific mapping notes and data.
+- `mappings/` holds built-in MIDI mapping files.
 - `flx10/` contains the first native DDJ-FLX10 HID display integration.
 
 The existing MIDI mapping path still owns transport, mixer, jog, and pad
@@ -16,8 +15,10 @@ DDJ-FLX10 rule lives at `packaging/linux/udev/70-brockdj-controllers.rules`.
 
 ## Built-in mappings
 
-- `mappings/midi/` holds mappings consumed by `MidiControllerManager`.
-- `mappings/hid/` holds HID or vendor USB packet notes, schemas, and mappings.
+- `mappings/` holds mappings consumed by `MidiControllerManager`.
+- The bundled FLX10 map retains its resource URL
+  `:/controllers/mappings/midi/DDJ-FLX10.brockdj.xml` through an explicit alias;
+  physical source layout does not change saved mapping identities.
 
 The DDJ-FLX10 keeps normal control input on the existing MIDI mapping system.
 Its bundled map uses BrockDJ's native XML format. HID display support remains

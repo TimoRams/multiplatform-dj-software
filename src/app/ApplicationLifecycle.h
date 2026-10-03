@@ -7,6 +7,8 @@
 #include <QQuickWindow>
 #include <QQmlApplicationEngine>
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -37,6 +39,72 @@ class UiScaleController;
 class WaveformZoomController;
 class RenderPressurePolicy;
 namespace engine::sync { class SyncCoordinator; }
+
+enum class QmlContextProperty : std::uint8_t {
+    SettingsManager,
+    AppConfig,
+    AppExit,
+    DeckA,
+    DeckB,
+    DeckC,
+    DeckD,
+    LibraryManager,
+    LibraryDatabase,
+    LibraryModel,
+    LibraryAnalyzer,
+    DeviceLibraryManager,
+    FxManager,
+    LinkManager,
+    SystemMonitor,
+    ParameterStore,
+    MidiManager,
+    ControllerManager,
+    CursorControl,
+    UiScaleController,
+    WaveformZoomController,
+    RenderPressurePolicy,
+    MixerControl,
+    ControlClock,
+    LibraryCover,
+    LibraryPreview,
+    Count
+};
+
+struct QmlContextPropertyContract {
+    const char* name;
+    bool clearAsInvalidVariant = false;
+};
+
+inline constexpr std::array<QmlContextPropertyContract,
+                            static_cast<std::size_t>(QmlContextProperty::Count)>
+    kQmlContextPropertyContract {{
+        {"settingsManager"},
+        {"appConfig", true},
+        {"appExit"},
+        {"deckA"},
+        {"deckB"},
+        {"deckC"},
+        {"deckD"},
+        {"libraryManager"},
+        {"libraryDb"},
+        {"libraryModel"},
+        {"libraryAnalyzer"},
+        {"deviceLibraryManager"},
+        {"fxManager"},
+        {"linkManager"},
+        {"sysMonitor"},
+        {"parameterStore"},
+        {"midiManager"},
+        {"controllerManager"},
+        {"cursorControl"},
+        {"uiScaleController"},
+        {"waveformZoomController"},
+        {"renderPressurePolicy"},
+        {"mixerControl"},
+        {"controlClock"},
+        {"libraryCover"},
+        {"libraryPreview"}
+    }};
 
 // QML entry point for ordered app teardown before Qt.quit().
 class AppExitGate final : public QObject
@@ -110,6 +178,10 @@ struct ApplicationRuntime {
 namespace ApplicationLifecycle {
 
 void stopQuickWindowRendering(QQuickWindow* window);
+
+void setQmlContextProperty(QQmlApplicationEngine& engine,
+                           QmlContextProperty property,
+                           QObject* object);
 
 void clearQmlContextProperties(QQmlApplicationEngine& engine);
 

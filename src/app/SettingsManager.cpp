@@ -1,6 +1,5 @@
 #include "SettingsManager.h"
-#include "UiScaleController.h"
-#include "WaveformZoomController.h"
+#include "UiPreferences.h"
 #include "audio/device/AudioDeviceService.h"
 #include "audio/device/AudioDeviceUtils.h"
 #include <algorithm>

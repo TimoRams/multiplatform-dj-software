@@ -10,16 +10,11 @@ set(BROCKDJ_QML_FILES
     src/qml/deck/DeckTrackInfoPanel.qml
     src/qml/deck/TurntableIndicator.qml
     src/qml/waveform/EnlargedWaveform.qml
-    src/qml/waveform/BeatgridEditorPanel.qml
     src/qml/mixer/MixerSection.qml
-    src/qml/mixer/FxUnit.qml
     src/qml/mixer/FxBar.qml
     src/qml/mixer/CrossfaderBar.qml
     src/qml/performance/PerformanceWorkspace.qml
     src/qml/performance/PerformanceWaveformScreen.qml
-    src/qml/performance/PerformanceDeckQuickPanel.qml
-    src/qml/performance/PerformanceBeatgridPanel.qml
-    src/qml/performance/PerformanceBeatFxPanel.qml
     src/qml/performance/PerformancePads.qml
     src/qml/library/Library.qml
     src/qml/library/SourcePage.qml

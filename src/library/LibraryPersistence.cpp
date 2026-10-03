@@ -7,12 +7,14 @@
 #include <QDebug>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QSqlQuery>
 #include <QSqlError>
+#include <QSqlQuery>
 #include <QTimer>
+#include <QUuid>
 
 namespace {
 
@@ -37,7 +39,7 @@ TrackData::BeatGridType gridTypeFromString(const QString& value)
         return TrackData::BeatGridType::ConstantTempo;
     return TrackData::BeatGridType::Unknown;
 }
-}
+} // namespace
 
 QString LibraryDatabase::trackSegmentsToJson(const std::vector<TrackSegment>& segments)
 {
@@ -638,12 +640,6 @@ QVariantList LibraryDatabase::getLibrarySourceRoots() const
     return result;
 }
 
-#include "LibraryDatabase.h"
-
-#include <QDebug>
-#include <QSqlQuery>
-#include <QSqlError>
-
 bool LibraryDatabase::upsertCuePoint(const QString& trackId,
                                      int cueIndex,
                                      double positionSec,
@@ -838,18 +834,6 @@ double LibraryDatabase::mainCuePointForTrack(const QString& trackId) const
 
     return q.value(0).toDouble();
 }
-
-#include "LibraryDatabase.h"
-
-#include <QDateTime>
-#include <QDebug>
-#include <QHash>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QSqlQuery>
-#include <QSqlError>
-#include <QUuid>
 
 // ── buildTrackMap ─────────────────────────────────────────────────────────────
 // Columns 0-18 expected by all full-track SELECT queries:

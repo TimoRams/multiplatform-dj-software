@@ -8,9 +8,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "dsp/SsDelay.h"
-#include "dsp/SsLfo.h"
-#include "dsp/SvfSmoothed.h"
+#include "fx/FxPrimitives.h"
 #include <signalsmith-dsp/filters.h>
 
 // ─────────────────────────────────────────────────────────────────────────────

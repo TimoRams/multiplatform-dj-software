@@ -1,9 +1,10 @@
 # BrockDJ Source Cleanup Report
 
-Date: 2026-09-20
+Date: 2026-10-03
 Baseline: `9e18081d69cf0c8037ed053239726ee147808c74`
-Scope: source organization and dependency cleanup only; no intended playback,
-waveform, controller, persistence or QML behavior change.
+Scope: source organization and dependency cleanup while preserving playback,
+waveform, controller and persistence contracts. Follow-up UI interaction
+corrections are listed explicitly below.
 
 ## Deleted
 
@@ -68,17 +69,19 @@ waveform, controller, persistence or QML behavior change.
   `DeckAudioPipeline`, `MasterMixer`, `HeadphoneBus`, `AudioOutputRouter`,
   `AudioDeviceService`, `AudioPageCache` and `TimeStretchProcessor`.
 - `AudioCacheWorker`, `DatabaseWorker`, `MediaIoScheduler` and
-  `Flx10HidTransport` remain separate because each represents a real thread,
-  lifecycle or hardware boundary.
+  `Flx10HidTransport` retain separate thread, lifecycle or hardware boundaries.
+  The small cache worker is now private within `AudioPageCache.cpp`; a distinct
+  lifetime does not require a separate public header and translation unit.
 - `analysis/internal/AnalysisOrchestrator` remains an internal large
   implementation unit; merging it into `WaveformAnalyzer.cpp` would create a
   God translation unit.
-- `VirtualTurntable` remains independently testable simulation logic;
+- `VirtualTurntable` remains independently testable, inline simulation logic;
   `ScratchSession` remains the deck-owned state boundary.
 - Large MIDI implementation units remain separate around enumeration, mapping,
   dispatch and FLX10 behavior; merging them would exceed useful file size.
-- Large QML surfaces were moved but not split because binding/lifetime behavior
-  requires a dedicated visual refactor.
+- Large QML surfaces retain their ownership boundaries; repeated interaction
+  and action logic is consolidated inside the existing components rather than
+  split solely to reduce file size.
 
 ## Follow-up consolidation
 
@@ -97,6 +100,63 @@ waveform, controller, persistence or QML behavior change.
   analysis seed, avoiding both per-deck RAM duplication and repeat decoding.
 - Removed duplicated synchronous analysis persistence and stale FLX10 display
   generation paths.
+
+## Source consolidation after the full-tree inventory
+
+- Inlined `VirtualTurntable.cpp` into its existing header without changing
+  position, angle or atomic access semantics.
+- Combined the two UI preference declaration headers into `app/UiPreferences.h`,
+  keeping `UiScaleController` and `WaveformZoomController` as distinct QObjects.
+- Combined LOD sampling and column aggregation in `WaveformAggregator.*`;
+  immutable line storage, canonical analysis and renderer lifetimes remain separate.
+- Grouped ALSA input/output into `controllers/midi/AlsaMidiTransport.*`;
+  the two backend classes retain independent handles and shutdown contracts.
+- Reused `Slider.qml` for the deck tempo slider's interaction, with deck-specific
+  background/handle overrides. Cancel, disable and destruction restore a hidden
+  cursor; touchscreen drags never hide or teleport the mouse cursor.
+- Consolidated Library keyboard/MIDI deck-selection actions while retaining
+  distinct local/external loading and USB browsing. USB rows no longer expose
+  local favorite/crate/queue swipe mutations.
+- Centralized context property names and clear-value semantics in
+  `ApplicationLifecycle`; Bootstrap and shutdown share the same typed keys.
+- Removed historical duplicate include blocks from `LibraryPersistence.cpp`
+  without merging Qt-owned and worker-owned SQL connections.
+- Reused an explicit Master/Headphones/Booth role definition and audio row,
+  retaining pending/Apply semantics and reporting invalid internal roles.
+  Rows are resolved directly from their Repeater, without a second lifetime registry.
+- Reused one header view-toggle card, preserving the original menu ordering,
+  callbacks, hidden controls and popup structure.
+
+The file merges reduce source fragmentation, not automatically callback cost,
+RAM consumption or Raspberry Pi frame latency. Runtime improvements still need
+measurements on the target hardware.
+
+## Further domain-module consolidation
+
+- Grouped the separate master and headphone bus classes in `AudioBusMixer.*`,
+  with independent limiter and gain histories. Inlined the stateless
+  `AudioOutputRouter` and made the cache worker private without removing its join.
+- Combined MIDI accumulator/echo policy in `MidiInputState.h`, native scratch
+  ingress types in `ScratchInput.h`, and jog-nudge policy with `DeckTransport.h`.
+  The small `ParameterStore` stays independently owned and is now inline;
+  repeated MIDI events still emit even when their values match.
+- Combined feature extraction and phrase analysis in `FeatureAnalysis.*`.
+  Their algorithms and the separate analysis orchestrator are unchanged.
+- Grouped cover publication in `LibraryCoverService.*`, retaining QML engine
+  ownership of the image provider and separate TagLib extraction.
+- Grouped neutral waveform data and viewport-demand contracts in `WaveformTypes.h`;
+  builder and rendering policies remain separate dependency boundaries.
+- Grouped three exclusive effect DSP helpers in `FxPrimitives.h`, keeping
+  their separate smoothing/filter/delay state.
+- Reused tempo registration and assigned-deck dispatch inside `FxManager`,
+  preserving unit/deck properties, aliases, enable semantics and BPM priority.
+- Localized five exclusive QML panels in their respective waveform/FX hosts,
+  without combining instances or changing their eager/lazy lifetime.
+- Flattened MIDI feedback and built-in mapping directories. An explicit
+  resource alias preserves the existing FLX10 mapping URL and saved identity.
+
+This round removed 20 source files (232 -> 212). File grouping is distinct from runtime
+optimization: it does not establish a CPU, RAM or latency improvement.
 
 ## Behavioral invariants
 

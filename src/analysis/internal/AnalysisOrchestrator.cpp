@@ -1,7 +1,6 @@
 #include "analysis/internal/AnalysisOrchestrator.h"
-#include "analysis/internal/PhraseAnalyzer.h"
+#include "analysis/internal/FeatureAnalysis.h"
 #include "analysis/AnalysisTypes.h"
-#include "analysis/internal/AnalysisFeatureExtractor.h"
 #include "analysis/internal/BeatAnalysis.h"
 #include <keyfinder/keyfinder.h>
 #include <keyfinder/audiodata.h>

@@ -32,6 +32,8 @@ scene work.
 - Must not own: audio DSP, media decoding, library persistence or controller
   protocol state.
 - Public entry point: `ApplicationBootstrap.h`.
+- UI scale and waveform zoom remain separate QObject state owners declared in
+  `UiPreferences.h`, with persistence-backed implementations in `SettingsManager.cpp`.
 
 ### `audio/`
 
@@ -44,6 +46,9 @@ scene work.
 - Must not depend on: QML, library models, controller I/O or analysis workers.
 - Callback invariant: no allocation, blocking lock, file I/O, logging or Qt
   signals. `audio/internal/` contains reusable callback DSP, not user FX.
+- `AudioBusMixer.*` groups `MasterMixer` and `HeadphoneBus` without sharing
+  their limiters, histories or signal paths. The small output mapper is inline
+  in `AudioOutputRouter.h`; the joined cache worker is private to `AudioPageCache.cpp`.
 
 ### `deck/`
 
@@ -55,6 +60,9 @@ scene work.
 - Must not own: the application audio graph or controller device transports.
 - Public entry point: `DjEngine.h`; its implementation is grouped into four
   responsibility-sized translation units rather than an umbrella include.
+- `scratch/ScratchInput.h` groups the native snapshot channel and inline ingress simulation;
+  it does not own audio rendering or replace `ScratchController`/`ScratchSession`.
+- Jog-nudge policy lives with `DeckTransport.h`, retaining its separate functions.
 
 ### `analysis/`
 
@@ -64,6 +72,8 @@ scene work.
 - Must not depend on: QML or render-thread types.
 - Public API: `AnalysisTypes.h` and `AnalysisJobQueue.h`. Beat validation and
   the cross-feature analysis orchestrator live under `analysis/internal/`.
+- `analysis/internal/FeatureAnalysis.*` groups feature extraction and phrase
+  analysis as separate algorithms, without absorbing the orchestrator.
 
 ### `waveform/`
 
@@ -73,8 +83,10 @@ scene work.
   tile rasterization and scrolling/overview items.
 - May depend on: domain/analysis values and Qt scene-graph APIs in `render/`.
 - Must not perform: analysis or file I/O on the render thread.
-- Public data types are consolidated in `WaveformTypes.h`; render-only math is
+- Public data and viewport-demand contracts are consolidated in `WaveformTypes.h`; render-only math is
   in `render/WaveformRenderMath.h`.
+- Snapshot LOD sampling and column aggregation share `WaveformAggregator.*`;
+  `WaveformLodPyramid` remains an API type, not a second storage/worker owner.
 
 ### `library/`
 
@@ -87,6 +99,9 @@ scene work.
   callback.
 - Persistence implementation is grouped in `LibraryDatabase.cpp`,
   `LibraryPersistence.cpp` and `library/persistence/DatabaseWorker.*`.
+- `LibraryCoverService.*` also declares the cover image provider. QML engine
+  ownership of that provider remains separate from the borrowing service;
+  synchronous TagLib extraction remains in `CoverArtExtractor.*`.
 
 ### `controllers/`
 
@@ -99,12 +114,18 @@ scene work.
   APIs only.
 - `controllers/midi/` is generic MIDI; `controllers/flx10/` contains every
   FLX10-specific path. HID transport remains a separate thread/hardware boundary.
+- `midi/AlsaMidiTransport.*` groups the sequencer input and output backend.
+  Its two classes retain independent handles and lifetimes; input stops and
+  joins its receive thread before closing the sequencer.
+- `MidiInputState.h` groups accumulator and echo policies; feedback files live
+  directly in `midi/`. `ParameterStore.h` is a small standalone inline QObject.
+- Built-in maps live directly in `mappings/` with stable resource aliases.
 
 ### `fx/`
 
 - Responsibility: selectable deck/master effects and their reusable DSP
   primitives.
-- Owns: `FxManager`, `FxProcessor` and `fx/dsp/` primitives.
+- Owns: `FxManager`, `FxProcessor` and the separate DSP types in `FxPrimitives.h`.
 - Must not contain output-bus safety DSP; the brickwall limiter lives under
   `audio/internal/` with its actual consumers.
 
@@ -129,6 +150,12 @@ scene work.
 - All components remain in the `DJSoftware` module, so moving files among these
   folders does not create duplicate QML types or state owners.
 - `main.qml` is the shell and the only root-level QML file.
+- Deck tempo styling inherits the common `components/Slider.qml` interaction.
+  Mouse release, cancellation and destruction share cursor cleanup; touch does
+  not hide or reposition the mouse cursor.
+- Exclusive performance panels are inline components of `PerformanceWaveformScreen`;
+  the beatgrid editor belongs to `EnlargedWaveform`, and the two development FX
+  units share an inline type in `FxBar`. Instances and lifetimes remain independent.
 
 ## Runtime ownership summary
 

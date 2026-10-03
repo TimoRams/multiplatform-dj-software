@@ -1,6 +1,6 @@
 #pragma once
 
-#include "controllers/midi/AlsaMidiOutput.h"
+#include "controllers/midi/AlsaMidiTransport.h"
 #include "app/ControlClock.h"
 #include "Flx10Protocol.h"
 

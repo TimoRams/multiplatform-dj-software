@@ -5,8 +5,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     ControlClock.cpp
     RenderPressurePolicy.h
     RenderPressurePolicy.cpp
-    UiScaleController.h
-    WaveformZoomController.h
+    UiPreferences.h
     MixerControl.h
     MixerControl.cpp
     LsanSuppressions.cpp

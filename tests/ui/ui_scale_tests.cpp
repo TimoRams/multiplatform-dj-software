@@ -1,4 +1,4 @@
-#include "app/UiScaleController.h"
+#include "app/UiPreferences.h"
 
 #include <iostream>
 #include <limits>

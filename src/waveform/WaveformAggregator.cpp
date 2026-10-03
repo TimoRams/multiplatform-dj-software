@@ -1,12 +1,122 @@
 #include "WaveformAggregator.h"
 
-#include "WaveformLodPyramid.h"
 #include "WaveformVisualStyle.h"
 
 #include <algorithm>
 #include <cmath>
 
 namespace waveform {
+
+WaveformLodPyramid::Sample WaveformLodPyramid::sample(
+    const WaveformLineStoreSnapshot& snapshot,
+    std::uint8_t levelIndex,
+    std::uint32_t lodSampleIndex) noexcept
+{
+    Sample result;
+    if (!snapshot.chunks || snapshot.chunkSize == 0
+        || snapshot.totalLineCount == 0) {
+        return result;
+    }
+    const auto stride = static_cast<std::uint32_t>(
+        level(levelIndex).canonicalLineStride);
+    const std::uint64_t wideBegin = static_cast<std::uint64_t>(lodSampleIndex)
+        * stride;
+    if (wideBegin >= snapshot.totalLineCount)
+        return result;
+    const auto begin = static_cast<std::uint32_t>(wideBegin);
+    const auto end = std::min(snapshot.totalLineCount, begin + stride);
+
+    result.complete = true;
+    std::uint64_t rms = 0;
+    std::uint64_t bass = 0;
+    std::uint64_t mid = 0;
+    std::uint64_t treble = 0;
+    std::uint64_t weight = 0;
+    std::uint8_t flags = 0xff;
+    // Keep each immutable chunk alive across the fold, avoiding a shared_ptr
+    // refcount pair for every source line. Resolve again only at boundaries.
+    std::shared_ptr<const WaveformLineChunk> chunk;
+    std::uint32_t chunkIndex = 0;
+    bool chunkResolved = false;
+    for (auto lineIndex = begin; lineIndex < end; ++lineIndex) {
+        const auto wantedChunkIndex = lineIndex / snapshot.chunkSize;
+        if (!chunkResolved || wantedChunkIndex != chunkIndex) {
+            chunk = snapshot.chunkAt(wantedChunkIndex);
+            chunkIndex = wantedChunkIndex;
+            chunkResolved = true;
+        }
+        if (!chunk || !chunk->lines || lineIndex < chunk->firstLineIndex) {
+            result.complete = false;
+            continue;
+        }
+        const auto local = lineIndex - chunk->firstLineIndex;
+        if (local >= chunk->lines->size()) {
+            result.complete = false;
+            continue;
+        }
+        const auto& line = (*chunk->lines)[local];
+        if ((line.flags & waveform_line_flags::kAvailable) == 0) {
+            result.complete = false;
+            continue;
+        }
+        if (!result.hasData) {
+            result.line.minimum = line.minimum;
+            result.line.maximum = line.maximum;
+            result.hasData = true;
+        } else {
+            result.line.minimum = std::min(result.line.minimum, line.minimum);
+            result.line.maximum = std::max(result.line.maximum, line.maximum);
+        }
+        const auto magnitude = static_cast<std::uint32_t>(std::max(
+            std::abs(static_cast<int>(line.minimum)),
+            std::abs(static_cast<int>(line.maximum))));
+        const auto lineWeight = std::max(1u, magnitude);
+        rms += static_cast<std::uint64_t>(line.rms) * lineWeight;
+        bass += static_cast<std::uint64_t>(line.bass) * lineWeight;
+        mid += static_cast<std::uint64_t>(line.mid) * lineWeight;
+        treble += static_cast<std::uint64_t>(line.treble) * lineWeight;
+        weight += lineWeight;
+        flags &= line.flags;
+    }
+    if (weight > 0) {
+        result.line.rms = static_cast<std::uint8_t>(rms / weight);
+        result.line.bass = static_cast<std::uint8_t>(bass / weight);
+        result.line.mid = static_cast<std::uint8_t>(mid / weight);
+        result.line.treble = static_cast<std::uint8_t>(treble / weight);
+        result.line.flags = flags;
+    }
+    return result;
+}
+
+std::uint64_t WaveformLodPyramid::sourceRevision(
+    const WaveformLineStoreSnapshot& snapshot,
+    std::uint8_t levelIndex,
+    std::uint32_t canonicalBegin,
+    std::uint32_t canonicalEnd) noexcept
+{
+    if (!snapshot.chunks || snapshot.chunkSize == 0
+        || canonicalBegin >= canonicalEnd) {
+        return 0;
+    }
+    canonicalEnd = std::min(canonicalEnd, snapshot.totalLineCount);
+    if (canonicalBegin >= canonicalEnd)
+        return 0;
+
+    // FNV-1a over only the immutable canonical chunks intersecting this tile.
+    // Missing chunks contribute a stable zero revision; publishing one later
+    // changes exactly the tile keys which gain source data.
+    std::uint64_t revision = 1469598103934665603ULL;
+    const auto firstChunk = canonicalBegin / snapshot.chunkSize;
+    const auto lastChunk = (canonicalEnd - 1) / snapshot.chunkSize;
+    for (auto chunkIndex = firstChunk; chunkIndex <= lastChunk; ++chunkIndex) {
+        const auto chunk = snapshot.chunkAt(chunkIndex);
+        const std::uint64_t chunkRevision = chunk ? chunk->revision : 0;
+        revision ^= (static_cast<std::uint64_t>(chunkIndex) << 32U)
+            ^ chunkRevision;
+        revision *= 1099511628211ULL;
+    }
+    return revision;
+}
 
 float WaveformColumn::amplitude() const noexcept
 {

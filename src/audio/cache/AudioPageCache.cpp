@@ -1,5 +1,4 @@
 #include "AudioPageCache.h"
-#include "AudioCacheWorker.h"
 
 #include <QFileInfo>
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -13,6 +12,33 @@
 #include <thread>
 #include <unordered_map>
 #include <vector>
+
+class AudioCacheWorker final
+{
+public:
+    explicit AudioCacheWorker(AudioPageCache& owner)
+        : m_owner(owner), m_thread([this] { m_owner.workerRun(m_shutdown); })
+    {
+    }
+
+    ~AudioCacheWorker() { shutdownAndJoin(); }
+
+    void notify() noexcept { m_owner.notifyWorker(); }
+
+    void shutdownAndJoin() noexcept
+    {
+        if (m_shutdown.exchange(true, std::memory_order_acq_rel))
+            return;
+        m_owner.notifyWorker();
+        if (m_thread.joinable())
+            m_thread.join();
+    }
+
+private:
+    AudioPageCache& m_owner;
+    std::atomic<bool> m_shutdown { false };
+    std::thread m_thread;
+};
 
 namespace {
 struct PageRequest {

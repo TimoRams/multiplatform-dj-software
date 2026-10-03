@@ -226,14 +226,8 @@ Item {
     }
 
     // ── Tempo slider ──────────────────────────────────────────────────────
-    component DeckSlider: Controls.Slider {
+    component DeckSlider: Slider {
         id: ds
-        property bool centerFill:   false
-        property bool dragActive:   false
-        property real defaultValue: 0
-
-        implicitWidth:  orientation === Qt.Vertical ? 22 : 150
-        implicitHeight: orientation === Qt.Vertical ? 150 : 22
 
         background: Rectangle {
             x: ds.orientation === Qt.Horizontal ? ds.leftPadding  : ds.width  / 2 - 2
@@ -283,55 +277,6 @@ Item {
             }
         }
 
-        MouseArea {
-            id: dsDragLock
-            anchors.fill: parent
-            z: 100
-            acceptedButtons: Qt.LeftButton
-            preventStealing: true
-
-            property real _pressGX:  0
-            property real _pressGY:  0
-            property real _pressVal: 0
-
-            onPressed: (mouse) => {
-                var g    = dsDragLock.mapToGlobal(mouse.x, mouse.y)
-                _pressGX  = g.x
-                _pressGY  = g.y
-                _pressVal = ds.value
-                ds.dragActive = false
-                mouse.accepted = true
-            }
-
-            onPositionChanged: (mouse) => {
-                var g     = dsDragLock.mapToGlobal(mouse.x, mouse.y)
-                var isV   = ds.orientation === Qt.Vertical
-                var delta = isV ? (_pressGY - g.y) : (g.x - _pressGX)
-                if (!ds.dragActive) {
-                    if (Math.abs(delta) < 4) return
-                    ds.dragActive = true
-                    cursorControl.hideCursor()
-                }
-                var newVal = _pressVal + delta * (ds.to - ds.from) / 150.0
-                var lo = Math.min(ds.from, ds.to)
-                var hi = Math.max(ds.from, ds.to)
-                ds.value = Math.max(lo, Math.min(hi, newVal))
-            }
-
-            onReleased: {
-                if (ds.dragActive) {
-                    ds.dragActive = false
-                    cursorControl.restoreCursor()
-                    cursorControl.moveCursor(_pressGX, _pressGY)
-                }
-            }
-
-            onDoubleClicked: {
-                ds.enabled = false
-                ds.value   = ds.defaultValue
-                ds.enabled = true
-            }
-        }
     }
 
     // ── Logic ─────────────────────────────────────────────────────────────

@@ -7,7 +7,6 @@
 #include "audio/cache/CachedPlaybackAudioSource.h"
 #include "deck/DeckTransport.h"
 #include "library/CoverArtExtractor.h"
-#include "library/CoverArtProvider.h"
 #include "library/LibraryCoverService.h"
 #include "library/LibraryDatabase.h"
 #include "waveform/WaveformAnalyzer.h"

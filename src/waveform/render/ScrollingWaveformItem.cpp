@@ -1,7 +1,7 @@
 #include "ScrollingWaveformItem.h"
 
 #include "TrackData.h"
-#include "app/WaveformZoomController.h"
+#include "app/UiPreferences.h"
 #include "WaveformRenderMath.h"
 #include "WaveformTileRasterizer.h"
 #include "waveform/WaveformLineStore.h"

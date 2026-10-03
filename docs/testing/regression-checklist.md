@@ -27,6 +27,34 @@ The complete CTest suite covers the following relevant focused groups:
 | Devices/controllers | `audio_device_service`, `alsa_midi_line_parser`, `midi_14bit_accumulator`, `flx10_jog_routing`, `flx10_display_protocol`, `parameter_store` |
 | Workers/lifecycle | `posix_signal_handler`, `audio_thread_scheduling`, `database_worker`, `media_io_scheduler`, `track_loader`, `dj_engine_api_contract` |
 
+`qml_component` combines source contracts with runtime checks of the shared
+slider (mouse/touch travel, inverted vertical range, disable/cancel and
+context-unbinding teardown) and the production Library deck-selection and
+Settings audio-role action bodies with observable test sinks. It also creates
+the production audio-role delegates and their Repeater with real ComboBoxes.
+Role coverage includes None, independent channel pairs, pending selections,
+stale combo indexes and incomplete/complete device enumeration. These do not
+replace physical touchscreen or full-window visual/focus checks. On Linux,
+`alsa_midi_line_parser` also checks native input/output port parsing without
+opening hardware ports.
+
+Inline-panel coverage creates the production performance, enlarged-waveform and
+FX bar hosts with observable deck/FX sinks and a rendering stub. It checks
+separate quick/FX instances, eject gating, beat-jump/grid actions, editor width,
+and real selector mouse/keyboard/Escape behavior. Animation checks wait for
+observed state rather than assuming one event-loop pass completes a transition.
+It does not replace the real scene-graph or hardware rendering tests.
+
+After domain-module merges, rebuild the affected tests before running them.
+`parameter_store` must still distinguish duplicate UI values from repeated MIDI
+events. Master and cue buses retain separate limiter/gain state despite sharing
+`AudioBusMixer.*`; scratch simulation and coherent input snapshots retain their
+separate contracts in `ScratchInput.h`. The package smoke also checks the stable
+built-in controller mapping resource alias and the real FX manager's QObject
+properties, signal de-duplication, independent units and explicit enable semantics.
+`media_io_scheduler` also exercises deck/library publication through the engine-
+owned cover provider, revision URLs, image scaling and cache invalidation.
+
 Callback-related changes must also confirm that `AudioEngineRealtimeStats`,
 `DeckAudioPipeline::RealtimeStats`, `PlaybackCacheStats`, `ScratchCacheStats`,
 `TimeStretchRealtimeStats`, and `DeckChannelProcessor::RealtimeStats` retain
@@ -37,6 +65,26 @@ install/clear stress. For lifetime-boundary changes, also run that target under
 ThreadSanitizer where the platform toolchain supports it.
 
 ## Manual core scenarios
+
+### Consolidated UI interactions
+
+- Open both performance quick panels, grid editing and Beat FX, plus the
+  development FX bar. Check independent A/B targets and both FX units,
+  grid lock/nudge/close, occupied editor width and parameter-popup focus.
+  Loading `main.qml` alone does not exercise these inline components.
+- Drag deck tempo and mixer sliders with a mouse and a touchscreen. Direction,
+  relative travel and double-click reset must match the previous controls.
+  Touch must not hide or reposition the mouse cursor.
+- Disable or close a surface during a mouse drag. The cursor must return;
+  cancellation must not teleport it.
+- In desktop and AIO settings, change Master, Headphones and Booth devices and
+  channel pairs; cancel and reopen, then apply and reopen. Pending selections
+  must not silently become active; None and backend/device changes remain coherent.
+- Toggle header view options and open/close lazy settings/mapping windows.
+  Check appearance, popup parents, focus and Escape.
+- Load local and USB/Rekordbox selections onto all four decks by keyboard,
+  MIDI and AIO actions. Confirm modifier priority and USB navigation outside
+  the track list; USB rows must not expose local favorite/crate/queue mutations.
 
 ### Multi-deck loading and replacement
 

@@ -345,8 +345,6 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     src/waveform/render
     src/controllers
     src/controllers/midi
-    src/controllers/midi/feedback
-    src/fx/dsp
     src/analysis
     src/domain
     src/app
@@ -500,6 +498,8 @@ include(CTest)
 
 if(BUILD_TESTING)
 
+find_package(Qt6 REQUIRED COMPONENTS Test)
+
 add_executable(BrockDJ_ui_scale_tests tests/ui/ui_scale_tests.cpp)
 target_include_directories(BrockDJ_ui_scale_tests PRIVATE src)
 target_link_libraries(BrockDJ_ui_scale_tests PRIVATE Qt6::Core)
@@ -518,6 +518,7 @@ add_test(NAME ui_layout COMMAND BrockDJ_ui_layout_tests)
 
 add_executable(BrockDJ_qml_component_tests tests/ui/qml_component_tests.cpp)
 target_compile_definitions(BrockDJ_qml_component_tests PRIVATE BROCKDJ_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(BrockDJ_qml_component_tests PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
 target_compile_features(BrockDJ_qml_component_tests PRIVATE cxx_std_23)
 add_test(NAME qml_component COMMAND BrockDJ_qml_component_tests)
 
@@ -531,7 +532,6 @@ add_executable(BrockDJ_waveform_render_tile_tests
     tests/waveform/waveform_render_tile_tests.cpp
     src/waveform/render/WaveformTileRasterizer.cpp
     src/waveform/WaveformAggregator.cpp
-    src/waveform/WaveformLodPyramid.cpp
     src/waveform/WaveformLineStore.cpp)
 target_include_directories(BrockDJ_waveform_render_tile_tests PRIVATE src)
 target_link_libraries(BrockDJ_waveform_render_tile_tests PRIVATE Qt6::Core Qt6::Gui)
@@ -542,7 +542,6 @@ add_executable(BrockDJ_waveform_visual_style_tests
     tests/waveform/waveform_visual_style_tests.cpp
     src/waveform/render/WaveformTileRasterizer.cpp
     src/waveform/WaveformAggregator.cpp
-    src/waveform/WaveformLodPyramid.cpp
     src/waveform/WaveformLineStore.cpp)
 target_include_directories(BrockDJ_waveform_visual_style_tests PRIVATE src)
 target_link_libraries(BrockDJ_waveform_visual_style_tests PRIVATE Qt6::Core Qt6::Gui)
@@ -563,7 +562,6 @@ target_include_directories(BrockDJ_smoke_tests PRIVATE
     src/controllers
     src/domain
     src/deck
-    src/fx/dsp
 )
 
 target_link_libraries(BrockDJ_smoke_tests PRIVATE
@@ -590,7 +588,7 @@ add_executable(BrockDJ_mixer_dsp_tests
     src/fx/FxProcessor.cpp
     src/audio/internal/BrickwallLimiter.cpp
 )
-target_include_directories(BrockDJ_mixer_dsp_tests PRIVATE src src/deck src/fx/dsp)
+target_include_directories(BrockDJ_mixer_dsp_tests PRIVATE src src/deck)
 target_link_libraries(BrockDJ_mixer_dsp_tests PRIVATE Qt6::Core Qt6::Gui juce::juce_core juce::juce_data_structures juce::juce_audio_basics juce::juce_dsp juce::juce_events ThirdParty::SignalsmithDSP)
 target_compile_definitions(BrockDJ_mixer_dsp_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
 target_compile_features(BrockDJ_mixer_dsp_tests PRIVATE cxx_std_23)
@@ -600,17 +598,15 @@ add_executable(BrockDJ_deck_audio_graph_tests
     tests/audio/deck_audio_graph_tests.cpp
     src/audio/AudioEngine.cpp
     src/platform/AudioThreadScheduling.cpp
-    src/audio/MasterMixer.cpp
-    src/audio/HeadphoneBus.cpp
-    src/audio/AudioOutputRouter.cpp
+    src/audio/AudioBusMixer.cpp
     src/audio/DeckAudioPipeline.cpp
-    src/audio/cache/AudioPageCache.cpp src/audio/cache/AudioCacheWorker.cpp src/audio/cache/CachedPlaybackAudioSource.cpp
+    src/audio/cache/AudioPageCache.cpp src/audio/cache/CachedPlaybackAudioSource.cpp
     src/audio/RenderModeRouter.cpp src/audio/internal/ScratchResampler.cpp src/audio/internal/HermiteResamplingAudioSource.cpp
-    src/deck/scratch/ScratchController.cpp src/deck/scratch/VirtualTurntable.cpp
+    src/deck/scratch/ScratchController.cpp
     src/audio/TimeStretchProcessor.cpp src/audio/DeckChannelProcessor.cpp
     src/fx/FxProcessor.cpp src/audio/internal/BrickwallLimiter.cpp
 )
-target_include_directories(BrockDJ_deck_audio_graph_tests PRIVATE src src/deck src/fx/dsp)
+target_include_directories(BrockDJ_deck_audio_graph_tests PRIVATE src src/deck)
 target_link_libraries(BrockDJ_deck_audio_graph_tests PRIVATE Qt6::Core Qt6::Gui juce::juce_core juce::juce_data_structures juce::juce_audio_basics juce::juce_audio_formats juce::juce_audio_devices juce::juce_dsp juce::juce_events ThirdParty::RubberBand ThirdParty::SignalsmithDSP ThirdParty::SignalsmithStretch)
 target_compile_definitions(BrockDJ_deck_audio_graph_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1)
 target_compile_features(BrockDJ_deck_audio_graph_tests PRIVATE cxx_std_23)
@@ -621,13 +617,13 @@ add_executable(BrockDJ_deck_transport_tests
     src/app/ControlClock.cpp
     src/deck/DeckTransport.cpp src/audio/DeckAudioPipeline.cpp
     src/deck/sync/DeckSyncController.cpp src/deck/sync/SyncCoordinator.cpp
-    src/audio/cache/AudioPageCache.cpp src/audio/cache/AudioCacheWorker.cpp src/audio/cache/CachedPlaybackAudioSource.cpp
+    src/audio/cache/AudioPageCache.cpp src/audio/cache/CachedPlaybackAudioSource.cpp
     src/audio/RenderModeRouter.cpp src/audio/internal/ScratchResampler.cpp src/audio/internal/HermiteResamplingAudioSource.cpp
-    src/deck/scratch/ScratchController.cpp src/deck/scratch/VirtualTurntable.cpp
+    src/deck/scratch/ScratchController.cpp
     src/audio/TimeStretchProcessor.cpp src/audio/DeckChannelProcessor.cpp
     src/fx/FxProcessor.cpp src/audio/internal/BrickwallLimiter.cpp
 )
-target_include_directories(BrockDJ_deck_transport_tests PRIVATE src src/deck src/fx/dsp)
+target_include_directories(BrockDJ_deck_transport_tests PRIVATE src src/deck)
 target_link_libraries(BrockDJ_deck_transport_tests PRIVATE Qt6::Core Qt6::Gui juce::juce_core juce::juce_data_structures juce::juce_audio_basics juce::juce_audio_formats juce::juce_audio_devices juce::juce_dsp juce::juce_events ThirdParty::RubberBand ThirdParty::SignalsmithDSP ThirdParty::SignalsmithStretch)
 target_compile_definitions(BrockDJ_deck_transport_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0 JUCE_USE_MP3AUDIOFORMAT=1)
 target_compile_features(BrockDJ_deck_transport_tests PRIVATE cxx_std_23)
@@ -643,6 +639,9 @@ add_executable(BrockDJ_alsa_midi_line_parser_tests
     tests/controllers/alsa_midi_line_parser_tests.cpp)
 target_include_directories(BrockDJ_alsa_midi_line_parser_tests PRIVATE src)
 target_link_libraries(BrockDJ_alsa_midi_line_parser_tests PRIVATE Qt6::Core)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_libraries(BrockDJ_alsa_midi_line_parser_tests PRIVATE ThirdParty::ALSA)
+endif()
 target_compile_features(BrockDJ_alsa_midi_line_parser_tests PRIVATE cxx_std_23)
 add_test(NAME alsa_midi_line_parser COMMAND BrockDJ_alsa_midi_line_parser_tests)
 
@@ -660,7 +659,7 @@ add_test(NAME midi_feedback_meter COMMAND BrockDJ_midi_feedback_meter_tests)
 
 add_executable(BrockDJ_parameter_store_tests
     tests/controllers/parameter_store_tests.cpp
-    src/controllers/midi/ParameterStore.cpp)
+    src/controllers/midi/ParameterStore.h)
 target_include_directories(BrockDJ_parameter_store_tests PRIVATE src)
 target_link_libraries(BrockDJ_parameter_store_tests PRIVATE Qt6::Core)
 target_compile_features(BrockDJ_parameter_store_tests PRIVATE cxx_std_23)
@@ -700,14 +699,12 @@ add_test(NAME render_pressure_policy COMMAND BrockDJ_render_pressure_policy_test
 
 add_executable(BrockDJ_master_bus_tests
     tests/audio/master_bus_tests.cpp
-    src/audio/MasterMixer.cpp
-    src/audio/HeadphoneBus.cpp
-    src/audio/AudioOutputRouter.cpp
+    src/audio/AudioBusMixer.cpp
     src/fx/FxProcessor.cpp
     src/audio/internal/BrickwallLimiter.cpp
 )
 target_include_directories(BrockDJ_master_bus_tests PRIVATE
-    src src/deck src/fx/dsp)
+    src src/deck)
 target_link_libraries(BrockDJ_master_bus_tests PRIVATE
     Qt6::Core Qt6::Gui
     juce::juce_core juce::juce_events juce::juce_audio_basics
@@ -719,14 +716,12 @@ add_test(NAME master_bus COMMAND BrockDJ_master_bus_tests)
 
 add_executable(BrockDJ_audio_routing_contract_tests
     tests/audio/audio_routing_contract_tests.cpp
-    src/audio/MasterMixer.cpp
-    src/audio/HeadphoneBus.cpp
-    src/audio/AudioOutputRouter.cpp
+    src/audio/AudioBusMixer.cpp
     src/fx/FxProcessor.cpp
     src/audio/internal/BrickwallLimiter.cpp
 )
 target_include_directories(BrockDJ_audio_routing_contract_tests PRIVATE
-    src src/deck src/fx/dsp)
+    src src/deck)
 target_link_libraries(BrockDJ_audio_routing_contract_tests PRIVATE
     Qt6::Core Qt6::Gui
     juce::juce_core juce::juce_events juce::juce_audio_basics
@@ -752,9 +747,8 @@ add_executable(BrockDJ_analysis_lifetime_tests
     src/waveform/WaveformCache.cpp
     src/domain/TrackData.cpp
     src/waveform/WaveformLineStore.cpp
-    src/analysis/internal/AnalysisFeatureExtractor.cpp
+    src/analysis/internal/FeatureAnalysis.cpp
     src/analysis/internal/BeatAnalysis.cpp
-    src/analysis/internal/PhraseAnalyzer.cpp
 )
 target_include_directories(BrockDJ_analysis_lifetime_tests PRIVATE
     src src/analysis src/domain
@@ -774,7 +768,6 @@ add_test(NAME analysis_lifetime COMMAND BrockDJ_analysis_lifetime_tests)
 add_executable(BrockDJ_waveform_pipeline_benchmark
     tests/waveform/waveform_pipeline_benchmark.cpp
     src/audio/cache/AudioPageCache.cpp
-    src/audio/cache/AudioCacheWorker.cpp
     src/audio/cache/CachedPlaybackAudioSource.cpp
     src/waveform/WaveformAnalyzer.cpp
     src/waveform/internal/WaveformEnvelopePass.cpp
@@ -782,9 +775,8 @@ add_executable(BrockDJ_waveform_pipeline_benchmark
     src/waveform/WaveformCache.cpp
     src/domain/TrackData.cpp
     src/waveform/WaveformLineStore.cpp
-    src/analysis/internal/AnalysisFeatureExtractor.cpp
+    src/analysis/internal/FeatureAnalysis.cpp
     src/analysis/internal/BeatAnalysis.cpp
-    src/analysis/internal/PhraseAnalyzer.cpp
 )
 target_include_directories(BrockDJ_waveform_pipeline_benchmark PRIVATE
     src src/analysis src/domain
@@ -929,7 +921,6 @@ add_executable(BrockDJ_track_loader_tests
     src/deck/DeckTrackLoader.h
     src/deck/DeckTrackLoader.cpp
     src/audio/cache/AudioPageCache.cpp
-    src/audio/cache/AudioCacheWorker.cpp
     src/library/CoverArtExtractor.cpp
     src/waveform/WaveformCache.cpp
     src/domain/TrackData.cpp
@@ -975,7 +966,7 @@ add_test(NAME progressive_waveform_publication COMMAND BrockDJ_progressive_wavef
 add_executable(BrockDJ_waveform_cache_repair_tests
     tests/waveform/waveform_cache_repair_tests.cpp
     src/waveform/WaveformCache.cpp
-    src/waveform/WaveformLodPyramid.cpp
+    src/waveform/WaveformAggregator.cpp
     src/waveform/WaveformLineStore.cpp
     src/domain/TrackData.cpp
 )
@@ -987,7 +978,6 @@ add_test(NAME waveform_cache_repair COMMAND BrockDJ_waveform_cache_repair_tests)
 add_executable(BrockDJ_waveform_line_store_tests
     tests/waveform/waveform_line_store_tests.cpp
     src/waveform/WaveformAggregator.cpp
-    src/waveform/WaveformLodPyramid.cpp
     src/waveform/WaveformLineStore.cpp
 )
 target_include_directories(BrockDJ_waveform_line_store_tests PRIVATE src)
@@ -997,7 +987,6 @@ add_test(NAME waveform_line_store COMMAND BrockDJ_waveform_line_store_tests)
 add_executable(BrockDJ_waveform_aggregator_tests
     tests/waveform/waveform_aggregator_tests.cpp
     src/waveform/WaveformAggregator.cpp
-    src/waveform/WaveformLodPyramid.cpp
     src/waveform/WaveformLineStore.cpp
 )
 target_link_libraries(BrockDJ_waveform_aggregator_tests PRIVATE Qt6::Core Qt6::Gui)
@@ -1025,8 +1014,6 @@ add_executable(BrockDJ_audio_page_cache_tests
     src/audio/cache/AudioCacheTypes.h
     src/audio/cache/AudioPageCache.h
     src/audio/cache/AudioPageCache.cpp
-    src/audio/cache/AudioCacheWorker.h
-    src/audio/cache/AudioCacheWorker.cpp
 )
 target_include_directories(BrockDJ_audio_page_cache_tests PRIVATE src)
 target_link_libraries(BrockDJ_audio_page_cache_tests PRIVATE
@@ -1041,7 +1028,6 @@ add_test(NAME audio_page_cache COMMAND BrockDJ_audio_page_cache_tests)
 add_executable(BrockDJ_audio_cache_stress
     tests/audio/audio_cache_stress.cpp
     src/audio/cache/AudioPageCache.cpp
-    src/audio/cache/AudioCacheWorker.cpp
     src/audio/internal/ScratchResampler.cpp
 )
 target_include_directories(BrockDJ_audio_cache_stress PRIVATE src)
@@ -1056,7 +1042,6 @@ target_compile_features(BrockDJ_audio_cache_stress PRIVATE cxx_std_23)
 add_executable(BrockDJ_scratch_cache_tests
     tests/audio/scratch_cache_tests.cpp
     src/audio/cache/AudioPageCache.cpp
-    src/audio/cache/AudioCacheWorker.cpp
     src/audio/internal/ScratchResampler.cpp
 )
 target_include_directories(BrockDJ_scratch_cache_tests PRIVATE src src/deck)
@@ -1072,7 +1057,6 @@ add_test(NAME scratch_cache COMMAND BrockDJ_scratch_cache_tests)
 add_executable(BrockDJ_scratch_motion_tests
     tests/audio/scratch_motion_tests.cpp
     src/audio/cache/AudioPageCache.cpp
-    src/audio/cache/AudioCacheWorker.cpp
     src/audio/internal/ScratchResampler.cpp
     src/deck/scratch/ScratchController.cpp
 )
@@ -1089,7 +1073,6 @@ add_test(NAME scratch_motion COMMAND BrockDJ_scratch_motion_tests)
 add_executable(BrockDJ_cached_playback_tests
     tests/audio/cached_playback_tests.cpp
     src/audio/cache/AudioPageCache.cpp
-    src/audio/cache/AudioCacheWorker.cpp
     src/audio/cache/CachedPlaybackAudioSource.cpp
 )
 target_include_directories(BrockDJ_cached_playback_tests PRIVATE src)
@@ -1124,11 +1107,13 @@ add_test(NAME database_worker COMMAND BrockDJ_database_worker_tests)
 
 add_executable(BrockDJ_media_io_scheduler_tests
     tests/library/media_io_scheduler_tests.cpp
+    src/library/LibraryCoverService.h
+    src/library/LibraryCoverService.cpp
     src/library/MediaIoScheduler.cpp
     src/library/CoverArtExtractor.cpp)
 target_include_directories(BrockDJ_media_io_scheduler_tests PRIVATE src)
 target_link_libraries(BrockDJ_media_io_scheduler_tests PRIVATE
-    Qt6::Core Qt6::Gui ThirdParty::TagLib)
+    Qt6::Core Qt6::Gui Qt6::Quick ThirdParty::TagLib)
 target_compile_features(BrockDJ_media_io_scheduler_tests PRIVATE cxx_std_23)
 add_test(NAME media_io_scheduler COMMAND BrockDJ_media_io_scheduler_tests)
 

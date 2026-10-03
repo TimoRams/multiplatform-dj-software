@@ -3,6 +3,12 @@
 This is the current ownership map for cross-thread state. Atomics and immutable
 snapshots transfer values; they do not create a second owner.
 
+Physical file grouping does not combine lifetimes. `AudioBusMixer.*` contains
+the separate master and headphone classes; `AudioPageCache.cpp` contains its
+private joined `AudioCacheWorker`. `ScratchInput.h` groups two independent
+native input types, and `LibraryCoverService.*` groups a service with the image
+provider still owned by the QML engine.
+
 ## Application lifetime
 
 `ApplicationRuntime` owns the services and product objects. The important
@@ -24,6 +30,11 @@ consumers are destroyed before `MediaIoScheduler` rejects work and joins.
 `AudioPageCache` must outlive `AudioEngine`, every `DeckAudioPipeline`, and all
 `AudioCacheHandle`/`AudioPageReadGuard` users. `AudioDeviceService` remains
 alive until the device callback is unregistered and closed.
+
+`ApplicationLifecycle` owns the shared QML context-name/clear-value contract.
+Bootstrap publishes through its typed keys, including deferred services;
+teardown uses the same names. This does not transfer QObject ownership to QML
+or change the staged startup and shutdown ordering.
 
 ## Ownership table
 
@@ -58,6 +69,8 @@ alive until the device callback is unregistered and closed.
 | Database commands/results | `DatabaseWorker` | dedicated joined DB thread | its QSQLITE connection never crosses threads |
 | General file/image work | `MediaIoScheduler` | dedicated joined I/O thread | consumers destroyed before scheduler shutdown |
 | POSIX signal delivery | `PosixSignalHandler` | signal handler writes pipe; Qt notifier drains | restore handlers and close descriptors during teardown |
+| Native ALSA MIDI input | `AlsaMidiInput` | joined sequencer receive thread | stop and join before disconnecting or closing its own handle |
+| Native ALSA MIDI output | `AlsaMidiOutput` | controller/control calls, never the audio callback | disconnect subscriptions before closing its independent handle |
 
 ## ControlClock contract
 

@@ -1,9 +1,9 @@
 #include "LibraryCoverService.h"
-#include "CoverArtProvider.h"
 #include "library/MediaIoScheduler.h"
 
 #include <QDateTime>
 #include <QFileInfo>
+#include <QMutexLocker>
 
 namespace {
 
@@ -15,6 +15,69 @@ QString pathKey(const QString& path)
 }
 
 } // namespace
+
+CoverArtProvider::CoverArtProvider()
+    : QQuickImageProvider(QQuickImageProvider::Image)
+{
+}
+
+QImage CoverArtProvider::requestImage(const QString& id, QSize* size,
+                                      const QSize& requestedSize)
+{
+    QMutexLocker lock(&m_mutex);
+
+    const QString cleanId = id.section(QLatin1Char('?'), 0, 0);
+
+    QImage img;
+    if (m_covers.contains(cleanId))
+        img = m_covers.value(cleanId);
+
+    if (img.isNull()) {
+        img = QImage(1, 1, QImage::Format_ARGB32);
+        img.fill(Qt::transparent);
+    }
+
+    if (requestedSize.isValid() && requestedSize.width() > 0 && requestedSize.height() > 0)
+        img = img.scaled(requestedSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+
+    if (size)
+        *size = img.size();
+
+    return img;
+}
+
+void CoverArtProvider::setCover(const QString& id, const QByteArray& data)
+{
+    QImage img;
+    if (!data.isEmpty())
+        img.loadFromData(data);
+    setCoverImage(id, img);
+}
+
+void CoverArtProvider::setCoverImage(const QString& id, const QImage& image)
+{
+    QMutexLocker lock(&m_mutex);
+    m_covers[id] = image;
+}
+
+void CoverArtProvider::clearCover(const QString& id)
+{
+    QMutexLocker lock(&m_mutex);
+    m_covers.remove(id);
+}
+
+bool CoverArtProvider::hasCover(const QString& id)
+{
+    QMutexLocker lock(&m_mutex);
+    return m_covers.contains(id) && !m_covers.value(id).isNull()
+           && m_covers.value(id).width() > 1;
+}
+
+QImage CoverArtProvider::coverImage(const QString& id)
+{
+    QMutexLocker lock(&m_mutex);
+    return m_covers.value(id);
+}
 
 namespace {
 constexpr std::uint32_t kCoverServiceOwner = 2;

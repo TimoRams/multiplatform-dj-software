@@ -1,7 +1,6 @@
 #include "audio/AudioOutputRouter.h"
 #include "audio/AudioRouting.h"
-#include "audio/HeadphoneBus.h"
-#include "audio/MasterMixer.h"
+#include "audio/AudioBusMixer.h"
 
 #include <array>
 #include <cmath>

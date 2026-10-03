@@ -1,5 +1,6 @@
 #pragma once
 
+#include "domain/DeckId.h"
 #include "fx/FxTypes.h"
 
 #include <QObject>
@@ -212,6 +213,9 @@ private:
     static EffectType effectTypeFromString(const QString& name);
     // Forward effect type + wetDry to all assigned engines for a unit
     void routeToEngines(int unitId, EffectType type, float wetDry);
+    [[nodiscard]] bool isDeckAssigned(int unitId, domain::DeckId deck) const;
+    template <typename Action>
+    void forEachAssignedEngine(int unitId, Action&& action) const;
     // What the engines should actually hear: the dialled amount when engaged,
     // silence when not.
     [[nodiscard]] float effectiveWetDry(int unitId) const;

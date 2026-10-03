@@ -1,5 +1,10 @@
 #include "controllers/midi/AlsaMidiLineParser.h"
-#include "controllers/midi/MidiEchoGuard.h"
+#include "controllers/midi/MidiInputState.h"
+
+#if defined(Q_OS_LINUX)
+// Keep port parsing private while testing it without opening ALSA devices.
+#include "controllers/midi/AlsaMidiTransport.cpp"
+#endif
 
 #include <iostream>
 #include <set>
@@ -22,11 +27,100 @@ bool matches(const QString& line, int channel, int control, int value)
         && event.value == value;
 }
 
+#if defined(Q_OS_LINUX)
+bool testPortParsing()
+{
+    struct PortCase {
+        const char* source;
+        const char* prefix;
+        bool valid;
+        int client = 0;
+        int port = 0;
+    };
+    const PortCase cases[] {
+        {"alsa:20:1", "alsa:", true, 20, 1},
+        {"alsa-out:20:1", "alsa-out:", true, 20, 1},
+        {"20:1", "alsa:", true, 20, 1},
+        {"20:1", "alsa-out:", true, 20, 1},
+        {" \talsa:20:1\n", "alsa:", true, 20, 1},
+        {" \talsa-out:20:1\n", "alsa-out:", true, 20, 1},
+        {"alsa: +20 : 001 ", "alsa:", true, 20, 1},
+        {"alsa-out: +20 : 001 ", "alsa-out:", true, 20, 1},
+        {"0:0", "alsa:", true},
+        {"0:0", "alsa-out:", true},
+        {"2147483647:2147483647", "alsa:", true, 2147483647, 2147483647},
+        {"2147483647:2147483647", "alsa-out:", true, 2147483647, 2147483647},
+        {"alsa-out:20:1", "alsa:", false},
+        {"alsa:20:1", "alsa-out:", false},
+        {"ALSA:20:1", "alsa:", false},
+        {"ALSA-OUT:20:1", "alsa-out:", false},
+        {"alsa:alsa:20:1", "alsa:", false},
+        {"alsa-out:alsa-out:20:1", "alsa-out:", false},
+        {"", "alsa:", false},
+        {"", "alsa-out:", false},
+        {"20", "alsa:", false},
+        {"20", "alsa-out:", false},
+        {"20:", "alsa:", false},
+        {":1", "alsa-out:", false},
+        {"20:1:2", "alsa:", false},
+        {"20:1:2", "alsa-out:", false},
+        {"-1:0", "alsa:", false},
+        {"0:-1", "alsa-out:", false},
+        {"0x14:1", "alsa:", false},
+        {"20:1.0", "alsa-out:", false},
+        {"2147483648:0", "alsa:", false},
+        {"0:2147483648", "alsa-out:", false},
+        {"99999999999999999999:1", "alsa:", false},
+        {"1:99999999999999999999", "alsa-out:", false},
+    };
+
+    bool ok = true;
+    for (const auto& test : cases) {
+        int client = -7;
+        int port = -9;
+        const bool valid = parsePort(QString::fromUtf8(test.source),
+                                     QString::fromUtf8(test.prefix), client, port);
+        ok &= require(valid == test.valid, "ALSA port parser preserves validation rules");
+        if (valid)
+            ok &= require(client == test.client && port == test.port,
+                          "ALSA port parser preserves numeric conversion");
+        else
+            ok &= require(client == -7 && port == -9,
+                          "invalid ALSA port does not modify parsed addresses");
+    }
+
+    AlsaMidiInput input;
+    AlsaMidiOutput output;
+    QString error;
+    const QString invalidSource = QStringLiteral(" alsa-out:20:1 ");
+    ok &= require(!input.open(invalidSource, {}, &error) && !input.isOpen()
+                      && error == QStringLiteral("invalid ALSA source '%1'").arg(invalidSource),
+                  "invalid input preserves its original address in the error");
+    const QString invalidTarget = QStringLiteral(" alsa:20:1 ");
+    ok &= require(!output.open(invalidTarget, &error) && !output.isOpen()
+                      && error == QStringLiteral("invalid ALSA target '%1'").arg(invalidTarget),
+                  "invalid output preserves its original address in the error");
+    ok &= require(!input.open(QStringLiteral("-1:0"), {}, nullptr)
+                      && !output.open(QStringLiteral("0:-1"), nullptr),
+                  "invalid ports allow a null error sink");
+    input.close();
+    input.close();
+    output.close();
+    output.close();
+    ok &= require(!input.isOpen() && !output.isOpen(),
+                  "input and output remain independently closed after repeated close");
+    return ok;
+}
+#endif
+
 } // namespace
 
 int main()
 {
     bool ok = true;
+#if defined(Q_OS_LINUX)
+    ok &= testPortParsing();
+#endif
     ok &= require(matches(
         QStringLiteral("128:0 Control change 0, controller 0, value 63"), 0, 0, 63),
         "standard aseqdump tempo MSB is decoded");

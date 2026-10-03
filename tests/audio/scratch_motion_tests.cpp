@@ -11,6 +11,7 @@
 #include "audio/internal/ScratchResampler.h"
 #include "controllers/flx10/Flx10JogRouter.h"
 #include "deck/scratch/ScratchController.h"
+#include "deck/scratch/ScratchInput.h"
 
 #include <QCoreApplication>
 #include <QTemporaryDir>
@@ -44,6 +45,44 @@ constexpr int kBlockSize = 512;
 // Typical jog event cadence of a USB controller.
 constexpr double kEventIntervalSec = 0.002;
 constexpr int kFixtureSamples = 48000 * 12;
+
+void checkVirtualTurntable()
+{
+    using engine::scratch::VirtualTurntable;
+    VirtualTurntable turntable;
+    turntable.reset(1000.0, kSampleRate);
+    const double quarterTurnSamples =
+        VirtualTurntable::samplesPerRadian(kSampleRate) * VirtualTurntable::kPi / 2.0;
+    turntable.addAngleDeltaDegrees(90.0);
+    require(std::abs(turntable.targetSamplePosition()
+                     - (1000.0 + quarterTurnSamples)) < 1e-8
+                && std::abs(turntable.displayAngleDegrees() - 90.0) < 1e-8,
+            "virtual turntable maps degrees to samples");
+    turntable.addAngleDeltaRadians(-VirtualTurntable::kPi);
+    require(std::abs(turntable.targetSamplePosition()
+                     - (1000.0 - quarterTurnSamples)) < 1e-8
+                && std::abs(turntable.displayAngleDegrees() - 270.0) < 1e-8,
+            "virtual turntable preserves reverse travel and wrapped display angle");
+    turntable.addTimeDeltaSeconds(0.25);
+    require(std::abs(turntable.targetSamplePosition()
+                     - (1000.0 - quarterTurnSamples + kSampleRate * 0.25)) < 1e-8
+                && std::abs(turntable.displayAngleDegrees() - 320.0) < 1e-8,
+            "virtual turntable applies time travel at the track sample rate");
+    turntable.setAbsoluteTimeSeconds(1.25);
+    turntable.setTrackSampleRate(96000.0);
+    turntable.addTargetSampleDelta(20.0);
+    turntable.addTimeDeltaSeconds(0.5);
+    require(turntable.targetSamplePosition() == 108020.0,
+            "virtual turntable absolute time and subsequent rate changes remain independent");
+    turntable.reset(0.0, 0.0);
+    turntable.addAngleDeltaRadians(1e-13);
+    require(turntable.targetSamplePosition() == 0.0
+                && turntable.displayAngleRadians() == 0.0,
+            "virtual turntable ignores negligible angle deltas after reset");
+    turntable.addTimeDeltaSeconds(2.0);
+    require(turntable.targetSamplePosition() == 2.0,
+            "virtual turntable retains its minimum sample-rate guard");
+}
 
 bool writeSineFixture(const QString& path, double frequencyHz = 1000.0)
 {
@@ -478,6 +517,7 @@ int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
     g_verbose = qEnvironmentVariableIsSet("BROCKDJ_SCRATCH_VERBOSE");
+    checkVirtualTurntable();
 
     QTemporaryDir dir;
     const QString fixture = dir.filePath("scratch-motion.wav");

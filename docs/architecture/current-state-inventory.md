@@ -1,22 +1,27 @@
 # BrockDJ Current-State Inventory
 
 This hand-maintained inventory describes the production source tree after the
-2026-08-24 performance and stability audit. Counts exclude vendored `libs/`,
+2026-10-03 source consolidation. Counts exclude vendored `libs/`,
 build trees and packaging output.
 
 ## Scope and metrics
 
 | Metric | Count |
 | --- | ---: |
-| C++ headers | 113 |
-| C++ sources | 93 |
-| QML components | 35 |
-| C++/QML files | 241 |
-| C++/QML lines | 81,640 |
+| All files under `src/` | 212 |
+| C++ headers | 94 |
+| C++ sources | 77 |
+| QML components | 26 |
+| C++/QML files | 197 |
+| C++/QML lines | approximately 82,000 |
 | Top-level source domains | 12 |
 
 Counts are orientation points, not a target. Ownership and dependency direction
 are the architectural contract.
+
+The preceding consolidation reduced 238 files to 232. The next domain-module
+round removed another 20, reaching 212 without combining realtime, worker,
+SQL or hardware lifetimes. Fewer files do not imply lower runtime cost.
 
 ## Source domains
 
@@ -54,6 +59,9 @@ readers use shared worker leases, so a normal replacement does not wait for an
 in-flight codec or device read; explicit eject/shutdown still waits for the
 backing handle to close. The limiter is internal audio output protection shared
 by master and headphone buses, not a selectable FX unit.
+Master and headphone classes share `AudioBusMixer.*` as their physical module;
+the joined cache worker is private to `AudioPageCache.cpp`, and the small output
+mapper is inline.
 
 Scratch remains one mode inside `RenderModeRouter`, not a parallel deck graph.
 FLX10 cumulative motion reaches the callback through a coherent native
@@ -83,20 +91,24 @@ because they have real ownership or test boundaries.
 Public analysis values live in `AnalysisTypes.h`; beat implementation helpers
 live in `analysis/internal/BeatAnalysis.*`. `AnalysisJobQueue` remains separate
 because it owns scheduling state.
+Feature extraction and phrase analysis share `analysis/internal/FeatureAnalysis.*`
+as separate algorithms. Neutral waveform values and viewport-demand policy
+share `WaveformTypes.h`, without importing render or Qt lifecycle types.
 
 Waveform data and rendering now form one domain:
 
 ```text
 WaveformAnalyzer / WaveformCache
     -> WaveformLineStore + WaveformTypes
-    -> WaveformLodPyramid
+    -> WaveformAggregator (including WaveformLodPyramid sampling)
     -> render/WaveformTileRasterizer
     -> render/ScrollingWaveformItem + OverviewWaveformItem
 ```
 
 The current playhead-demand, immutable chunk, ViewKey, single overview and
-detail-tile behavior is preserved. Analysis/orchestration lives under
-`waveform/internal/`; scene-graph code lives only under `waveform/render/`.
+detail-tile behavior is preserved. Analysis orchestration lives under
+`analysis/internal/`, envelope extraction under `waveform/internal/`, and
+scene-graph code only under `waveform/render/`.
 
 ## Library and persistence
 
@@ -112,6 +124,8 @@ Generic MIDI lives in `controllers/midi/`; all FLX10-specific behavior lives in
 `controllers/flx10/`. FLX10 HID transport remains separate from display
 encoding and MIDI dispatch. Controller bridges translate between existing state
 owners and do not own a second mixer or transport state.
+`midi/AlsaMidiTransport.*` contains the native input and output classes with
+independent handles and lifetimes and one shared prefix-aware port parser.
 
 ## QML shape
 
@@ -131,6 +145,9 @@ to reduce line count because bindings, focus, popup parents and component
 lifetime require visual parity tests. Desktop and AIO settings now share
 `SettingsPanel.qml`; `Library.qml`, `TopHeader.qml`, and `DeckControl.qml`
 remain the principal monolithic surfaces.
+Master/Headphones/Booth settings share one role definition and row; view toggles
+share one card implementation without changing menu order. Library deck-selection
+actions are shared inside the existing component rather than spread across new files.
 
 ## Build and test shape
 

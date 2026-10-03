@@ -3,6 +3,10 @@
 #include <QObject>
 #include <QByteArray>
 #include <QHash>
+#include <QImage>
+#include <QMutex>
+#include <QQuickImageProvider>
+#include <QSize>
 #include <QSet>
 #include <QString>
 #include <QTimer>
@@ -11,8 +15,25 @@
 #include <cstdint>
 #include <memory>
 
-class CoverArtProvider;
 class MediaIoScheduler;
+
+class CoverArtProvider : public QQuickImageProvider
+{
+public:
+    CoverArtProvider();
+
+    QImage requestImage(const QString& id, QSize* size,
+                        const QSize& requestedSize) override;
+    void setCover(const QString& id, const QByteArray& data);
+    void setCoverImage(const QString& id, const QImage& image);
+    void clearCover(const QString& id);
+    bool hasCover(const QString& id);
+    QImage coverImage(const QString& id);
+
+private:
+    QHash<QString, QImage> m_covers;
+    QMutex m_mutex;
+};
 
 // Async cover-art loader for library rows. Keys covers by track id (preferred) or path.
 class LibraryCoverService : public QObject

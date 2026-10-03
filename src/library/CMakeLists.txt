@@ -5,7 +5,6 @@ target_sources(${PROJECT_NAME} PRIVATE
     LibraryManager.cpp
     CoverArtExtractor.h
     CoverArtExtractor.cpp
-    CoverArtProvider.h
     LibraryCoverService.h
     LibraryCoverService.cpp
     LibraryPreviewPlayer.h

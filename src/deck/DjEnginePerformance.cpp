@@ -5,7 +5,6 @@
 #include "audio/RenderModeRouter.h"
 #include "audio/TimeStretchProcessor.h"
 #include "deck/DeckTransport.h"
-#include "deck/JogNudgePolicy.h"
 #include "waveform/WaveformAnalyzer.h"
 
 #include <algorithm>

@@ -1,7 +1,6 @@
 #include "audio/AudioOutputRouter.h"
 #include "audio/AudioParameters.h"
-#include "audio/HeadphoneBus.h"
-#include "audio/MasterMixer.h"
+#include "audio/AudioBusMixer.h"
 
 #include <array>
 #include <atomic>
@@ -9,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <thread>
 
 namespace {
@@ -158,6 +158,38 @@ void mixerHeadphoneAndRouter()
     assert(mixer.meter().minimumGainReduction < 1.0f);
 }
 
+void outputRouterPreservesSampleContract()
+{
+    juce::AudioBuffer<float> mono(1, 3);
+    juce::AudioBuffer<float> headphones(2, 3);
+    juce::AudioBuffer<float> hardware(4, 5);
+    mono.setSample(0, 0, std::numeric_limits<float>::quiet_NaN());
+    mono.setSample(0, 1, 0.25f);
+    mono.setSample(0, 2, std::numeric_limits<float>::infinity());
+    headphones.clear();
+    hardware.clear();
+
+    AudioParameters parameters;
+    parameters.masterFirstChannel = 2;
+    parameters.boothFirstChannel = 0;
+    parameters.headphonesFirstChannel = 0;
+
+    AudioOutputRouter router;
+    router.write(mono, headphones, parameters, hardware, 1, 3);
+    assert(hardware.getSample(1, 0) == 0.0f && hardware.getSample(2, 0) == 0.0f);
+    assert(hardware.getSample(1, 1) == 0.0f && hardware.getSample(2, 1) == 0.0f);
+    assert(hardware.getSample(1, 2) == 0.25f && hardware.getSample(2, 2) == 0.25f);
+    assert(hardware.getSample(1, 3) == 0.0f && hardware.getSample(2, 3) == 0.0f);
+    assert(hardware.getSample(1, 4) == 0.0f && hardware.getSample(2, 4) == 0.0f);
+
+    hardware.clear();
+    parameters.masterFirstChannel = 4;
+    router.write(mono, headphones, parameters, hardware, 0, 3);
+    router.write(mono, headphones, parameters, hardware, 4, 3);
+    for (int channel = 0; channel < hardware.getNumChannels(); ++channel)
+        assert(hardware.getMagnitude(channel, 0, hardware.getNumSamples()) == 0.0f);
+}
+
 void performanceSmoke()
 {
     MasterMixer mixer;
@@ -194,6 +226,7 @@ int main()
     parameterSnapshotIsCoherent();
     commandQueueIsBounded();
     mixerHeadphoneAndRouter();
+    outputRouterPreservesSampleContract();
     performanceSmoke();
     std::cout << "master component tests passed\n";
     return 0;

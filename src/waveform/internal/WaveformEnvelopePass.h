@@ -7,7 +7,6 @@
 #include <functional>
 #include <memory>
 #include "waveform/WaveformTypes.h"
-#include "waveform/WaveformDemand.h"
 
 namespace waveform_internal {
 

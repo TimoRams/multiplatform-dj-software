@@ -59,7 +59,10 @@ binaries, so incremental UI/audio work stays fast:
 
 Tests use their own `build-tests/` directory and never invalidate the app
 build. The first test invocation has its own one-time dependency configure;
-later runs are incremental. Run the complete local suite with:
+later runs are incremental. `BUILD_TESTING=ON` also requires Qt Test (included
+in the Qt base development packages above). The QML component test uses it
+for native mouse/touch event delivery and defaults to offscreen software rendering.
+Run the complete local suite with:
 
 ```bash
 ./test-fast

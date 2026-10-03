@@ -38,7 +38,6 @@
 #include "library/LibraryManager.h"
 #include "library/devices/DeviceLibraryManager.h"
 #include "library/MediaIoScheduler.h"
-#include "library/CoverArtProvider.h"
 #include "library/LibraryCoverService.h"
 #include "library/LibraryPreviewPlayer.h"
 #include "fx/FxManager.h"
@@ -57,8 +56,7 @@
 #include "audio/cache/AudioPageCache.h"
 #include "deck/sync/SyncCoordinator.h"
 #include "app/ControlClock.h"
-#include "app/UiScaleController.h"
-#include "app/WaveformZoomController.h"
+#include "app/UiPreferences.h"
 #include "app/RenderPressurePolicy.h"
 
 using namespace Qt::StringLiterals;
@@ -481,32 +479,55 @@ int runApplication(int argc, char *argv[])
     engine.addImageProvider("coverart", runtime.coverProvider.release());
     logStartupStep("Cover art provider installed");
 
-    engine.rootContext()->setContextProperty("settingsManager", &settingsManager);
-    engine.rootContext()->setContextProperty("appConfig", &appConfig);
-    engine.rootContext()->setContextProperty("deckA", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("deckB", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("deckC", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("deckD", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("libraryManager", runtime.libraryManager.get());
-    engine.rootContext()->setContextProperty("libraryDb",    static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("libraryModel", runtime.libraryTableModel.get());
-    engine.rootContext()->setContextProperty("libraryAnalyzer", runtime.libraryAnalysisManager.get());
-    engine.rootContext()->setContextProperty("deviceLibraryManager", runtime.deviceLibraryManager.get());
-    engine.rootContext()->setContextProperty("fxManager", runtime.fxManager.get());
-    engine.rootContext()->setContextProperty("linkManager", runtime.linkManager.get());
-    engine.rootContext()->setContextProperty("sysMonitor", runtime.sysMonitor.get());
-    engine.rootContext()->setContextProperty("parameterStore", runtime.parameterStore.get());
-    engine.rootContext()->setContextProperty("midiManager", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("controllerManager", static_cast<QObject*>(nullptr));
-    engine.rootContext()->setContextProperty("cursorControl", runtime.cursorControl.get());
-    engine.rootContext()->setContextProperty("uiScaleController", runtime.uiScaleController.get());
-    engine.rootContext()->setContextProperty("waveformZoomController", runtime.waveformZoomController.get());
-    engine.rootContext()->setContextProperty("renderPressurePolicy",
-                                             runtime.renderPressurePolicy.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::SettingsManager, &settingsManager);
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::AppConfig, &appConfig);
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::DeckA, nullptr);
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::DeckB, nullptr);
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::DeckC, nullptr);
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::DeckD, nullptr);
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::LibraryManager, runtime.libraryManager.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::LibraryDatabase, nullptr);
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::LibraryModel, runtime.libraryTableModel.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::LibraryAnalyzer, runtime.libraryAnalysisManager.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::DeviceLibraryManager, runtime.deviceLibraryManager.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::FxManager, runtime.fxManager.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::LinkManager, runtime.linkManager.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::SystemMonitor, runtime.sysMonitor.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::ParameterStore, runtime.parameterStore.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::MidiManager, nullptr);
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::ControllerManager, nullptr);
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::CursorControl, runtime.cursorControl.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::UiScaleController, runtime.uiScaleController.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::WaveformZoomController, runtime.waveformZoomController.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::RenderPressurePolicy, runtime.renderPressurePolicy.get());
     qmlRegisterSingletonInstance("BrockDJ.Mixer", 1, 0, "Control", runtime.mixerControl.get());
-    engine.rootContext()->setContextProperty("mixerControl", runtime.mixerControl.get());
-    engine.rootContext()->setContextProperty("controlClock", runtime.controlClock.get());
-    engine.rootContext()->setContextProperty("libraryCover", runtime.libraryCoverService.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::MixerControl, runtime.mixerControl.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::ControlClock, runtime.controlClock.get());
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::LibraryCover, runtime.libraryCoverService.get());
 
     const auto url = QUrl(u"qrc:/DJSoftware/src/qml/main.qml"_s);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
@@ -530,7 +551,8 @@ int runApplication(int argc, char *argv[])
                          runtime.libraryTableModel.get(), &LibraryTableModel::refreshMetaForTrack);
 
         runtime.libraryAnalysisManager->setLibraryDatabase(runtime.libraryDb.get());
-        engine.rootContext()->setContextProperty("libraryDb", runtime.libraryDb.get());
+        ApplicationLifecycle::setQmlContextProperty(
+            engine, QmlContextProperty::LibraryDatabase, runtime.libraryDb.get());
 
         runtime.libraryTableModel->refresh();
         logStartupStep("LibraryTableModel refreshed");
@@ -563,10 +585,14 @@ int runApplication(int argc, char *argv[])
                     {runtime.deckC.get(), "deckC"}, {runtime.deckD.get(), "deckD"}}})
                 deck->setCoverArtProvider(runtime.coverProviderPtr, name);
 
-            engine.rootContext()->setContextProperty("deckA", runtime.deckA.get());
-            engine.rootContext()->setContextProperty("deckB", runtime.deckB.get());
-            engine.rootContext()->setContextProperty("deckC", runtime.deckC.get());
-            engine.rootContext()->setContextProperty("deckD", runtime.deckD.get());
+            ApplicationLifecycle::setQmlContextProperty(
+                engine, QmlContextProperty::DeckA, runtime.deckA.get());
+            ApplicationLifecycle::setQmlContextProperty(
+                engine, QmlContextProperty::DeckB, runtime.deckB.get());
+            ApplicationLifecycle::setQmlContextProperty(
+                engine, QmlContextProperty::DeckC, runtime.deckC.get());
+            ApplicationLifecycle::setQmlContextProperty(
+                engine, QmlContextProperty::DeckD, runtime.deckD.get());
 
             auto* midi = new MidiControllerManager(runtime.parameterStore.get(),
                                                    *runtime.controlClock, &app);
@@ -575,12 +601,14 @@ int runApplication(int argc, char *argv[])
             runtime.midiManager->connectDecks(
                 runtime.deckA.get(), runtime.deckB.get(),
                 runtime.deckC.get(), runtime.deckD.get());
-            engine.rootContext()->setContextProperty("midiManager", runtime.midiManager.data());
+            ApplicationLifecycle::setQmlContextProperty(
+                engine, QmlContextProperty::MidiManager, runtime.midiManager.data());
 
             runtime.controllerManager = std::make_unique<ControllerIntegrationManager>(
                 *runtime.controlClock);
             runtime.controllerManager->setDecks(runtime.deckA.get(), runtime.deckB.get());
-            engine.rootContext()->setContextProperty("controllerManager", runtime.controllerManager.get());
+            ApplicationLifecycle::setQmlContextProperty(
+                engine, QmlContextProperty::ControllerManager, runtime.controllerManager.get());
             QObject::connect(&settingsManager,
                              &SettingsManager::controllerSettingsChanged,
                              runtime.controllerManager.get(),
@@ -625,8 +653,8 @@ int runApplication(int argc, char *argv[])
                              });
             runtime.previewRegistration = runtime.audioEngine->registerAuxEndpoint(
                 *runtime.libraryPreviewPlayer);
-            engine.rootContext()->setContextProperty("libraryPreview",
-                                                     runtime.libraryPreviewPlayer.get());
+            ApplicationLifecycle::setQmlContextProperty(
+                engine, QmlContextProperty::LibraryPreview, runtime.libraryPreviewPlayer.get());
             runtime.mixerControl->attachParameterStore(runtime.parameterStore.get());
             runtime.mixerControl->setDecks(runtime.deckA.get(), runtime.deckB.get(),
                                            runtime.deckC.get(), runtime.deckD.get());
@@ -855,7 +883,8 @@ int runApplication(int argc, char *argv[])
         ApplicationLifecycle::performExitTeardown(runtime, manualBackup);
         QCoreApplication::quit();
     });
-    engine.rootContext()->setContextProperty("appExit", exitGate);
+    ApplicationLifecycle::setQmlContextProperty(
+        engine, QmlContextProperty::AppExit, exitGate);
 
     const int ret = app.exec();
     ApplicationLifecycle::shutdownApplication(runtime);

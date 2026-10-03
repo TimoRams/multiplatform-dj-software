@@ -4,6 +4,7 @@
 
 #include <QDebug>
 
+#include <array>
 #include <cmath>
 #include <algorithm>
 
@@ -25,50 +26,24 @@ void FxManager::registerEngines(DjEngine* deckA, DjEngine* deckB,
     m_engineC = deckC;
     m_engineD = deckD;
 
-    if (m_engineA) {
-        connect(m_engineA, &DjEngine::tempoChanged, this, [this]() {
-            const double bpm = m_engineA->getCurrentBpm();
-            if (qFuzzyCompare(bpm, m_cachedBpmA)) return;
-            m_cachedBpmA = bpm;
+    const auto registerEngine = [this](QPointer<DjEngine>& engine, double& cachedBpm) {
+        if (!engine) return;
+        const QPointer<DjEngine> guardedEngine = engine;
+        connect(engine.data(), &DjEngine::tempoChanged, this, [this, guardedEngine, &cachedBpm]() {
+            if (!guardedEngine) return;
+            const double bpm = guardedEngine->getCurrentBpm();
+            if (qFuzzyCompare(bpm, cachedBpm)) return;
+            cachedBpm = bpm;
             emit displayBpm1Changed();
             emit displayBpm2Changed();
             pushSyncedDelay(1);
             pushSyncedDelay(2);
         });
-    }
-    if (m_engineB) {
-        connect(m_engineB, &DjEngine::tempoChanged, this, [this]() {
-            const double bpm = m_engineB->getCurrentBpm();
-            if (qFuzzyCompare(bpm, m_cachedBpmB)) return;
-            m_cachedBpmB = bpm;
-            emit displayBpm1Changed();
-            emit displayBpm2Changed();
-            pushSyncedDelay(1);
-            pushSyncedDelay(2);
-        });
-    }
-    if (m_engineC) {
-        connect(m_engineC, &DjEngine::tempoChanged, this, [this]() {
-            const double bpm = m_engineC->getCurrentBpm();
-            if (qFuzzyCompare(bpm, m_cachedBpmC)) return;
-            m_cachedBpmC = bpm;
-            emit displayBpm1Changed();
-            emit displayBpm2Changed();
-            pushSyncedDelay(1);
-            pushSyncedDelay(2);
-        });
-    }
-    if (m_engineD) {
-        connect(m_engineD, &DjEngine::tempoChanged, this, [this]() {
-            const double bpm = m_engineD->getCurrentBpm();
-            if (qFuzzyCompare(bpm, m_cachedBpmD)) return;
-            m_cachedBpmD = bpm;
-            emit displayBpm1Changed();
-            emit displayBpm2Changed();
-            pushSyncedDelay(1);
-            pushSyncedDelay(2);
-        });
-    }
+    };
+    registerEngine(m_engineA, m_cachedBpmA);
+    registerEngine(m_engineB, m_cachedBpmB);
+    registerEngine(m_engineC, m_cachedBpmC);
+    registerEngine(m_engineD, m_cachedBpmD);
 
     qDebug() << "[FxManager] engines registered";
 }
@@ -110,18 +85,34 @@ EffectType FxManager::effectTypeFromString(const QString& name)
 
 void FxManager::routeToEngines(int unitId, EffectType type, float wetDry)
 {
-    // Unit 1 routes to DeckA when deck1A==true, optionally also DeckB when deck1B==true.
-    // Unit 2 routes to DeckB when deck2B==true, optionally also DeckA when deck2A==true.
-    if (unitId == 1) {
-        if (m_deck1A && m_engineA) { m_engineA->setFxSlotEffectType(1, type); m_engineA->setFxSlotWetDry(1, wetDry); }
-        if (m_deck1B && m_engineB) { m_engineB->setFxSlotEffectType(1, type); m_engineB->setFxSlotWetDry(1, wetDry); }
-        if (m_deck1C && m_engineC) { m_engineC->setFxSlotEffectType(1, type); m_engineC->setFxSlotWetDry(1, wetDry); }
-        if (m_deck1D && m_engineD) { m_engineD->setFxSlotEffectType(1, type); m_engineD->setFxSlotWetDry(1, wetDry); }
-    } else {
-        if (m_deck2A && m_engineA) { m_engineA->setFxSlotEffectType(2, type); m_engineA->setFxSlotWetDry(2, wetDry); }
-        if (m_deck2B && m_engineB) { m_engineB->setFxSlotEffectType(2, type); m_engineB->setFxSlotWetDry(2, wetDry); }
-        if (m_deck2C && m_engineC) { m_engineC->setFxSlotEffectType(2, type); m_engineC->setFxSlotWetDry(2, wetDry); }
-        if (m_deck2D && m_engineD) { m_engineD->setFxSlotEffectType(2, type); m_engineD->setFxSlotWetDry(2, wetDry); }
+    forEachAssignedEngine(unitId, [type, wetDry](DjEngine* engine, int slot) {
+        engine->setFxSlotEffectType(slot, type);
+        engine->setFxSlotWetDry(slot, wetDry);
+    });
+}
+
+bool FxManager::isDeckAssigned(int unitId, domain::DeckId deck) const
+{
+    if (unitId == 1)
+        return domain::selectDeck(deck, m_deck1A, m_deck1B, m_deck1C, m_deck1D);
+    if (unitId == 2)
+        return domain::selectDeck(deck, m_deck2A, m_deck2B, m_deck2C, m_deck2D);
+    return false;
+}
+
+template <typename Action>
+void FxManager::forEachAssignedEngine(int unitId, Action&& action) const
+{
+    if (unitId != 1 && unitId != 2)
+        return;
+
+    for (const domain::DeckId deck : domain::kAllDecks) {
+        if (!isDeckAssigned(unitId, deck))
+            continue;
+        DjEngine* const engine = domain::selectDeck(deck, m_engineA, m_engineB,
+                                                    m_engineC, m_engineD);
+        if (engine)
+            action(engine, unitId);
     }
 }
 
@@ -186,25 +177,29 @@ void FxManager::setDeckAssignment(int unitId, int deck, bool active)
     if (unitId < 1 || unitId > 2 || deck < 1 || deck > 4)
         return;
 
+    const auto deckId = domain::deckFromHardwareNumber(deck);
+    if (!deckId)
+        return;
+
     if (unitId == 1) {
-        switch (deck) {
-        case 1: setDeck1A(active); break;
-        case 2: setDeck1B(active); break;
-        case 3: setDeck1C(active); break;
-        case 4: setDeck1D(active); break;
+        switch (*deckId) {
+        case domain::DeckId::A: setDeck1A(active); break;
+        case domain::DeckId::B: setDeck1B(active); break;
+        case domain::DeckId::C: setDeck1C(active); break;
+        case domain::DeckId::D: setDeck1D(active); break;
         }
     } else {
-        switch (deck) {
-        case 1: setDeck2A(active); break;
-        case 2: setDeck2B(active); break;
-        case 3: setDeck2C(active); break;
-        case 4: setDeck2D(active); break;
+        switch (*deckId) {
+        case domain::DeckId::A: setDeck2A(active); break;
+        case domain::DeckId::B: setDeck2B(active); break;
+        case domain::DeckId::C: setDeck2C(active); break;
+        case domain::DeckId::D: setDeck2D(active); break;
         }
     }
 
     // When un-assigning, immediately silence FX on that engine
-    DjEngine* const targets[] = { m_engineA, m_engineB, m_engineC, m_engineD };
-    DjEngine* target = targets[deck - 1];
+    DjEngine* const target = domain::selectDeck(*deckId, m_engineA, m_engineB,
+                                                m_engineC, m_engineD);
 
     if (target) {
         if (!active) {
@@ -361,16 +356,24 @@ void FxManager::applySoundColorToEngine(DjEngine* engine, const QString& mode, f
 
 double FxManager::bpmForUnit(int unitId) const
 {
-    if (unitId == 1) {
-        if (m_deck1A && m_cachedBpmA > 0.0) return m_cachedBpmA;
-        if (m_deck1B && m_cachedBpmB > 0.0) return m_cachedBpmB;
-        if (m_deck1C && m_cachedBpmC > 0.0) return m_cachedBpmC;
-        if (m_deck1D && m_cachedBpmD > 0.0) return m_cachedBpmD;
-    } else {
-        if (m_deck2B && m_cachedBpmB > 0.0) return m_cachedBpmB;
-        if (m_deck2A && m_cachedBpmA > 0.0) return m_cachedBpmA;
-        if (m_deck2C && m_cachedBpmC > 0.0) return m_cachedBpmC;
-        if (m_deck2D && m_cachedBpmD > 0.0) return m_cachedBpmD;
+    if (unitId != 1 && unitId != 2)
+        return 0.0;
+
+    const auto cachedBpm = [this](domain::DeckId deck) {
+        return domain::selectDeck(deck, m_cachedBpmA, m_cachedBpmB,
+                                  m_cachedBpmC, m_cachedBpmD);
+    };
+    constexpr std::array unit1Priority {
+        domain::DeckId::A, domain::DeckId::B, domain::DeckId::C, domain::DeckId::D
+    };
+    constexpr std::array unit2Priority {
+        domain::DeckId::B, domain::DeckId::A, domain::DeckId::C, domain::DeckId::D
+    };
+    const auto& priority = unitId == 1 ? unit1Priority : unit2Priority;
+    for (const domain::DeckId deck : priority) {
+        const double bpm = cachedBpm(deck);
+        if (isDeckAssigned(unitId, deck) && bpm > 0.0)
+            return bpm;
     }
     return 0.0;
 }
@@ -385,17 +388,9 @@ void FxManager::pushSyncedDelay(int unitId)
         ? static_cast<float>((60.0 / std::max(1.0, bpmForUnit(unitId))) * m_beatDiv[unitId - 1])
         : -1.f;
 
-    if (unitId == 1) {
-        if (m_deck1A && m_engineA) m_engineA->setFxSlotExternalDelayTime(1, seconds);
-        if (m_deck1B && m_engineB) m_engineB->setFxSlotExternalDelayTime(1, seconds);
-        if (m_deck1C && m_engineC) m_engineC->setFxSlotExternalDelayTime(1, seconds);
-        if (m_deck1D && m_engineD) m_engineD->setFxSlotExternalDelayTime(1, seconds);
-    } else {
-        if (m_deck2A && m_engineA) m_engineA->setFxSlotExternalDelayTime(2, seconds);
-        if (m_deck2B && m_engineB) m_engineB->setFxSlotExternalDelayTime(2, seconds);
-        if (m_deck2C && m_engineC) m_engineC->setFxSlotExternalDelayTime(2, seconds);
-        if (m_deck2D && m_engineD) m_engineD->setFxSlotExternalDelayTime(2, seconds);
-    }
+    forEachAssignedEngine(unitId, [seconds](DjEngine* engine, int slot) {
+        engine->setFxSlotExternalDelayTime(slot, seconds);
+    });
 }
 
 void FxManager::setSyncEnabled(int unitId, bool enabled)
@@ -427,18 +422,9 @@ void FxManager::setPrimaryParam(int unitId, float v)
     m_primaryParam[idx] = clamped;
     if (unitId == 1) emit primaryParam1Changed();
     else             emit primaryParam2Changed();
-    // Route to all assigned engines
-    if (unitId == 1) {
-        if (m_deck1A && m_engineA) m_engineA->setFxSlotPrimaryParam(1, clamped);
-        if (m_deck1B && m_engineB) m_engineB->setFxSlotPrimaryParam(1, clamped);
-        if (m_deck1C && m_engineC) m_engineC->setFxSlotPrimaryParam(1, clamped);
-        if (m_deck1D && m_engineD) m_engineD->setFxSlotPrimaryParam(1, clamped);
-    } else {
-        if (m_deck2A && m_engineA) m_engineA->setFxSlotPrimaryParam(2, clamped);
-        if (m_deck2B && m_engineB) m_engineB->setFxSlotPrimaryParam(2, clamped);
-        if (m_deck2C && m_engineC) m_engineC->setFxSlotPrimaryParam(2, clamped);
-        if (m_deck2D && m_engineD) m_engineD->setFxSlotPrimaryParam(2, clamped);
-    }
+    forEachAssignedEngine(unitId, [clamped](DjEngine* engine, int slot) {
+        engine->setFxSlotPrimaryParam(slot, clamped);
+    });
 }
 
 // ── Unit 1 setters ────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-#include "controllers/midi/feedback/LevelMeterBallistics.h"
+#include "controllers/midi/LevelMeterBallistics.h"
 
 #include <cassert>
 #include <cmath>

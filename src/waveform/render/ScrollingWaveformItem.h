@@ -13,7 +13,7 @@
 #include <optional>
 
 #include "deck/DjEngine.h"
-#include "waveform/WaveformDemand.h"
+#include "waveform/WaveformTypes.h"
 #include "waveform/WaveformVisualStyle.h"
 
 namespace waveform_render {
