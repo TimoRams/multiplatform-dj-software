@@ -25,7 +25,7 @@ corrections are listed explicitly below.
 - Eight `DjEngine` facade fragments -> `DjEngine.cpp`,
   `DjEngineTransport.cpp`, `DjEngineCues.cpp` and
   `DjEnginePerformance.cpp`.
-- Sync maintenance helper -> `deck/sync/SyncTypes.h`.
+- Sync maintenance helper -> `deck/sync/DeckSync.h`.
 - Library schema/core -> `LibraryDatabase.cpp`; track/cue/playlist persistence
   -> `LibraryPersistence.cpp`.
 - Audio page and handle values -> `audio/cache/AudioCacheTypes.h`.
@@ -87,7 +87,7 @@ corrections are listed explicitly below.
 
 - Removed the unused controller profile and `OverallWaveform.qml`.
 - Merged `UiMetrics` into `UiTheme`, desktop settings into the shared
-  `SettingsPanel`, and first-run content into `StartupOverlay`.
+  `SettingsPanel`, and first-run content into the startup component in `AppOverlays`.
 - Merged mixer coefficient code into `DeckChannelProcessor`, the one-consumer
   track-ID helper into `DjEngine`, and Rekordbox reader declarations into
   `RekordboxDeviceSource.h`.
@@ -157,6 +157,30 @@ measurements on the target hardware.
 
 This round removed 20 source files (232 -> 212). File grouping is distinct from runtime
 optimization: it does not establish a CPU, RAM or latency improvement.
+
+## Follow-up consolidation: 212 to 187 files
+
+This follow-up removes 13 C++/QML files and 12 small domain CMake manifests.
+The explicit production manifest is now `src/CMakeLists.txt`; source domains,
+target dependencies and the controller mapping resource alias remain intact.
+
+- Grouped deck identifiers with other lightweight domain values, and topology
+  enums with the existing neutral audio parameter contract.
+- Grouped the stateless output router with the independent master/headphone
+  classes in `AudioBusMixer.*`.
+- Grouped sync values, per-deck controllers and the coordinator in `DeckSync.*`,
+  without merging their state or importing Qt/audio-device dependencies.
+- Grouped Rekordbox source and identity readers, preserving read-only access,
+  SQLCipher guards and contained-path resolution.
+- Grouped startup/status/exit as independent local components in `AppOverlays`.
+  Shortcuts, platter and development crossfader now live in their exclusive hosts.
+- Shared repeated mixer setter dispatch, selected-FLX10 matching and AIO button
+  dimensions/gating. Development CUE now follows the same idempotent release
+  contract as the AIO strip, including cancellation and engine replacement.
+
+The final production layout has 88 headers, 75 C++ sources, 21 QML files, one
+CMake manifest and the unchanged controller README/XML. This is a structural
+reduction, not a claimed Raspberry Pi performance improvement.
 
 ## Behavioral invariants
 

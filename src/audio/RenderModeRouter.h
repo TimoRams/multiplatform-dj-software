@@ -1,7 +1,7 @@
 #pragma once
 
 #include <limits>
-#include "audio/AudioRouting.h"
+#include "audio/AudioParameters.h"
 #include "audio/internal/ScratchResampler.h"
 #include "deck/scratch/ScratchController.h"
 #include "deck/scratch/ScratchInput.h"

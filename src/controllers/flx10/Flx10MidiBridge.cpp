@@ -388,8 +388,7 @@ void MidiControllerManager::testFlx10LedOutput()
 }
 bool MidiControllerManager::shouldUseFlx10Feedback() const
 {
-    if (normalizeControllerKeyFromXmlBase(getSelectedController())
-            == normalizeControllerKeyFromXmlBase(flx10::kControllerName)
+    if (isSelectedFlx10Controller()
         || flx10::isBuiltInMapping(getSelectedMapping())) {
         return true;
     }

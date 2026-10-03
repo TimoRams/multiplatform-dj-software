@@ -44,7 +44,7 @@
 #endif
 #include "audio/device/AudioDeviceService.h"
 #include "app/SettingsManager.h"
-#include "sync/SyncCoordinator.h"
+#include "sync/DeckSync.h"
 
 
 namespace {

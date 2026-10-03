@@ -5,7 +5,7 @@
 #include "deck/DeckTrackLoader.h"
 #include "audio/cache/AudioCacheTypes.h"
 #include "app/ControlClock.h"
-#include "sync/DeckSyncController.h"
+#include "sync/DeckSync.h"
 #include "scratch/ScratchSession.h"
 #include "fx/FxTypes.h"
 

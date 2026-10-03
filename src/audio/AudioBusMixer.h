@@ -1,7 +1,6 @@
 #pragma once
 
 #include "audio/AudioParameters.h"
-#include "audio/AudioRouting.h"
 #include "audio/internal/BrickwallLimiter.h"
 #include "fx/FxProcessor.h"
 
@@ -77,4 +76,21 @@ private:
     // at the block boundary, which is audible as a click.
     std::array<float, kDeckCount> m_deckGain {};
     float m_masterTapGain = 0.0f;
+};
+
+class AudioOutputRouter final {
+public:
+    void write(const juce::AudioBuffer<float>& masterTap,
+               const juce::AudioBuffer<float>& headphones,
+               const AudioParameters& parameters,
+               juce::AudioBuffer<float>& hardwareOutput,
+               int outputStart,
+               int samples) const noexcept;
+
+private:
+    static void writeStereo(const juce::AudioBuffer<float>& source,
+                            juce::AudioBuffer<float>& destination,
+                            int destinationStart,
+                            int samples,
+                            int firstPhysicalChannel) noexcept;
 };

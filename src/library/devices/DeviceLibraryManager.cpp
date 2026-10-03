@@ -1,6 +1,5 @@
 #include "library/devices/DeviceLibraryManager.h"
 
-#include "library/devices/rekordbox/RekordboxDeviceIdentity.h"
 #include "library/devices/rekordbox/RekordboxDeviceSource.h"
 
 #include <QCryptographicHash>

@@ -1,8 +1,9 @@
 # BrockDJ Source Structure
 
 The production source tree is organized by product domain. `src/CMakeLists.txt`
-is the single entry point; each domain contributes sources to the existing
-`BrockDJ` target without creating artificial static libraries.
+is the single production manifest, with explicit source lists grouped by domain
+and stable resource aliases. It contributes to the existing `BrockDJ` target
+without creating artificial static libraries or per-domain build manifests.
 
 ## Dependency direction
 
@@ -46,9 +47,10 @@ scene work.
 - Must not depend on: QML, library models, controller I/O or analysis workers.
 - Callback invariant: no allocation, blocking lock, file I/O, logging or Qt
   signals. `audio/internal/` contains reusable callback DSP, not user FX.
-- `AudioBusMixer.*` groups `MasterMixer` and `HeadphoneBus` without sharing
-  their limiters, histories or signal paths. The small output mapper is inline
-  in `AudioOutputRouter.h`; the joined cache worker is private to `AudioPageCache.cpp`.
+- `AudioBusMixer.*` groups `MasterMixer`, `HeadphoneBus` and the independent
+  `AudioOutputRouter` without sharing their limiters, histories or signal paths.
+  Routing enums and parameter snapshots share the standard-C++-only
+  `AudioParameters.h`; the joined cache worker is private to `AudioPageCache.cpp`.
 
 ### `deck/`
 
@@ -63,6 +65,9 @@ scene work.
 - `scratch/ScratchInput.h` groups the native snapshot channel and inline ingress simulation;
   it does not own audio rendering or replace `ScratchController`/`ScratchSession`.
 - Jog-nudge policy lives with `DeckTransport.h`, retaining its separate functions.
+- `sync/DeckSync.*` groups neutral sync values, per-deck controllers and the
+  coordinator. Their state and lifetimes remain independent; this module
+  does not depend on Qt, audio devices or `DjEngine`.
 
 ### `analysis/`
 
@@ -102,6 +107,8 @@ scene work.
 - `LibraryCoverService.*` also declares the cover image provider. QML engine
   ownership of that provider remains separate from the borrowing service;
   synchronous TagLib extraction remains in `CoverArtExtractor.*`.
+- `devices/rekordbox/RekordboxDeviceSource.*` contains device source and identity
+  readers as separate types, retaining read-only access and contained-path checks.
 
 ### `controllers/`
 
@@ -133,6 +140,8 @@ scene work.
 
 - Responsibility: cross-domain track state and small shared values.
 - Owns: `TrackData` and `DomainTypes.h`.
+- `DomainTypes.h` groups deck identifiers/conversions, transport limits and
+  track segments without importing the heavier `TrackData` owner.
 - Must remain independent of app and QML composition.
 
 ### `link/` and `platform/`
@@ -156,6 +165,13 @@ scene work.
 - Exclusive performance panels are inline components of `PerformanceWaveformScreen`;
   the beatgrid editor belongs to `EnlargedWaveform`, and the two development FX
   units share an inline type in `FxBar`. Instances and lifetimes remain independent.
+- `shell/AppOverlays.qml` owns independent local startup/status/exit components.
+  Global shortcuts are local to `main.qml`; the platter belongs to
+  `PerformancePads`, and the development crossfader belongs to
+  `DevelopmentControlsWindow`.
+- AIO transport buttons share one local layout/gating component. CUE release
+  remains idempotent for cancellation, hiding, engine replacement and teardown;
+  PLAY/PAUSE and beat-jump labels do not change button dimensions.
 
 ## Runtime ownership summary
 

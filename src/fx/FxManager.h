@@ -1,6 +1,6 @@
 #pragma once
 
-#include "domain/DeckId.h"
+#include "domain/DomainTypes.h"
 #include "fx/FxTypes.h"
 
 #include <QObject>

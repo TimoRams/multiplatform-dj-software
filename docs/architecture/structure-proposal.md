@@ -1,8 +1,8 @@
 # Repository Structure Status
 
 The source-layout proposal has been implemented. Production CMake enters through
-`src/CMakeLists.txt`, source ownership lives in domain CMake files, and the
-current tree is described in `source-structure.md`.
+`src/CMakeLists.txt`, which groups explicit production sources and resources by
+domain in one manifest. The current tree is described in `source-structure.md`.
 
 QML resources keep their established `qrc:/DJSoftware/src/qml/...` prefix while
 their source files are grouped by UI domain. Linux packaging metadata remains in

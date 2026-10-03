@@ -696,8 +696,10 @@ bool hamburgerToggleTests(const std::string& header)
 
 bool aioDeckControlTests(const std::string& workspace)
 {
+    const auto button = componentSection(workspace, "AioActionButton");
     const auto controls = componentSection(workspace, "AioDeckControls");
-    if (!require(!controls.empty(), "AIO transport component exists"))
+    if (!require(!button.empty() && !controls.empty(),
+                 "AIO transport and common button components exist"))
         return false;
     qmlRegisterType(QUrl::fromLocalFile(QString::fromUtf8(BROCKDJ_SOURCE_DIR)
                         + QStringLiteral("/src/qml/components/Button.qml")),
@@ -731,7 +733,8 @@ bool aioDeckControlTests(const std::string& workspace)
         import DJSoftware
         Item {
             width: 800; height: 42
-    )") + QString::fromStdString(controls) + QStringLiteral(R"(
+    )") + QString::fromStdString(button) + QStringLiteral("\n")
+        + QString::fromStdString(controls) + QStringLiteral(R"(
             RowLayout {
                 anchors.fill: parent
                 AioDeckControls {
@@ -832,6 +835,507 @@ bool aioDeckControlTests(const std::string& workspace)
     QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, cuePoint);
     ok &= require(deck1->property("cueReleases").toInt() == 5,
                   "destroying AIO controls releases held CUE");
+    return ok;
+}
+
+bool crossfaderInlineRuntimeTests(const std::string& developmentControls)
+{
+    const auto crossfader = componentSection(developmentControls, "CrossfaderBar");
+    const auto assignGroup = componentSection(developmentControls, "AssignGroup");
+    if (!require(!crossfader.empty() && !assignGroup.empty(),
+                 "development crossfader and assignment components exist"))
+        return false;
+
+    qmlRegisterType(QUrl::fromLocalFile(QString::fromUtf8(BROCKDJ_SOURCE_DIR)
+                        + QStringLiteral("/src/qml/components/Slider.qml")),
+                    "DJSoftware", 1, 0, "Slider");
+    QQmlEngine engine;
+    auto hostWindow = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject { function spViewport(value) { return value } }
+    )"), "crossfader host window context instantiates");
+    auto mixer = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property real appliedPosition: -2
+            property int applyCalls: 0
+            function syncCrossfaderState(position, a, b, c, d, sharpness, mode) {
+                appliedPosition = position
+            }
+            function applyAllVolumes() { ++applyCalls }
+        }
+    )"), "crossfader mixer sink instantiates");
+    if (!hostWindow || !mixer)
+        return false;
+    QQmlContext context(engine.rootContext());
+    context.setContextProperty(QStringLiteral("testWindow"), hostWindow.get());
+    context.setContextProperty(QStringLiteral("testMixer"), mixer.get());
+    context.setContextProperty(QStringLiteral("parameterStore"), static_cast<QObject*>(nullptr));
+    context.setContextProperty(QStringLiteral("settingsManager"), static_cast<QObject*>(nullptr));
+
+    const QString source = QStringLiteral(R"(
+        import QtQuick
+        import QtQuick.Layouts
+        import QtQuick.Controls
+        import DJSoftware
+        Item {
+            width: 900; height: 36
+    )") + QString::fromStdString(assignGroup) + QStringLiteral("\n")
+        + QString::fromStdString(crossfader) + QStringLiteral(R"(
+            CrossfaderBar {
+                objectName: "hostedCrossfader"
+                anchors.fill: parent
+                hostWindow: testWindow
+                mc: testMixer
+            }
+        }
+    )");
+    QQmlComponent component(&engine);
+    component.setData(source.toUtf8(), QUrl());
+    std::unique_ptr<QObject> host(component.create(&context));
+    if (!require(host != nullptr, "development crossfader inline host instantiates")) {
+        std::cerr << component.errorString().toStdString() << '\n';
+        return false;
+    }
+    auto* bar = host->findChild<QObject*>(QStringLiteral("hostedCrossfader"));
+    bool ok = require(bar != nullptr, "development host owns its inline crossfader");
+    if (!bar)
+        return false;
+    ok &= require(mixer->property("applyCalls").toInt() > 0,
+                  "the inline crossfader applies its state through the real mixer contract");
+    bar->setProperty("cfPos", 0.35);
+    ok &= require(std::abs(mixer->property("appliedPosition").toDouble() - 0.35) < 1e-6,
+                  "the hosted crossfader forwards position changes to MixerControl");
+    return ok;
+}
+
+bool turntableInlineRuntimeTests(const std::string& performancePads)
+{
+    const auto turntable = componentSection(performancePads, "TurntableIndicator");
+    if (!require(!turntable.empty(), "performance platter inline component exists"))
+        return false;
+
+    QQmlEngine engine;
+    auto deck = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool isPlaying: false
+            property bool scratchVisualActive: false
+            function getPlayheadPositionAtomic() { return 0 }
+            function getVisualPositionQml() { return 0 }
+            function pauseForScrub(position) {}
+            function scratchBySeconds(delta) {}
+            function resumeAfterScrub() {}
+            signal playingChanged()
+            signal progressChanged()
+            signal tempoChanged()
+            signal reverseChanged()
+            signal trackLoaded()
+        }
+    )"), "turntable engine context instantiates");
+    if (!deck)
+        return false;
+    engine.rootContext()->setContextProperty(QStringLiteral("testDeck"), deck.get());
+
+    const QString source = QStringLiteral(R"(
+        import QtQuick
+        Item {
+            width: 160; height: 160
+    )") + QString::fromStdString(turntable) + QStringLiteral(R"(
+            TurntableIndicator {
+                objectName: "hostedTurntable"
+                width: 120; height: 120
+                engine: testDeck
+            }
+        }
+    )");
+    auto host = createQmlObject(engine, source, "performance platter inline host instantiates");
+    if (!host)
+        return false;
+    auto* platter = qobject_cast<QQuickItem*>(
+        host->findChild<QObject*>(QStringLiteral("hostedTurntable")));
+    if (!require(platter != nullptr, "performance pads host owns its inline platter"))
+        return false;
+    QQuickWindow window;
+    window.resize(160, 160);
+    qobject_cast<QQuickItem*>(host.get())->setParentItem(window.contentItem());
+    window.show();
+    QCoreApplication::processEvents();
+    bool ok = require(!platter->property("motionActive").toBool(),
+                      "an idle inline platter does not run its motion clock");
+    deck->setProperty("isPlaying", true);
+    QCoreApplication::processEvents();
+    ok &= require(platter->property("motionActive").toBool(),
+                  "the hosted platter starts motion from its bound deck state");
+    return ok;
+}
+
+bool appOverlaysRuntimeTests(const std::string& source)
+{
+    const QString componentDirectory = QString::fromUtf8(BROCKDJ_SOURCE_DIR)
+        + QStringLiteral("/src/qml/components/");
+    qmlRegisterSingletonType(QUrl::fromLocalFile(
+        componentDirectory + QStringLiteral("UiTheme.qml")),
+        "DJSoftware", 1, 0, "UiTheme");
+    qmlRegisterType(QUrl::fromLocalFile(componentDirectory + QStringLiteral("Button.qml")),
+                    "DJSoftware", 1, 0, "Button");
+    QQmlEngine engine;
+    auto appWindow = createQmlObject(engine, QStringLiteral(R"(
+        import QtQuick
+        import QtQml
+        QtObject {
+            property bool exitPromptVisible: false
+            property bool exitShutdownInProgress: false
+            property bool exitManualBackupRequested: false
+            property bool uncleanShutdownWarningVisible: false
+            property real exitProgress: 0
+            property color unifiedGray: "#202020"
+            property string confirmedBackup: ""
+            property int cancelCalls: 0
+            function sp(value) { return value }
+            function _isTextInputFocused() { return false }
+            function confirmAppClose() { confirmedBackup = exitManualBackupRequested ? "yes" : "no" }
+            function cancelAppClosePrompt() { ++cancelCalls; exitPromptVisible = false }
+        }
+    )"), "AppOverlays window sink instantiates");
+    auto mainLayout = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject { property bool visible: false }
+    )"), "AppOverlays main-layout sink instantiates");
+    auto appConfig = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool firstRunCompleted: false
+            function completeFirstRun(dontShowAgain) { firstRunCompleted = dontShowAgain }
+        }
+    )"), "AppOverlays first-run sink instantiates");
+    auto libraryDb = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool recoveryWarningNeeded: true
+            property string recoveryWarningMessage: "Recovered from an interrupted shutdown"
+        }
+    )"), "AppOverlays recovery sink instantiates");
+    if (!appWindow || !mainLayout || !appConfig || !libraryDb)
+        return false;
+    QQmlContext context(engine.rootContext());
+    context.setContextProperty(QStringLiteral("appWindow"), appWindow.get());
+    context.setContextProperty(QStringLiteral("mainLayout"), mainLayout.get());
+    context.setContextProperty(QStringLiteral("appConfig"), appConfig.get());
+    context.setContextProperty(QStringLiteral("libraryDb"), libraryDb.get());
+    QQmlComponent component(&engine);
+    component.setData(QByteArray::fromStdString(source), QUrl());
+    const QVariantMap initialProperties {
+        {QStringLiteral("appWindow"), QVariant::fromValue(appWindow.get())},
+        {QStringLiteral("mainLayout"), QVariant::fromValue(mainLayout.get())}
+    };
+    std::unique_ptr<QObject> host(component.createWithInitialProperties(initialProperties, &context));
+    if (!require(host != nullptr, "AppOverlays QML host instantiates with its real local components")) {
+        std::cerr << component.errorString().toStdString() << '\n';
+        return false;
+    }
+
+    const auto findWithProperty = [host = host.get()](const char* name) -> QObject* {
+        const auto visit = [&name](auto&& self, QObject* object) -> QObject* {
+            if (object->metaObject()->indexOfProperty(name) >= 0)
+                return object;
+            for (QObject* child : object->children()) {
+                if (QObject* found = self(self, child))
+                    return found;
+            }
+            return nullptr;
+        };
+        return visit(visit, host);
+    };
+    auto* startupObject = findWithProperty("welcomeActive");
+    QObject* statusItem = nullptr;
+    for (QObject* child : host->children()) {
+        if (child->metaObject()->indexOfProperty("appWindow") >= 0
+            && child->metaObject()->indexOfProperty("uncleanShutdownWarning") >= 0
+            && child->metaObject()->indexOfProperty("welcomeActive") < 0) {
+            statusItem = child;
+            break;
+        }
+    }
+    QObject* exitObject = nullptr;
+    for (QObject* child : host->children()) {
+        if (child->metaObject()->indexOfProperty("appWindow") >= 0
+            && child->metaObject()->indexOfProperty("welcomeActive") < 0
+            && child->metaObject()->indexOfProperty("uncleanShutdownWarning") < 0) {
+            exitObject = child;
+            break;
+        }
+    }
+    auto* startupItem = qobject_cast<QQuickItem*>(startupObject);
+    auto* exitItem = qobject_cast<QQuickItem*>(exitObject);
+    if (!require(startupItem && statusItem && exitItem,
+                 "AppOverlays exposes all three independently hosted local components"))
+        return false;
+    QObject* loadingTimer = nullptr;
+    const auto findFinishLoading = [&loadingTimer](auto&& self, QObject* object) -> void {
+        if (object->metaObject()->indexOfMethod("finishLoading()") >= 0) {
+            loadingTimer = object;
+            return;
+        }
+        for (QObject* child : object->children()) {
+            if (!loadingTimer)
+                self(self, child);
+        }
+    };
+    findFinishLoading(findFinishLoading, host.get());
+    if (!require(loadingTimer != nullptr, "live startup overlay exposes its loading completion timer"))
+        return false;
+
+    QQuickWindow window;
+    window.resize(800, 600);
+    qobject_cast<QQuickItem*>(host.get())->setParentItem(window.contentItem());
+    window.show();
+    QCoreApplication::processEvents();
+    bool ok = require(!mainLayout->property("visible").toBool()
+                          && std::abs(qobject_cast<QQuickItem*>(host.get())->z() - 1000.0) < 1e-6
+                          && std::abs(exitItem->z() - 1000.0) < 1e-6
+                          && std::abs(statusItem->property("z").toDouble()) < 1e-6,
+                      "the live overlay host retains its startup gate and independent local layer ordering");
+
+    QMetaObject::invokeMethod(loadingTimer, "finishLoading");
+    ok &= require(mainLayout->property("visible").toBool()
+                      && startupItem->property("welcomeActive").toBool()
+                      && appWindow->property("uncleanShutdownWarningVisible").toBool(),
+                  "startup completion reveals the real layout, first-run welcome and recovery warning");
+    appWindow->setProperty("uncleanShutdownWarningVisible", true);
+    QCoreApplication::processEvents();
+    QObject* warning = statusItem->property("uncleanShutdownWarning").value<QObject*>();
+    ok &= require(warning && warning->property("visible").toBool()
+                      && warning->property("visibleMessage").toString()
+                          == QStringLiteral("Recovered from an interrupted shutdown"),
+                  "startup recovery state reaches the status overlay's live warning object");
+    appWindow->setProperty("exitPromptVisible", true);
+    QCoreApplication::processEvents();
+    ok &= require(exitItem->isVisible() && exitItem->property("focus").toBool(),
+                  "exit prompt visibility and focus follow the application window");
+    appWindow->setProperty("exitPromptVisible", false);
+    QCoreApplication::processEvents();
+    ok &= require(!exitItem->isVisible(),
+                  "closing the prompt leaves the status and startup overlays independent");
+    return ok;
+}
+
+bool shortcutRuntimeTests(const std::string& source)
+{
+    const auto shortcuts = componentSection(source, "UiShortcutManager");
+    if (!require(!shortcuts.empty(), "main owns a local shortcut component"))
+        return false;
+    QQmlEngine engine;
+    auto appWindow = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool textFocused: false
+            function _isTextInputFocused() { return textFocused }
+        }
+    )"), "shortcut focus sink instantiates");
+    auto zoom = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property int resetCalls: 0
+            function zoomIn() {}
+            function zoomOut() {}
+            function reset() { ++resetCalls }
+        }
+    )"), "waveform shortcut sink instantiates");
+    auto scale = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property int resetCalls: 0
+            function increase() {}
+            function decrease() {}
+            function reset() { ++resetCalls }
+        }
+    )"), "scale shortcut sink instantiates");
+    if (!appWindow || !zoom || !scale)
+        return false;
+    QQmlContext context(engine.rootContext());
+    context.setContextProperty(QStringLiteral("testWindow"), appWindow.get());
+    context.setContextProperty(QStringLiteral("waveformZoomController"), zoom.get());
+    context.setContextProperty(QStringLiteral("uiScaleController"), scale.get());
+
+    const QString hostSource = QStringLiteral(R"(
+        import QtQuick
+        Item {
+            width: 200; height: 100
+    )") + QString::fromStdString(shortcuts) + QStringLiteral(R"(
+            UiShortcutManager {
+                appWindow: testWindow
+            }
+        }
+    )");
+    QQmlComponent component(&engine);
+    component.setData(hostSource.toUtf8(), QUrl());
+    std::unique_ptr<QObject> host(component.create(&context));
+    if (!require(host != nullptr, "real inline shortcut declarations register in a host")) {
+        std::cerr << component.errorString().toStdString() << '\n';
+        return false;
+    }
+    QQuickWindow window;
+    window.resize(200, 100);
+    qobject_cast<QQuickItem*>(host.get())->setParentItem(window.contentItem());
+    window.show();
+    window.requestActivate();
+    QCoreApplication::processEvents();
+
+    QTest::keyClick(&window, Qt::Key_0, Qt::ControlModifier);
+    bool ok = require(QTest::qWaitFor([&] { return zoom->property("resetCalls").toInt() == 1; }),
+                      "registered Ctrl+0 shortcut invokes waveform reset");
+    appWindow->setProperty("textFocused", true);
+    QTest::keyClick(&window, Qt::Key_0, Qt::ControlModifier);
+    QTest::qWait(30);
+    ok &= require(zoom->property("resetCalls").toInt() == 1,
+                  "global waveform shortcut is suppressed while a text input is focused");
+    appWindow->setProperty("textFocused", false);
+    QTest::keyClick(&window, Qt::Key_0, Qt::ControlModifier | Qt::ShiftModifier);
+    ok &= require(QTest::qWaitFor([&] { return scale->property("resetCalls").toInt() == 1; }),
+                  "registered Ctrl+Shift+0 shortcut invokes UI-scale reset");
+    return ok;
+}
+
+bool deckCueFlatButtonRuntimeTests(const std::string& deckControl)
+{
+    const auto flatButton = componentSection(deckControl, "FlatBtn");
+    QString releaseFunction;
+    if (!require(!flatButton.empty()
+                     && extractFunctions(deckControl, {"releaseCue"}, releaseFunction),
+                 "DeckControl FlatBtn and captured-engine release function are extractable"))
+        return false;
+
+    QQmlEngine engine;
+    const QString sinkSource = QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool hasTrack: true
+            property int cuePresses: 0
+            property int cueReleases: 0
+            function cueButtonPress() { ++cuePresses }
+            function cueButtonRelease() { ++cueReleases }
+        }
+    )");
+    auto deck1 = createQmlObject(engine, sinkSource, "DeckControl cue sink one instantiates");
+    auto deck2 = createQmlObject(engine, sinkSource, "DeckControl cue sink two instantiates");
+    if (!deck1 || !deck2)
+        return false;
+    engine.rootContext()->setContextProperty(QStringLiteral("testDeck1"), deck1.get());
+    engine.rootContext()->setContextProperty(QStringLiteral("testDeck2"), deck2.get());
+
+    const QString hostSource = QStringLiteral(R"(
+        import QtQuick
+        import QtQuick.Layouts
+        Item {
+            id: deck
+            width: 100; height: 40
+            property var engine: testDeck1
+            property var heldCueEngine: null
+            readonly property color btnLineActive: "#aaaaaa"
+            readonly property color btnTextActive: "#f0f0f0"
+            readonly property color btnTextBright: "#b8b8b8"
+            readonly property color btnBgPressed: "#444444"
+            readonly property color btnBgActive: "#333333"
+            readonly property color btnBg: "#222222"
+            readonly property int btnH: 24
+    )") + releaseFunction + QStringLiteral(R"(
+            onVisibleChanged: if (!visible) releaseCue()
+            onEngineChanged: releaseCue()
+            Component.onDestruction: releaseCue()
+    )") + QString::fromStdString(flatButton) + QStringLiteral(R"(
+            FlatBtn {
+                id: cue
+                objectName: "deckCueButton"
+                x: 10; y: 8; width: 64; height: 24
+                btnText: "CUE"
+                enabled: deck.engine && deck.engine.hasTrack
+                onBtnPressed: {
+                    if (!deck.engine || deck.heldCueEngine)
+                        return
+                    deck.heldCueEngine = deck.engine
+                    deck.heldCueEngine.cueButtonPress()
+                }
+                onBtnReleased: deck.releaseCue()
+                onBtnCanceled: deck.releaseCue()
+                onEnabledChanged: if (!enabled) deck.releaseCue()
+            }
+        }
+    )");
+    QQmlComponent component(&engine);
+    component.setData(hostSource.toUtf8(), QUrl());
+    std::unique_ptr<QObject> host(component.create());
+    if (!require(host != nullptr, "real DeckControl FlatBtn instantiates with its release owner")) {
+        std::cerr << component.errorString().toStdString() << '\n';
+        return false;
+    }
+    auto* owner = qobject_cast<QQuickItem*>(host.get());
+    auto* cue = qobject_cast<QQuickItem*>(
+        host->findChild<QObject*>(QStringLiteral("deckCueButton")));
+    if (!require(owner && cue, "DeckControl host exposes its real local CUE FlatBtn"))
+        return false;
+    QQuickWindow window;
+    window.resize(100, 40);
+    owner->setParentItem(window.contentItem());
+    window.show();
+    QCoreApplication::processEvents();
+    const QPoint point = cue->mapToScene(cue->boundingRect().center()).toPoint();
+    bool ok = true;
+
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, point);
+    ok &= require(deck1->property("cuePresses").toInt() == 1
+                      && deck1->property("cueReleases").toInt() == 0,
+                  "DeckControl CUE captures and presses the original engine");
+    owner->setProperty("engine", QVariant::fromValue(deck2.get()));
+    ok &= require(deck1->property("cueReleases").toInt() == 1
+                      && deck2->property("cueReleases").toInt() == 0,
+                  "changing the bound engine releases only the captured original engine");
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, point);
+
+    QObject* cueMouseArea = nullptr;
+    for (QObject* child : cue->findChildren<QObject*>()) {
+        if (QString::fromLatin1(child->metaObject()->className()).contains("MouseArea")) {
+            cueMouseArea = child;
+            break;
+        }
+    }
+    ok &= require(cueMouseArea != nullptr, "DeckControl FlatBtn contains its real mouse input handler");
+    if (!cueMouseArea)
+        return false;
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, point);
+    auto* cueInput = qobject_cast<QQuickItem*>(cueMouseArea);
+    cueInput->ungrabMouse();
+    QCoreApplication::processEvents();
+    ok &= require(deck2->property("cuePresses").toInt() == 1
+                      && deck2->property("cueReleases").toInt() == 1,
+                  "canceling the FlatBtn mouse grab releases its held engine");
+    cueMouseArea->setProperty("enabled", true);
+
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, point);
+    owner->setVisible(false);
+    QCoreApplication::processEvents();
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, point);
+    ok &= require(deck2->property("cuePresses").toInt() == 2
+                      && deck2->property("cueReleases").toInt() == 2,
+                  "hiding a held DeckControl cancels CUE and releases it exactly once");
+    owner->setVisible(true);
+
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, point);
+    deck2->setProperty("hasTrack", false);
+    QCoreApplication::processEvents();
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, point);
+    ok &= require(deck2->property("cuePresses").toInt() == 3
+                      && deck2->property("cueReleases").toInt() == 3,
+                  "disabling a held DeckControl CUE releases its engine once");
+    deck2->setProperty("hasTrack", true);
+
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, point);
+    owner->setParentItem(nullptr);
+    host.reset();
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, point);
+    ok &= require(deck2->property("cuePresses").toInt() == 4
+                      && deck2->property("cueReleases").toInt() == 4,
+                  "destroying DeckControl while CUE is held releases the captured engine");
     return ok;
 }
 
@@ -1147,12 +1651,20 @@ int main(int argc, char** argv)
     bool ok = sliderCleanupTests();
     const auto main = read("src/qml/main.qml");
     const auto topHeader = read("src/qml/shell/TopHeader.qml");
+    const auto appOverlays = read("src/qml/shell/AppOverlays.qml");
     ok &= hamburgerToggleTests(topHeader);
     const auto deckControl = read("src/qml/deck/DeckControl.qml");
     const auto slider = read("src/qml/components/Slider.qml");
     const auto mixerSection = read("src/qml/mixer/MixerSection.qml");
     const auto workspace = read("src/qml/performance/PerformanceWorkspace.qml");
+    const auto developmentControls = read("src/qml/development/DevelopmentControlsWindow.qml");
+    const auto performancePads = read("src/qml/performance/PerformancePads.qml");
+    ok &= appOverlaysRuntimeTests(appOverlays);
+    ok &= shortcutRuntimeTests(main);
+    ok &= deckCueFlatButtonRuntimeTests(deckControl);
     ok &= aioDeckControlTests(workspace);
+    ok &= crossfaderInlineRuntimeTests(developmentControls);
+    ok &= turntableInlineRuntimeTests(performancePads);
     ok &= require(main.find("s(\"showAioDeckControls\", window.showAioDeckControls)") != std::string::npos
                       && main.find("b(\"showAioDeckControls\", true)") != std::string::npos
                       && main.find("onShowAioDeckControlsChanged: _scheduleUiPersist()") != std::string::npos
@@ -1160,14 +1672,14 @@ int main(int argc, char** argv)
                       && workspace.find("readonly property bool shown: window.aioDeckControlsHeight > 0") != std::string::npos
                       && main.find("window.allInOneMode && window.showAioDeckControls ? 42 : 0") != std::string::npos,
                   "AIO bar visibility is menu-controlled, persisted and reserved only in AIO");
-    const auto shortcuts = read("src/qml/components/UiShortcutManager.qml");
+    const auto shortcuts = componentSection(main, "UiShortcutManager");
     const auto enlargedWaveform = read("src/qml/waveform/EnlargedWaveform.qml");
-    const auto turntableIndicator = read("src/qml/deck/TurntableIndicator.qml");
+    const auto turntableIndicator = componentSection(performancePads, "TurntableIndicator");
+    const auto crossfader = componentSection(developmentControls, "CrossfaderBar");
     const auto settingsPanel = read("src/qml/settings/SettingsPanel.qml");
     ok &= audioRoleTests(settingsPanel);
     ok &= qmlMergeRuntimeTests();
     const auto applicationBootstrap = read("src/app/ApplicationBootstrap.cpp");
-    const auto performancePads = read("src/qml/performance/PerformancePads.qml");
     const auto library = read("src/qml/library/Library.qml");
     ok &= libraryActionTests(library);
     ok &= require(library.find("tr.touchMode && tr.rowSourceTab !== \"usb\" ? 148 : 0")
@@ -1190,9 +1702,14 @@ int main(int argc, char** argv)
     const auto fxUnit = componentSection(fxBar, "FxUnit");
     const auto fxDarkButton = componentSection(fxBar, "FxDarkBtn");
     const auto fxAssignButton = componentSection(fxBar, "FxAssignBtn");
-    const auto qmlCmake = read("src/qml/CMakeLists.txt");
+    const auto productionCmake = read("src/CMakeLists.txt");
+    const auto qmlManifestStart = productionCmake.find("set(BROCKDJ_QML_FILES");
+    const auto qmlManifestEnd = productionCmake.find("PARENT_SCOPE", qmlManifestStart);
+    const auto qmlManifest = qmlManifestStart != std::string::npos
+            && qmlManifestEnd != std::string::npos
+        ? productionCmake.substr(qmlManifestStart, qmlManifestEnd - qmlManifestStart)
+        : std::string{};
     const auto deckTrackInfoPanel = read("src/qml/deck/DeckTrackInfoPanel.qml");
-    const auto developmentControls = read("src/qml/development/DevelopmentControlsWindow.qml");
     const auto flx10Mapping = read("src/controllers/mappings/DDJ-FLX10.brockdj.xml");
     const auto flx10MidiBridge = read("src/controllers/flx10/Flx10MidiBridge.cpp");
     const auto engineHeader = read("src/deck/DjEngine.h");
@@ -1201,6 +1718,23 @@ int main(int argc, char** argv)
     ok &= require(deckControl.find("component DeckSlider: Slider {") != std::string::npos
                       && deckControl.find("dsDragLock") == std::string::npos,
                   "deck tempo reuses shared slider interaction with styling overrides");
+    const auto cueButtonBegin = deckControl.find("btnText: \"CUE\"");
+    const auto cueButtonEnd = deckControl.find("\n                        }", cueButtonBegin);
+    ok &= require(deckControl.find("property var heldCueEngine: null") != std::string::npos
+                      && deckControl.find("var target = heldCueEngine") != std::string::npos
+                      && deckControl.find("target.cueButtonRelease()") != std::string::npos
+                      && deckControl.find("onVisibleChanged: if (!visible) releaseCue()")
+                          != std::string::npos
+                      && deckControl.find("onEngineChanged: releaseCue()") != std::string::npos
+                      && deckControl.find("Component.onDestruction:") != std::string::npos
+                      && cueButtonBegin != std::string::npos && cueButtonEnd != std::string::npos
+                      && deckControl.find("enabled: deck.engine && deck.engine.hasTrack",
+                                          cueButtonBegin) < cueButtonEnd
+                      && deckControl.find("onBtnCanceled: deck.releaseCue()", cueButtonBegin)
+                          < cueButtonEnd
+                      && deckControl.find("onEnabledChanged: if (!enabled) deck.releaseCue()",
+                                          cueButtonBegin) < cueButtonEnd,
+                  "DeckControl CUE releases its captured engine on cancel, disable, hide, rebind, and teardown");
     ok &= require(slider.find("acceptedDevices: PointerDevice.TouchScreen") != std::string::npos
                       && slider.find("_touchDrag = sliderTouch.active") != std::string::npos
                       && slider.find("if (!_touchDrag)") != std::string::npos
@@ -1224,12 +1758,21 @@ int main(int argc, char** argv)
                       && occurrences(beatgridPanel, "accent: \"#E99128\"") == 8
                       && occurrences(fxUnit, "accent: root.accentColor") == 2,
                   "merged QML components remain local, independently scoped, and non-nested");
-    ok &= require(qmlCmake.find("PerformanceBeatgridPanel.qml") == std::string::npos
-                      && qmlCmake.find("PerformanceDeckQuickPanel.qml") == std::string::npos
-                      && qmlCmake.find("PerformanceBeatFxPanel.qml") == std::string::npos
-                      && qmlCmake.find("BeatgridEditorPanel.qml") == std::string::npos
-                      && qmlCmake.find("FxUnit.qml") == std::string::npos,
-                  "removed QML files are no longer packaged as module resources");
+    ok &= require(!qmlManifest.empty()
+                      && occurrences(qmlManifest, "src/qml/") == 21
+                      && qmlManifest.find("src/qml/shell/AppOverlays.qml") != std::string::npos
+                      && qmlManifest.find("PerformanceBeatgridPanel.qml") == std::string::npos
+                      && qmlManifest.find("PerformanceDeckQuickPanel.qml") == std::string::npos
+                      && qmlManifest.find("PerformanceBeatFxPanel.qml") == std::string::npos
+                      && qmlManifest.find("BeatgridEditorPanel.qml") == std::string::npos
+                      && qmlManifest.find("FxUnit.qml") == std::string::npos
+                      && qmlManifest.find("StartupOverlay.qml") == std::string::npos
+                      && qmlManifest.find("StatusOverlay.qml") == std::string::npos
+                      && qmlManifest.find("ExitOverlay.qml") == std::string::npos
+                      && qmlManifest.find("UiShortcutManager.qml") == std::string::npos
+                      && qmlManifest.find("TurntableIndicator.qml") == std::string::npos
+                      && qmlManifest.find("CrossfaderBar.qml") == std::string::npos,
+                  "central manifest packages exactly 21 QML resources and excludes merged components");
     ok &= require(deckQuickPanel.find("property real beatJumpBeats") == std::string::npos
                       && deckQuickPanel.find("root.engine.beatJumpBeats") != std::string::npos
                       && engineHeader.find("Q_PROPERTY(double beatJumpBeats") != std::string::npos,
@@ -1239,8 +1782,53 @@ int main(int argc, char** argv)
                       && flx10Mapping.find("paramId=\"deckA_jog_fast_search\" status=\"0xB0\" control=\"0x29\" type=\"encoder-relative\"") != std::string::npos
                       && flx10Mapping.find("paramId=\"deckB_beatjump_search_forward\" status=\"0x91\" control=\"0x71\" type=\"momentary\"") != std::string::npos,
                   "FLX10 Beat Jump buttons retain release events for click-versus-hold routing");
-    ok &= require(std::count(main.begin(), main.end(), '\n') < 600, "main.qml remains a compact shell");
-    ok &= require(main.find("PerformanceWorkspace") != std::string::npos, "shell routes to performance workspace");
+    ok &= require(std::count(main.begin(), main.end(), '\n') < 660,
+                  "main.qml remains a bounded application shell");
+    ok &= require(main.find("PerformanceWorkspace") != std::string::npos
+                      && main.find("AppOverlays {") != std::string::npos
+                      && main.find("StartupOverlay {") == std::string::npos
+                      && main.find("StatusOverlay {") == std::string::npos
+                      && main.find("ExitOverlay {") == std::string::npos,
+                  "shell routes its overlay host and performance workspace");
+    ok &= require(componentSection(appOverlays, "StartupOverlay").find("z: 1000")
+                      != std::string::npos
+                      && componentSection(appOverlays, "StatusOverlay").find("z: 1001")
+                          != std::string::npos
+                      && componentSection(appOverlays, "ExitOverlay").find("z: 1000")
+                          != std::string::npos
+                      && appOverlays.find("uncleanShutdownWarning: statusOverlay.uncleanShutdownWarning")
+                          != std::string::npos,
+                  "the unified overlay host preserves independent layers and warning ownership");
+    ok &= require(!shortcuts.empty()
+                      && shortcuts.find("Ctrl+=") != std::string::npos
+                      && shortcuts.find("Ctrl++") != std::string::npos
+                      && shortcuts.find("Ctrl+-") != std::string::npos
+                      && shortcuts.find("Ctrl+0") != std::string::npos
+                      && shortcuts.find("Ctrl+Shift+=") != std::string::npos
+                      && shortcuts.find("Ctrl+Shift++") != std::string::npos
+                      && shortcuts.find("Ctrl+Shift+-") != std::string::npos
+                      && shortcuts.find("Ctrl+Shift+0") != std::string::npos
+                      && shortcuts.find("appWindow._isTextInputFocused()") != std::string::npos
+                      && occurrences(main, "UiShortcutManager {") == 1
+                      && occurrences(main, "context: Qt.ApplicationShortcut") >= 10,
+                  "the main shell owns exactly one text-input-aware global shortcut group");
+    ok &= require(!turntableIndicator.empty()
+                      && performancePads.find("TurntableIndicator {") != std::string::npos
+                      && !crossfader.empty()
+                      && developmentControls.find("CrossfaderBar {") != std::string::npos
+                      && developmentControls.find("hostWindow: root.appWindow") != std::string::npos
+                      && crossfader.find("cfMult(") == std::string::npos
+                      && crossfader.find("assignForChannelId(") == std::string::npos
+                      && crossfader.find("multiplierForChannelId(") == std::string::npos
+                      && crossfader.find("function channelGain(") != std::string::npos
+                      && crossfader.find("function curveExponent(") != std::string::npos
+                      && turntableIndicator.find(
+                             "root.radiusForPoint(mouse.x, mouse.y) < root.minRadiusPx")
+                          != std::string::npos
+                      && turntableIndicator.find("root.engine.scratchBySeconds(deltaSec)")
+                          != std::string::npos
+                      && turntableIndicator.find("onCanceled: {") != std::string::npos,
+                  "exclusive turntable and crossfader controls are local to their owning QML hosts");
     ok &= require(workspace.find("DeckControl") != std::string::npos, "workspace uses shared deck component");
     ok &= require(workspace.find("MixerSection") == std::string::npos
                       && workspace.find("CrossfaderBar") == std::string::npos
@@ -1304,7 +1892,8 @@ int main(int argc, char** argv)
                   "audio callback is registered before the startup device is opened");
     ok &= require(main.find("resizeThrottleCounter") == std::string::npos, "resize event counter removed");
     ok &= require(shortcuts.find("Ctrl+Shift+0") != std::string::npos
-                  && shortcuts.find("Ctrl+0") != std::string::npos, "independent reset shortcuts exist");
+                  && shortcuts.find("Ctrl+0") != std::string::npos,
+                  "independent reset shortcuts exist");
     ok &= require(engineHeader.find("Q_PROPERTY(bool scratchVisualActive READ isScratchVisualActive NOTIFY scrubbingChanged)")
                       != std::string::npos,
                   "scratch visual activity is a reactive QML property");

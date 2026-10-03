@@ -63,6 +63,12 @@ QStringList MidiControllerManager::getAvailableMidiDevices()
     return m_availableControllerDeviceNames;
 }
 
+bool MidiControllerManager::isSelectedFlx10Controller() const
+{
+    return normalizeControllerKeyFromXmlBase(getSelectedController())
+        == normalizeControllerKeyFromXmlBase(flx10::kControllerName);
+}
+
 bool MidiControllerManager::refreshMidiDeviceCache()
 {
     const auto identifiersAsStrings = [](const auto& identifiers) {
@@ -637,7 +643,7 @@ void MidiControllerManager::openMidiInputByIdentifier(const juce::String& identi
             ? m_availableInputDeviceNames.at(selectedIndex)
             : QString();
         const bool flx10Context = flx10::looksLikeControllerName(selectedName)
-            || normalizeControllerKeyFromXmlBase(getSelectedController()) == normalizeControllerKeyFromXmlBase(flx10::kControllerName)
+            || isSelectedFlx10Controller()
             || flx10::isBuiltInMapping(getSelectedMapping());
 
         if (flx10Context) {
@@ -682,8 +688,7 @@ void MidiControllerManager::openMidiInputByIdentifier(const juce::String& identi
 bool MidiControllerManager::hasActiveMidiInput() const
 {
 #if defined(Q_OS_LINUX)
-    const bool flx10Context = normalizeControllerKeyFromXmlBase(getSelectedController())
-            == normalizeControllerKeyFromXmlBase(flx10::kControllerName)
+    const bool flx10Context = isSelectedFlx10Controller()
         || flx10::isBuiltInMapping(getSelectedMapping());
     bool flx10AlsaAvailable = false;
     for (std::size_t index = 0; index < m_availableInputDeviceIdentifiers.size(); ++index) {
@@ -790,8 +795,7 @@ int MidiControllerManager::findMatchingMidiOutputIndexForInput(int inputIndex) c
     if (m_availableOutputDeviceIdentifiers.empty())
         return -1;
 
-    const bool flx10Context = normalizeControllerKeyFromXmlBase(getSelectedController())
-            == normalizeControllerKeyFromXmlBase(flx10::kControllerName)
+    const bool flx10Context = isSelectedFlx10Controller()
         || flx10::isBuiltInMapping(getSelectedMapping());
     const QString inputName = (inputIndex >= 0 && inputIndex < m_availableInputDeviceNames.size())
         ? m_availableInputDeviceNames.at(inputIndex)
@@ -887,8 +891,7 @@ void MidiControllerManager::logAvailableMidiPorts() const
 
 void MidiControllerManager::restoreSavedDeviceSelections()
 {
-    const bool flx10Context = normalizeControllerKeyFromXmlBase(getSelectedController())
-            == normalizeControllerKeyFromXmlBase(flx10::kControllerName)
+    const bool flx10Context = isSelectedFlx10Controller()
         || flx10::isBuiltInMapping(getSelectedMapping());
     const auto inputId = SettingsManager::getInstance().getMidiInputIdentifier();
     juce::String savedInput = inputId.isEmpty()
@@ -972,8 +975,7 @@ bool MidiControllerManager::autoOpenFlx10MidiOutputIfNeeded()
     if (outputOpen || m_availableOutputDeviceIdentifiers.empty())
         return false;
 
-    const bool flx10Context = normalizeControllerKeyFromXmlBase(getSelectedController())
-            == normalizeControllerKeyFromXmlBase(flx10::kControllerName)
+    const bool flx10Context = isSelectedFlx10Controller()
         || flx10::isBuiltInMapping(getSelectedMapping());
 
     int outputIndex = -1;

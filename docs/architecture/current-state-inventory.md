@@ -8,11 +8,11 @@ build trees and packaging output.
 
 | Metric | Count |
 | --- | ---: |
-| All files under `src/` | 212 |
-| C++ headers | 94 |
-| C++ sources | 77 |
-| QML components | 26 |
-| C++/QML files | 197 |
+| All files under `src/` | 187 |
+| C++ headers | 88 |
+| C++ sources | 75 |
+| QML components | 21 |
+| C++/QML files | 184 |
 | C++/QML lines | approximately 82,000 |
 | Top-level source domains | 12 |
 
@@ -21,7 +21,9 @@ are the architectural contract.
 
 The preceding consolidation reduced 238 files to 232. The next domain-module
 round removed another 20, reaching 212 without combining realtime, worker,
-SQL or hardware lifetimes. Fewer files do not imply lower runtime cost.
+SQL or hardware lifetimes. The following consolidation removed 13 code files
+and 12 domain build manifests, reaching 187. Fewer files do not imply lower
+runtime cost.
 
 ## Source domains
 
@@ -40,8 +42,9 @@ SQL or hardware lifetimes. Fewer files do not imply lower runtime cost.
 | `src/qml` | presentation organized by UI domain | Qt Quick scene/render thread |
 | `src/waveform` | waveform extraction, store, cache, LOD and renderers | workers -> immutable store -> scene graph |
 
-`src/CMakeLists.txt` is the production-source entry point. Domain CMake files
-only contribute sources/resources to the existing application target.
+`src/CMakeLists.txt` is the single production-source/resource manifest, with
+explicit sections for each domain. The root retains application target creation,
+QML packaging and the existing targeted test declarations.
 
 ## Audio ownership
 
@@ -59,9 +62,10 @@ readers use shared worker leases, so a normal replacement does not wait for an
 in-flight codec or device read; explicit eject/shutdown still waits for the
 backing handle to close. The limiter is internal audio output protection shared
 by master and headphone buses, not a selectable FX unit.
-Master and headphone classes share `AudioBusMixer.*` as their physical module;
+Master, headphone and output-router classes share `AudioBusMixer.*` as their physical module;
 the joined cache worker is private to `AudioPageCache.cpp`, and the small output
-mapper is inline.
+mapper remains a separate stateless type. Routing enums and parameters share
+the neutral `AudioParameters.h` contract.
 
 Scratch remains one mode inside `RenderModeRouter`, not a parallel deck graph.
 FLX10 cumulative motion reaches the callback through a coherent native
@@ -85,6 +89,8 @@ implemented in four responsibility-sized files:
 Direct includes replaced the former umbrella header. `DeckTransport`,
 `DeckTrackLoader`, `DeckCueLoopController`, scratch and sync remain separate
 because they have real ownership or test boundaries.
+The neutral sync values and both independent sync classes share `sync/DeckSync.*`;
+physical consolidation does not combine their state or scheduling roles.
 
 ## Analysis and waveform
 
@@ -148,6 +154,10 @@ remain the principal monolithic surfaces.
 Master/Headphones/Booth settings share one role definition and row; view toggles
 share one card implementation without changing menu order. Library deck-selection
 actions are shared inside the existing component rather than spread across new files.
+Startup/status/exit surfaces are independent local components in `AppOverlays`;
+shortcuts are local to `main`, the platter to `PerformancePads`, and the
+development crossfader to `DevelopmentControlsWindow`. AIO transport buttons
+share one constant-size local component rather than content-dependent widths.
 
 ## Build and test shape
 

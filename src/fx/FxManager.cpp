@@ -1,5 +1,5 @@
 #include "FxManager.h"
-#include "domain/DeckId.h"
+#include "domain/DomainTypes.h"
 #include "deck/DjEngine.h"
 
 #include <QDebug>

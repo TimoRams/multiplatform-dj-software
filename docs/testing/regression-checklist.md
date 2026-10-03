@@ -51,6 +51,18 @@ release when hidden, unloaded-deck disabling and persisted menu visibility.
 On a touchscreen, also check CUE hold/release and cancellation, both deck halves
 at the smallest supported window size, and hamburger toggle restoration.
 
+After exclusive QML components move into their hosts, also check startup,
+welcome/recovery notification and exit/manual-backup overlays, global shortcuts
+while editing text, the platter's scratch release/cancellation, and development
+crossfader assignments in two/four-deck mode. Local components must retain
+independent state, stacking and engine bindings. Momentary CUE in both transport
+surfaces must release the original deck on hide, cancellation and teardown.
+
+The centralized `src/CMakeLists.txt` must configure both the full application
+and tests-only mode. Its controller resource keeps the existing QRC alias.
+`sync_coordinator` and `deck_transport` cover the shared neutral `DeckSync.*`
+module; `rekordbox_read_only` covers the combined source/identity readers.
+
 After domain-module merges, rebuild the affected tests before running them.
 `parameter_store` must still distinguish duplicate UI values from repeated MIDI
 events. Master and cue buses retain separate limiter/gain state despite sharing

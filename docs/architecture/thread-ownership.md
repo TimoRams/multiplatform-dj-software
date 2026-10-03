@@ -4,10 +4,13 @@ This is the current ownership map for cross-thread state. Atomics and immutable
 snapshots transfer values; they do not create a second owner.
 
 Physical file grouping does not combine lifetimes. `AudioBusMixer.*` contains
-the separate master and headphone classes; `AudioPageCache.cpp` contains its
+the separate master, headphone and output-router classes; `AudioPageCache.cpp` contains its
 private joined `AudioCacheWorker`. `ScratchInput.h` groups two independent
 native input types, and `LibraryCoverService.*` groups a service with the image
 provider still owned by the QML engine.
+`DeckSync.*` groups independent per-deck controllers and the coordinator;
+`RekordboxDeviceSource.*` groups source and identity readers without changing
+read-only access or device-manager ownership.
 
 ## Application lifetime
 

@@ -1030,7 +1030,7 @@ void DjEngine::applyPreparedTrackVisuals(TrackVisualResult result)
 #include "audio/DeckAudioPipeline.h"
 #include "deck/DeckTransport.h"
 #include "domain/TrackData.h"
-#include "sync/SyncCoordinator.h"
+#include "sync/DeckSync.h"
 
 #include <QFileInfo>
 

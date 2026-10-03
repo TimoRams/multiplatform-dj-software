@@ -22,7 +22,7 @@ publish control state and commands, but may not process or route audio.
 
 ## 2. Code-level topology
 
-`src/audio/AudioRouting.h` is the only code declaration of the fixed topology. It contains
+`src/audio/AudioParameters.h` is the code declaration of the fixed topology and parameter contract. It contains
 types and constants only. The following statement is intentionally identical to the
 statement in that header:
 
@@ -243,7 +243,7 @@ MasterTap, recording, Booth, Master output, nor ChannelMeter.
 
 ## 9. AudioOutputRouter
 
-The engine exposes only the logical buses declared in `AudioRouting.h`:
+The engine exposes only the logical buses declared in `AudioParameters.h`:
 
 ```text
 Master, Headphones, Booth, DeckA, DeckB, DeckC, DeckD

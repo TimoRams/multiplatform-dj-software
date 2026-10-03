@@ -1,5 +1,4 @@
-#include "deck/sync/DeckSyncController.h"
-#include "deck/sync/SyncCoordinator.h"
+#include "deck/sync/DeckSync.h"
 
 #include <array>
 #include <cassert>

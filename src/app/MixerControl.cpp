@@ -88,54 +88,41 @@ void MixerControl::applyChannelMixState(DeckId id)
     engine->applyPolarityInverted(state.polarityInverted);
 }
 
-void MixerControl::setTrim(const QString& channelId, double value)
+void MixerControl::setChannelParameter(const QString& channelId, double value,
+                                       double ChannelMixState::* stateMember,
+                                       void (DjEngine::* applyParameter)(double))
 {
     const auto id = domain::deckFromChannelId(channelId);
     if (!id)
         return;
-    m_mix[domain::toIndex(*id)].trim = value;
+    m_mix[domain::toIndex(*id)].*stateMember = value;
     if (DjEngine* const engine = deck(*id))
-        engine->applyTrim(value);
+        (engine->*applyParameter)(value);
+}
+
+void MixerControl::setTrim(const QString& channelId, double value)
+{
+    setChannelParameter(channelId, value, &ChannelMixState::trim, &DjEngine::applyTrim);
 }
 
 void MixerControl::setEqHigh(const QString& channelId, double value)
 {
-    const auto id = domain::deckFromChannelId(channelId);
-    if (!id)
-        return;
-    m_mix[domain::toIndex(*id)].eqHigh = value;
-    if (DjEngine* const engine = deck(*id))
-        engine->applyEqHigh(value);
+    setChannelParameter(channelId, value, &ChannelMixState::eqHigh, &DjEngine::applyEqHigh);
 }
 
 void MixerControl::setEqMid(const QString& channelId, double value)
 {
-    const auto id = domain::deckFromChannelId(channelId);
-    if (!id)
-        return;
-    m_mix[domain::toIndex(*id)].eqMid = value;
-    if (DjEngine* const engine = deck(*id))
-        engine->applyEqMid(value);
+    setChannelParameter(channelId, value, &ChannelMixState::eqMid, &DjEngine::applyEqMid);
 }
 
 void MixerControl::setEqLow(const QString& channelId, double value)
 {
-    const auto id = domain::deckFromChannelId(channelId);
-    if (!id)
-        return;
-    m_mix[domain::toIndex(*id)].eqLow = value;
-    if (DjEngine* const engine = deck(*id))
-        engine->applyEqLow(value);
+    setChannelParameter(channelId, value, &ChannelMixState::eqLow, &DjEngine::applyEqLow);
 }
 
 void MixerControl::setFilter(const QString& channelId, double value)
 {
-    const auto id = domain::deckFromChannelId(channelId);
-    if (!id)
-        return;
-    m_mix[domain::toIndex(*id)].filter = value;
-    if (DjEngine* const engine = deck(*id))
-        engine->applyFilter(value);
+    setChannelParameter(channelId, value, &ChannelMixState::filter, &DjEngine::applyFilter);
 }
 
 void MixerControl::setPolarityInverted(const QString& channelId, bool inverted)

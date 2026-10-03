@@ -312,7 +312,7 @@ juce_add_console_app(${PROJECT_NAME}
 
 target_sources(${PROJECT_NAME} PRIVATE src/main.cpp)
 
-# Keep source ownership next to each production domain.
+# Explicit production sources and resources, grouped by domain.
 add_subdirectory(src)
 
 # Pack QML files into the binary under URI "DJSoftware".
@@ -616,7 +616,7 @@ add_executable(BrockDJ_deck_transport_tests
     tests/deck/deck_transport_tests.cpp
     src/app/ControlClock.cpp
     src/deck/DeckTransport.cpp src/audio/DeckAudioPipeline.cpp
-    src/deck/sync/DeckSyncController.cpp src/deck/sync/SyncCoordinator.cpp
+    src/deck/sync/DeckSync.cpp
     src/audio/cache/AudioPageCache.cpp src/audio/cache/CachedPlaybackAudioSource.cpp
     src/audio/RenderModeRouter.cpp src/audio/internal/ScratchResampler.cpp src/audio/internal/HermiteResamplingAudioSource.cpp
     src/deck/scratch/ScratchController.cpp
@@ -674,8 +674,7 @@ add_test(NAME flx10_display_protocol COMMAND BrockDJ_flx10_display_protocol_test
 
 add_executable(BrockDJ_sync_coordinator_tests
     tests/deck/sync_coordinator_tests.cpp
-    src/deck/sync/DeckSyncController.cpp
-    src/deck/sync/SyncCoordinator.cpp)
+    src/deck/sync/DeckSync.cpp)
 target_include_directories(BrockDJ_sync_coordinator_tests PRIVATE src src/deck)
 target_link_libraries(BrockDJ_sync_coordinator_tests PRIVATE Qt6::Core)
 target_compile_features(BrockDJ_sync_coordinator_tests PRIVATE cxx_std_23)
@@ -848,9 +847,7 @@ add_executable(BrockDJ_rekordbox_read_only_tests
     src/library/devices/rekordbox/RekordboxPdbReader.cpp
     src/library/devices/rekordbox/RekordboxAnalysisReader.cpp
     src/library/devices/rekordbox/RekordboxDeviceSource.h
-    src/library/devices/rekordbox/RekordboxDeviceSource.cpp
-    src/library/devices/rekordbox/RekordboxDeviceIdentity.h
-    src/library/devices/rekordbox/RekordboxDeviceIdentity.cpp)
+    src/library/devices/rekordbox/RekordboxDeviceSource.cpp)
 target_compile_definitions(BrockDJ_rekordbox_read_only_tests PRIVATE
     SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_include_directories(BrockDJ_rekordbox_read_only_tests PRIVATE src)

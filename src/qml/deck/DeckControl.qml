@@ -7,6 +7,7 @@ Item {
     id: deck
     property string deckName: "A"
     property var engine: null
+    property var heldCueEngine: null
     // The performance surface deliberately exposes only hot cues.  The full
     // transport/control strip lives in the development-controls window.
     property bool developmentControls: false
@@ -197,6 +198,7 @@ Item {
         signal rightClicked()
         signal btnPressed()
         signal btnReleased()
+        signal btnCanceled()
 
         Text {
             anchors.centerIn:    parent
@@ -222,6 +224,7 @@ Item {
             }
             onPressed:  fb.btnPressed()
             onReleased: fb.btnReleased()
+            onCanceled: fb.btnCanceled()
         }
     }
 
@@ -433,9 +436,21 @@ Item {
     }
 
     Component.onDestruction: {
+        deck.releaseCue()
         if (typeof linkManager !== "undefined" && linkManager !== null)
             linkManager.enabledChanged.disconnect(deck._handleLinkEnabledChanged)
     }
+
+    function releaseCue() {
+        if (!heldCueEngine)
+            return
+        var target = heldCueEngine
+        heldCueEngine = null
+        target.cueButtonRelease()
+    }
+
+    onVisibleChanged: if (!visible) releaseCue()
+    onEngineChanged: releaseCue()
 
     onLinkModeChanged: {
         // The always-present AIO deck owns Link clock publication.  The
@@ -821,13 +836,21 @@ Item {
                         }
                         FlatBtn {
                             btnText: "CUE"
+                            enabled: deck.engine && deck.engine.hasTrack
                             Layout.preferredWidth: deck.wCue
                             Layout.minimumWidth: deck.wCue
                             Layout.maximumWidth: deck.wCue
                             fbFontPx: 9
                             fbInactiveText: deck.btnTextBright
-                            onBtnPressed:  { if (deck.engine) deck.engine.cueButtonPress() }
-                            onBtnReleased: { if (deck.engine) deck.engine.cueButtonRelease() }
+                            onBtnPressed: {
+                                if (!deck.engine || deck.heldCueEngine)
+                                    return
+                                deck.heldCueEngine = deck.engine
+                                deck.heldCueEngine.cueButtonPress()
+                            }
+                            onBtnReleased: deck.releaseCue()
+                            onBtnCanceled: deck.releaseCue()
+                            onEnabledChanged: if (!enabled) deck.releaseCue()
                         }
                     }
 

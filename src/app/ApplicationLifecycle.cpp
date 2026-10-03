@@ -17,7 +17,7 @@
 #include "controllers/midi/ParameterStore.h"
 #include "audio/device/AudioDeviceService.h"
 #include "audio/cache/AudioPageCache.h"
-#include "deck/sync/SyncCoordinator.h"
+#include "deck/sync/DeckSync.h"
 #include "library/MediaIoScheduler.h"
 
 #include <QCoreApplication>

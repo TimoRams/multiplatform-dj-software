@@ -1,6 +1,6 @@
 #pragma once
 
-#include "domain/DeckId.h"
+#include "domain/DomainTypes.h"
 
 #include <QObject>
 #include <QString>
@@ -59,6 +59,9 @@ private:
     };
 
     void onParameterChanged(const QString& id, float value);
+    void setChannelParameter(const QString& channelId, double value,
+                             double ChannelMixState::* stateMember,
+                             void (DjEngine::* applyParameter)(double));
 
     [[nodiscard]] DjEngine* deck(domain::DeckId id) const;
     void applyChannelVolume(domain::DeckId id);

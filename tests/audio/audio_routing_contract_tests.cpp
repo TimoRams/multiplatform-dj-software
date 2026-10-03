@@ -1,5 +1,4 @@
-#include "audio/AudioOutputRouter.h"
-#include "audio/AudioRouting.h"
+#include "audio/AudioParameters.h"
 #include "audio/AudioBusMixer.h"
 
 #include <array>

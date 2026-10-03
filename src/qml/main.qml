@@ -348,11 +348,10 @@ ApplicationWindow {
             linkManager.enabledChanged.disconnect(window._handleLinkEnabledChanged)
     }
 
-    StartupOverlay {
+    AppOverlays {
         anchors.fill: parent
         appWindow: window
         mainLayout: mainLayout
-        uncleanShutdownWarning: statusOverlay.uncleanShutdownWarning
     }
 
     // ── Global font sizing ───────────────────────────────────────────────────
@@ -430,6 +429,64 @@ ApplicationWindow {
     }
 
     readonly property real waveformZoom: waveformZoomController ? waveformZoomController.zoom : 0.22
+
+    component UiShortcutManager: Item {
+        id: shortcutRoot
+        required property var appWindow
+
+        function textInputFocused() {
+            return appWindow && appWindow._isTextInputFocused()
+        }
+
+        Shortcut {
+            sequence: "Ctrl+="
+            context: Qt.ApplicationShortcut
+            onActivated: if (!shortcutRoot.textInputFocused() && waveformZoomController)
+                             waveformZoomController.zoomIn()
+        }
+        Shortcut {
+            sequence: "Ctrl++"
+            context: Qt.ApplicationShortcut
+            onActivated: if (!shortcutRoot.textInputFocused() && waveformZoomController)
+                             waveformZoomController.zoomIn()
+        }
+        Shortcut {
+            sequence: "Ctrl+-"
+            context: Qt.ApplicationShortcut
+            onActivated: if (!shortcutRoot.textInputFocused() && waveformZoomController)
+                             waveformZoomController.zoomOut()
+        }
+        Shortcut {
+            sequence: "Ctrl+0"
+            context: Qt.ApplicationShortcut
+            onActivated: if (!shortcutRoot.textInputFocused() && waveformZoomController)
+                             waveformZoomController.reset()
+        }
+        Shortcut {
+            sequence: "Ctrl+Shift+="
+            context: Qt.ApplicationShortcut
+            onActivated: if (!shortcutRoot.textInputFocused() && uiScaleController)
+                             uiScaleController.increase()
+        }
+        Shortcut {
+            sequence: "Ctrl+Shift++"
+            context: Qt.ApplicationShortcut
+            onActivated: if (!shortcutRoot.textInputFocused() && uiScaleController)
+                             uiScaleController.increase()
+        }
+        Shortcut {
+            sequence: "Ctrl+Shift+-"
+            context: Qt.ApplicationShortcut
+            onActivated: if (!shortcutRoot.textInputFocused() && uiScaleController)
+                             uiScaleController.decrease()
+        }
+        Shortcut {
+            sequence: "Ctrl+Shift+0"
+            context: Qt.ApplicationShortcut
+            onActivated: if (!shortcutRoot.textInputFocused() && uiScaleController)
+                             uiScaleController.reset()
+        }
+    }
 
     UiShortcutManager {
         appWindow: window
@@ -576,13 +633,4 @@ ApplicationWindow {
         }
     }
 
-    StatusOverlay {
-        id: statusOverlay
-        anchors.fill: parent
-        appWindow: window
-    }
-
-    ExitOverlay {
-        appWindow: window
-    }
 }

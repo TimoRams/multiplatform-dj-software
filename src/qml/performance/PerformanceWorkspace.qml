@@ -8,6 +8,21 @@ Item {
     readonly property var window: appWindow
     property alias librarySection: librarySection
 
+    component AioActionButton: Button {
+        required property var owner
+        property string actionText: ""
+
+        text: actionText
+        accentColor: owner.accent
+        enabled: owner.engine && owner.engine.hasTrack
+        Layout.fillWidth: true
+        Layout.minimumWidth: 40
+        Layout.preferredWidth: 1
+        Layout.minimumHeight: 32
+        Layout.preferredHeight: 32
+        Layout.maximumHeight: 32
+    }
+
     component AioDeckControls: RowLayout {
         id: controls
         required property var engine
@@ -36,30 +51,16 @@ Item {
             Layout.leftMargin: 4
             Layout.rightMargin: 4
         }
-        Button {
+        AioActionButton {
+            owner: controls
             objectName: "aioPlay"
-            text: controls.engine && controls.engine.isPlaying ? "PAUSE" : "PLAY"
-            accentColor: controls.accent
-            enabled: controls.engine && controls.engine.hasTrack
-            Layout.fillWidth: true
-            Layout.minimumWidth: 40
-            Layout.preferredWidth: 1
-            Layout.minimumHeight: 32
-            Layout.preferredHeight: 32
-            Layout.maximumHeight: 32
+            actionText: controls.engine && controls.engine.isPlaying ? "PAUSE" : "PLAY"
             onClicked: controls.engine.togglePlay()
         }
-        Button {
+        AioActionButton {
+            owner: controls
             objectName: "aioCue"
-            text: "CUE"
-            accentColor: controls.accent
-            enabled: controls.engine && controls.engine.hasTrack
-            Layout.fillWidth: true
-            Layout.minimumWidth: 40
-            Layout.preferredWidth: 1
-            Layout.minimumHeight: 32
-            Layout.preferredHeight: 32
-            Layout.maximumHeight: 32
+            actionText: "CUE"
             onPressed: {
                 controls.heldCueEngine = controls.engine
                 controls.heldCueEngine.cueButtonPress()
@@ -68,30 +69,16 @@ Item {
             onCanceled: controls.releaseCue()
             onEnabledChanged: if (!enabled) controls.releaseCue()
         }
-        Button {
+        AioActionButton {
+            owner: controls
             objectName: "aioJumpBack"
-            text: "-" + (controls.engine ? controls.engine.beatJumpBeats : 4)
-            accentColor: controls.accent
-            enabled: controls.engine && controls.engine.hasTrack
-            Layout.fillWidth: true
-            Layout.minimumWidth: 40
-            Layout.preferredWidth: 1
-            Layout.minimumHeight: 32
-            Layout.preferredHeight: 32
-            Layout.maximumHeight: 32
+            actionText: "-" + (controls.engine ? controls.engine.beatJumpBeats : 4)
             onClicked: controls.engine.beatJump(-controls.engine.beatJumpBeats)
         }
-        Button {
+        AioActionButton {
+            owner: controls
             objectName: "aioJumpForward"
-            text: "+" + (controls.engine ? controls.engine.beatJumpBeats : 4)
-            accentColor: controls.accent
-            enabled: controls.engine && controls.engine.hasTrack
-            Layout.fillWidth: true
-            Layout.minimumWidth: 40
-            Layout.preferredWidth: 1
-            Layout.minimumHeight: 32
-            Layout.preferredHeight: 32
-            Layout.maximumHeight: 32
+            actionText: "+" + (controls.engine ? controls.engine.beatJumpBeats : 4)
             onClicked: controls.engine.beatJump(controls.engine.beatJumpBeats)
         }
     }

@@ -405,6 +405,7 @@ private:
     int findMatchingMidiOutputIndexForInput(int inputIndex) const;
     int findMidiOutputIndexByName(const QString& nameOrIdentifier) const;
     void logAvailableMidiPorts() const;
+    [[nodiscard]] bool isSelectedFlx10Controller() const;
     bool shouldUseFlx10Feedback() const;
     void startFlx10OutputSession();
     void stopFlx10OutputSession();

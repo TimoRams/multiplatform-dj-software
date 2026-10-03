@@ -3,8 +3,7 @@
 #include "app/ControlClock.h"
 #include "audio/cache/AudioPageCache.h"
 #include "audio/DeckAudioPipeline.h"
-#include "deck/sync/DeckSyncController.h"
-#include "deck/sync/SyncCoordinator.h"
+#include "deck/sync/DeckSync.h"
 
 #include <QCoreApplication>
 #include <QTemporaryDir>

@@ -1,7 +1,7 @@
 #include "controllers/flx10/Flx10ControllerIdentity.h"
-#include "domain/DeckId.h"
+#include "domain/DomainTypes.h"
 #include "audio/internal/HermiteKernel.h"
-#include "deck/sync/SyncTypes.h"
+#include "deck/sync/DeckSync.h"
 
 #include <cmath>
 #include <cstdlib>

@@ -60,7 +60,7 @@ double validTrackPosition(const DjEngine* engine, double duration)
     if (!engine)
         return 0.0;
 
-    // Match TurntableIndicator / Waveform: atomic during scratch & release glide,
+    // Match the PerformancePads platter / Waveform: atomic during scratch & release glide,
     // interpolated visual position while playing, frozen atomic when paused.
     const double pos = engine->isScratchVisualActive()
         ? engine->getPlayheadPositionAtomic()
