@@ -202,6 +202,9 @@ check_runtime_closure() {
             libgpg-error.so.*|liblzma.so.*|libmount.so.*|libblkid.so.*|\
             libselinux.so.*|libuuid.so.*|libcom_err.so.*|libkeyutils.so.*)
             ;;
+            # linuxdeploy excludes this base-system ABI to avoid GnuTLS/GMP conflicts.
+            libgmp.so.10)
+            ;;
             *)
             echo "dependency is resolved only from the runner or is not allowlisted, not the AppDir: $soname -> ${resolved:-<unresolved>} (required by $elf)" >&2
             return 1

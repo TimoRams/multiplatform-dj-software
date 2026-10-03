@@ -51,6 +51,9 @@ any FUSE requirement in CI. Packaging fails unless QSQLITE, SQLCipher and
 every deployed ELF shared object have a complete runtime closure. Dependencies
 may resolve from the AppDir or from the explicit Linux ABI/desktop-driver
 allowlist; accidental reliance on other runner-installed libraries fails.
+The allowlist includes the exact `libgmp.so.10` base-system ABI, which
+linuxdeploy deliberately excludes to avoid GnuTLS/GMP symbol conflicts.
+GnuTLS and its other non-allowlisted dependencies still have to be bundled.
 
 ## macOS bundles
 

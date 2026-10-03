@@ -913,6 +913,7 @@ int runApplication(int argc, char *argv[])
                     // bandwidth and a Vulkan render-target transition per frame.
                     QQuickGraphicsConfiguration cfg = quickWindow->graphicsConfiguration();
                     cfg.setDepthBufferFor2D(false);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
                     const QString cacheMode = qEnvironmentVariable("BROCKDJ_VK_CACHE").trimmed().toLower();
                     const bool resetCache = (cacheMode == "reset");
                     const bool enableCache = resetCache || cacheMode.isEmpty()
@@ -937,6 +938,7 @@ int runApplication(int argc, char *argv[])
                     } else {
                         qDebug() << "[main] Vulkan pipeline cache disabled (BROCKDJ_VK_CACHE=0)";
                     }
+#endif
                     quickWindow->setGraphicsConfiguration(cfg);
                 }
 

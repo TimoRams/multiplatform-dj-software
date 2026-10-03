@@ -15,7 +15,6 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <stop_token>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -214,7 +213,7 @@ private:
         std::list<RenderTileKey>::iterator lruPosition;
     };
 
-    void run(std::stop_token stopToken);
+    void run();
     void notifyTileReady();
     void insert(std::shared_ptr<const RasterizedRenderTile> tile,
                 std::uint64_t workGeneration);
@@ -226,7 +225,7 @@ private:
 
     std::function<void()> m_tileReadyCallback;
     mutable std::mutex m_mutex;
-    std::condition_variable_any m_condition;
+    std::condition_variable m_condition;
     std::deque<RenderTileRequest> m_pending;
     std::optional<OverviewRenderRequest> m_pendingOverview;
     std::unordered_set<RenderTileKey, RenderTileKeyHash> m_pendingKeys;
@@ -238,7 +237,8 @@ private:
     std::size_t m_cacheByteBudget = defaultCacheByteBudget();
     std::uint64_t m_activeTrackGeneration = 0;
     std::vector<std::shared_ptr<const RasterizedOverview>> m_overviewCache;
-    std::vector<std::jthread> m_workers;
+    std::atomic<bool> m_stopping{false};
+    std::thread m_worker;
     std::mutex m_callbackMutex;
     std::atomic<bool> m_workEnabled{true};
     // Incremented whenever disposable work is suspended. A job already

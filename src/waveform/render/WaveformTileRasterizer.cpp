@@ -160,19 +160,18 @@ WaveformTileRasterizer::WaveformTileRasterizer(
     : m_tileReadyCallback(std::move(tileReadyCallback)),
       m_cacheByteBudget(configuredCacheByteBudget())
 {
-    m_workers.emplace_back(
-        [this](std::stop_token stopToken) { run(stopToken); });
+    m_worker = std::thread([this] { run(); });
 }
 
 WaveformTileRasterizer::~WaveformTileRasterizer()
 {
-    for (auto& worker : m_workers)
-        worker.request_stop();
-    m_condition.notify_all();
-    for (auto& worker : m_workers) {
-        if (worker.joinable())
-            worker.join();
+    {
+        std::lock_guard lock(m_mutex);
+        m_stopping.store(true, std::memory_order_release);
     }
+    m_condition.notify_all();
+    if (m_worker.joinable())
+        m_worker.join();
 }
 
 RenderTileKey WaveformTileRasterizer::makeKey(
@@ -357,7 +356,7 @@ WaveformTileRasterizer::Stats WaveformTileRasterizer::stats() const
     result.discardedTiles = m_discardedTiles.load(std::memory_order_relaxed);
     result.worstRasterUsec = m_worstRasterUsec.load(std::memory_order_relaxed);
     result.totalRasterUsec = m_totalRasterUsec.load(std::memory_order_relaxed);
-    result.workerCount = m_workers.size();
+    result.workerCount = 1;
     result.activeWorkers = static_cast<std::size_t>(
         m_activeWorkers.load(std::memory_order_relaxed));
     result.maximumConcurrentWorkers = static_cast<std::size_t>(
@@ -385,21 +384,22 @@ void WaveformTileRasterizer::resetStats()
         std::memory_order_relaxed);
 }
 
-void WaveformTileRasterizer::run(std::stop_token stopToken)
+void WaveformTileRasterizer::run()
 {
     lowerCurrentThreadPriority();
-    while (!stopToken.stop_requested()) {
+    while (!m_stopping.load(std::memory_order_acquire)) {
         std::optional<RenderTileRequest> request;
         std::optional<OverviewRenderRequest> overviewRequest;
         std::uint64_t workGeneration = 0;
         {
             std::unique_lock lock(m_mutex);
-            m_condition.wait(lock, stopToken, [this] {
-                return m_workEnabled.load(std::memory_order_relaxed)
-                    && ((!m_overviewInFlightKey && m_pendingOverview.has_value())
-                        || !m_pending.empty());
+            m_condition.wait(lock, [this] {
+                return m_stopping.load(std::memory_order_relaxed)
+                    || (m_workEnabled.load(std::memory_order_relaxed)
+                        && ((!m_overviewInFlightKey && m_pendingOverview.has_value())
+                            || !m_pending.empty()));
             });
-            if (stopToken.stop_requested())
+            if (m_stopping.load(std::memory_order_relaxed))
                 break;
             workGeneration = m_workGeneration.load(std::memory_order_acquire);
             if (!m_overviewInFlightKey && m_pendingOverview) {
@@ -421,12 +421,12 @@ void WaveformTileRasterizer::run(std::stop_token stopToken)
 
         auto& permits = rasterWorkPermits();
         bool acquiredSlot = false;
-        while (!stopToken.stop_requested() && !acquiredSlot) {
+        while (!m_stopping.load(std::memory_order_acquire) && !acquiredSlot) {
             acquiredSlot = permits.try_acquire_for(std::chrono::milliseconds(20));
         }
         if (!acquiredSlot)
             break;
-        if (stopToken.stop_requested()) {
+        if (m_stopping.load(std::memory_order_acquire)) {
             permits.release();
             break;
         }

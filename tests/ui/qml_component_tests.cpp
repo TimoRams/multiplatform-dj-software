@@ -710,6 +710,9 @@ bool aioDeckControlTests(const std::string& workspace)
         QtObject {
             property bool hasTrack: true
             property bool isPlaying: false
+            property bool keylock: false
+            property bool slipActive: false
+            property bool quantizeEnabled: false
             property real beatJumpBeats: 4
             property real lastJump: 0
             property int cuePresses: 0
@@ -718,6 +721,7 @@ bool aioDeckControlTests(const std::string& workspace)
             function cueButtonPress() { ++cuePresses }
             function cueButtonRelease() { ++cueReleases }
             function beatJump(beats) { lastJump = beats }
+            function setSlip(active) { slipActive = active }
         }
     )");
     auto deck1 = createQmlObject(engine, sinkSource, "AIO deck 1 sink instantiates");
@@ -767,7 +771,8 @@ bool aioDeckControlTests(const std::string& workspace)
     const double buttonWidth = first->findChild<QObject*>("aioPlay")->property("width").toDouble();
     const auto equalButtonSizes = [&] {
         for (auto* half : {first, second}) {
-            for (const char* name : {"aioPlay", "aioCue", "aioJumpBack", "aioJumpForward"}) {
+            for (const char* name : {"aioPlay", "aioCue", "aioJumpBack", "aioJumpForward",
+                                     "aioKeylock", "aioSlip", "aioQuantize"}) {
                 auto* button = half->findChild<QObject*>(name);
                 if (!button || std::abs(button->property("width").toDouble() - buttonWidth) > 1.0
                     || button->property("height").toDouble() != 32.0)
@@ -777,6 +782,35 @@ bool aioDeckControlTests(const std::string& workspace)
         return buttonWidth > 40.0;
     };
     ok &= require(equalButtonSizes(), "AIO buttons divide available width equally");
+    for (const auto& mode : {std::pair{"aioKeylock", "keylock"},
+                             std::pair{"aioSlip", "slipActive"},
+                             std::pair{"aioQuantize", "quantizeEnabled"}}) {
+        auto* firstButton = first->findChild<QObject*>(mode.first);
+        auto* secondButton = second->findChild<QObject*>(mode.first);
+        ok &= clickItem(window, firstButton, "AIO mode button is visible");
+        ok &= require(deck1->property(mode.second).toBool()
+                          && firstButton->property("checked").toBool()
+                          && !deck2->property(mode.second).toBool()
+                          && !secondButton->property("checked").toBool(),
+                      "AIO mode toggle and active indicator target only deck 1");
+        ok &= clickItem(window, firstButton, "AIO mode toggles off");
+        ok &= require(!deck1->property(mode.second).toBool()
+                          && !firstButton->property("checked").toBool(),
+                      "AIO mode can be disabled again");
+        ok &= clickItem(window, secondButton, "AIO deck 2 mode button is visible");
+        ok &= require(deck2->property(mode.second).toBool()
+                          && secondButton->property("checked").toBool()
+                          && !deck1->property(mode.second).toBool(),
+                      "AIO mode targets deck 2 independently");
+        deck1->setProperty(mode.second, true);
+        QCoreApplication::processEvents();
+        ok &= require(firstButton->property("checked").toBool(),
+                      "AIO mode indicator follows external engine changes after clicks");
+        deck1->setProperty(mode.second, false);
+        deck2->setProperty(mode.second, false);
+    }
+    QTest::qWait(30);
+    ok &= require(equalButtonSizes(), "AIO mode toggles do not resize any buttons");
     ok &= clickItem(window, first->findChild<QObject*>("aioPlay"), "AIO play is visible");
     ok &= require(deck1->property("isPlaying").toBool()
                       && !deck2->property("isPlaying").toBool(), "AIO play targets deck 1 only");
@@ -829,6 +863,9 @@ bool aioDeckControlTests(const std::string& workspace)
     ok &= require(!first->findChild<QObject*>("aioPlay")->property("enabled").toBool()
                       && !first->findChild<QObject*>("aioCue")->property("enabled").toBool(),
                   "unloaded AIO deck controls are disabled");
+    for (const char* name : {"aioKeylock", "aioSlip", "aioQuantize"})
+        ok &= require(!first->findChild<QObject*>(name)->property("enabled").toBool(),
+                      "unloaded AIO mode buttons are disabled");
     deck1->setProperty("hasTrack", true);
     QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, cuePoint);
     bar.reset();

@@ -81,6 +81,30 @@ Item {
             actionText: "+" + (controls.engine ? controls.engine.beatJumpBeats : 4)
             onClicked: controls.engine.beatJump(controls.engine.beatJumpBeats)
         }
+        AioActionButton {
+            owner: controls
+            objectName: "aioKeylock"
+            actionText: "KEY"
+            Accessible.name: "Key Lock"
+            checked: controls.engine ? controls.engine.keylock : false
+            onClicked: controls.engine.keylock = !controls.engine.keylock
+        }
+        AioActionButton {
+            owner: controls
+            objectName: "aioSlip"
+            actionText: "SLIP"
+            Accessible.name: "Slip Mode"
+            checked: controls.engine ? controls.engine.slipActive : false
+            onClicked: controls.engine.setSlip(!controls.engine.slipActive)
+        }
+        AioActionButton {
+            owner: controls
+            objectName: "aioQuantize"
+            actionText: "QNT"
+            Accessible.name: "Quantize"
+            checked: controls.engine ? controls.engine.quantizeEnabled : false
+            onClicked: controls.engine.quantizeEnabled = !controls.engine.quantizeEnabled
+        }
     }
 
     ColumnLayout {

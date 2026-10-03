@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -64,6 +65,27 @@ int main(int argc, char** argv)
                       == WaveformLineStore::PublishResult::Accepted,
                   "populated render benchmark chunk must publish");
     const auto snapshot = store.snapshot();
+
+    for (int iteration = 0; iteration < 24; ++iteration) {
+        std::atomic<int> callbacks{0};
+        {
+            waveform_render::WaveformTileRasterizer retiring([&] { ++callbacks; });
+            retiring.setActiveTrackGeneration(snapshot->trackGeneration);
+            if (iteration % 3 == 1)
+                retiring.setWorkEnabled(false);
+            if (iteration % 3 == 2) {
+                const auto span = waveform_render::renderTileSpan(
+                    populatedChunkIndex, 1.0, totalLines);
+                const auto key = waveform_render::WaveformTileRasterizer::makeKey(
+                    *snapshot, populatedChunkIndex, span, 1.0, 128, 1.0);
+                retiring.request({key, span, snapshot, 1.0, 128.0, 1.0, 0.0});
+            }
+        }
+        const auto completedCallbacks = callbacks.load();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        ok &= require(callbacks.load() == completedCallbacks,
+                      "raster callback outlived idle, suspended or queued worker destruction");
+    }
 
     // Elevated audio pressure rejects disposable raster requests synchronously;
     // re-enabling accepts only a freshly published current-view request.
