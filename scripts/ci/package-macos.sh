@@ -148,15 +148,16 @@ while IFS= read -r mach_o; do
         exit 1
     fi
 
-    dependencies="$(otool -arch "$expected_arch" -L "$mach_o")"
+    # otool's first line is the inspected file's path, not a dependency.
+    dependencies="$(otool -arch "$expected_arch" -L "$mach_o" \
+        | sed '1d; s/^[[:space:]]*//; s/ (compatibility version.*$//')"
     if grep -E '/opt/homebrew|/usr/local/(Cellar|opt)|/Users/runner' <<<"$dependencies"; then
         echo "external Homebrew/runner dependency remains in bundle: $mach_o" >&2
         exit 1
     fi
     while IFS= read -r dependency; do
         check_dependency "$mach_o" "$dependency"
-    done < <(printf '%s\n' "$dependencies" \
-        | sed '1d; s/^[[:space:]]*//; s/ (compatibility version.*$//')
+    done <<< "$dependencies"
 done < <(find "$app/Contents" -type f)
 
 codesign --force --deep --sign - "$app"

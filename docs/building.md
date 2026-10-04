@@ -35,7 +35,10 @@ main-branch pushes, version tags and manual dispatches.
 
 Qt 6.4 remains supported. Explicit Vulkan pipeline-cache load/save files are
 enabled only with Qt 6.5 or newer; Qt 6.4 retains the same Vulkan rendering
-configuration without those optional APIs. Linux USB mount/eject operations
+configuration without those optional APIs. The embedded `DJSoftware` module
+requires an explicit `qrc:/` import root on Qt 6.4. Numeric font
+typographic metrics are applied only when Qt exposes the optional
+`preferTypoLineMetrics` property (Qt 6.8 or newer). Linux USB mount/eject operations
 set interactive authorization on the D-Bus message itself, an API available
 in Qt 6.4, rather than requiring a newer interface convenience method.
 The waveform raster worker uses
@@ -50,16 +53,27 @@ Ubuntu 24.04 dependencies:
 sudo apt update
 sudo apt install -y \
   build-essential cmake curl ninja-build ccache pkg-config \
-  qt6-base-dev qt6-declarative-dev \
+  qt6-base-dev qt6-declarative-dev libqt6sql6-sqlite \
+  qml6-module-qtqml qml6-module-qtqml-models \
   qml6-module-qtqml-workerscript qml6-module-qtquick \
   qml6-module-qtquick-controls qml6-module-qtquick-layouts \
-  qml6-module-qtquick-window \
+  qml6-module-qtquick-templates qml6-module-qtquick-window \
   libasound2-dev libjack-jackd2-dev libusb-1.0-0-dev \
   libtag1-dev librubberband-dev libsqlcipher-dev libfftw3-dev \
   libfontconfig1-dev libfreetype6-dev libgl1-mesa-dev \
   imagemagick libx11-dev libxcomposite-dev libxcursor-dev libxext-dev librsvg2-bin \
   libxinerama-dev libxrandr-dev libxrender-dev libxkbcommon-x11-dev
 ```
+
+Qt's development packages do not install every runtime plugin when using
+`--no-install-recommends`, as ARM64 CI does. Install the explicit QML modules
+above, including QtQuick.Templates (required by Controls) and QtQml.Models,
+along with `libqt6sql6-sqlite` for the QSQLITE driver used by the database-worker
+tests. Linking Qt SQL or SQLCipher alone does not supply that driver. These
+packages retain Ubuntu 24.04's system Qt 6.4.2 baseline.
+The application explicitly includes the embedded `qrc:/` module import root.
+The optional Qt 6.8 typographic font metrics are applied only when available,
+so older Qt versions can still load the deck display.
 
 Ubuntu does not provide the required `libkeyfinder-dev` package on the CI
 images. The pinned `libkeyfinder` 2.2.8 source is built against FFTW3 with:

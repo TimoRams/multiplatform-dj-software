@@ -33,6 +33,14 @@ $stageFiles = [System.Collections.Generic.Dictionary[string, string]]::new(
 )
 $pending = [System.Collections.Generic.Queue[string]]::new()
 $visited = @{}
+$crtDirectories = @()
+if ($env:VCToolsRedistDir) {
+    $x64Redist = Join-Path $env:VCToolsRedistDir 'x64'
+    if (Test-Path $x64Redist -PathType Container) {
+        $crtDirectories = @(Get-ChildItem -Path $x64Redist -Directory -Filter 'Microsoft.VC*.CRT' |
+            Select-Object -ExpandProperty FullName)
+    }
+}
 
 function Add-PeFilesToQueue {
     foreach ($file in (Get-ChildItem -Path $stage -Recurse -File)) {
@@ -69,7 +77,14 @@ function Add-DependencyToStage([string]$Name, [string]$FromPath) {
         return $true
     }
 
-    foreach ($sourceDirectory in @($VcpkgBin, $QtBin)) {
+    $lowerName = $Name.ToLowerInvariant()
+    $requiresAppLocalRuntime = $lowerName -match '^(vcruntime|msvcp|concrt).+\.dll$'
+    $sourceDirectories = @($VcpkgBin, $QtBin)
+    if ($requiresAppLocalRuntime) {
+        # windeployqt may ship only vc_redist.x64.exe, not app-local CRT DLLs.
+        $sourceDirectories += $crtDirectories
+    }
+    foreach ($sourceDirectory in $sourceDirectories) {
         $source = Join-Path $sourceDirectory $Name
         if (Test-Path $source -PathType Leaf) {
             $destination = Join-Path $stage $Name
@@ -80,13 +95,11 @@ function Add-DependencyToStage([string]$Name, [string]$FromPath) {
         }
     }
 
-    $lowerName = $Name.ToLowerInvariant()
     if ($lowerName.StartsWith('api-ms-win-') -or
         $lowerName.StartsWith('ext-ms-win-')) {
         return $true
     }
 
-    $requiresAppLocalRuntime = $lowerName -match '^(vcruntime|msvcp|concrt).+\.dll$'
     $systemDll = Join-Path $env:SystemRoot "System32\$Name"
     if (-not $requiresAppLocalRuntime -and (Test-Path $systemDll -PathType Leaf)) {
         return $true

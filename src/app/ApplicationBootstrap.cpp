@@ -410,6 +410,7 @@ int runApplication(int argc, char *argv[])
     appConfig.init(settingsManager.getConfigDirectoryPath());
     logStartupStep("AppConfig init done");
     QQmlApplicationEngine engine;
+    engine.addImportPath(QStringLiteral("qrc:/"));
 
     ApplicationRuntime runtime;
     runtime.engine = &engine;

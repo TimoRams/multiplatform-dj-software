@@ -1064,6 +1064,11 @@ bool appOverlaysRuntimeTests(const std::string& source)
     context.setContextProperty(QStringLiteral("libraryDb"), libraryDb.get());
     QQmlComponent component(&engine);
     component.setData(QByteArray::fromStdString(source), QUrl());
+    // Qt 6.4 createWithInitialProperties dereferences its creator if loading failed.
+    if (!require(component.isReady(), "AppOverlays QML component loads")) {
+        std::cerr << component.errorString().toStdString() << '\n';
+        return false;
+    }
     const QVariantMap initialProperties {
         {QStringLiteral("appWindow"), QVariant::fromValue(appWindow.get())},
         {QStringLiteral("mainLayout"), QVariant::fromValue(mainLayout.get())}

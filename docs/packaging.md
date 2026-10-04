@@ -88,8 +88,13 @@ Windows uses MSVC 2022, Qt's `win64_msvc2022_64` package and the pinned vcpkg
 manifest. `scripts/ci/package-windows.ps1` runs `windeployqt` with `src/qml`,
 then follows `dumpbin /dependents` for every staged PE image, including Qt
 platform and QML plugin DLLs. It copies only referenced DLLs from the vcpkg or
-Qt runtime directories and fails on an unresolved non-system dependency or a
-non-x64 PE image. It does not copy the entire vcpkg `bin` directory.
+Qt runtime directories. Referenced MSVC runtime DLLs are also resolved from
+the active toolchain's `VCToolsRedistDir/x64/Microsoft.VC*.CRT` directories,
+since `windeployqt` may copy only the redistributable installer. Those DLLs
+are bundled app-locally and undergo the same dependency and x64 checks;
+an installed runner runtime is not accepted as a substitute. Unresolved
+non-system dependencies and non-x64 PE images fail packaging. The script
+does not copy the entire vcpkg `bin` directory.
 
 The completed ZIP is extracted into a clean temporary directory and its
 `BrockDJ.exe --ci-smoke-test` must pass with Qt/developer paths removed from

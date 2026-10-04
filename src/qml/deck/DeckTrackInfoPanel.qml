@@ -325,7 +325,7 @@ Item {
                         font.pixelSize: Math.max(root.valuePx(24, 14), Math.min(root.valuePx(72, 40), parent.width / 14))
                         font.family: UiTheme.numericFontFamily
                         font.weight: Font.Medium
-                        font.preferTypoLineMetrics: UiTheme.numericPreferTypoMetrics
+                        Component.onCompleted: UiTheme.applyNumericFontMetrics(this)
                         horizontalAlignment: Text.AlignLeft
                     }
                     Item {
@@ -352,7 +352,7 @@ Item {
                                 font.pixelSize: Math.max(root.valuePx(24, 14), Math.min(root.valuePx(72, 40), timeMain.width / 3.7))
                                 font.family: UiTheme.numericFontFamily
                                 font.weight: Font.Medium
-                                font.preferTypoLineMetrics: UiTheme.numericPreferTypoMetrics
+                                Component.onCompleted: UiTheme.applyNumericFontMetrics(this)
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignBottom
                             }
@@ -382,7 +382,7 @@ Item {
                                 font.pixelSize: timeMillis.digitPx
                                 font.family: UiTheme.numericFontFamily
                                 font.weight: Font.Medium
-                                font.preferTypoLineMetrics: UiTheme.numericPreferTypoMetrics
+                                Component.onCompleted: UiTheme.applyNumericFontMetrics(this)
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignBottom
                             }
@@ -437,7 +437,7 @@ Item {
                     font.pixelSize: Math.max(root.valuePx(20, 12), Math.min(root.valuePx(49, 28), parent.width / 3.8))
                     font.family: UiTheme.numericFontFamily
                     font.weight: Font.Medium
-                    font.preferTypoLineMetrics: UiTheme.numericPreferTypoMetrics
+                    Component.onCompleted: UiTheme.applyNumericFontMetrics(this)
                     horizontalAlignment: Text.AlignRight
                     elide: Text.ElideLeft
                 }
@@ -493,7 +493,7 @@ Item {
                     font.pixelSize: Math.max(root.valuePx(20, 12), Math.min(root.valuePx(57, 32), width / 3.4))
                     font.family: UiTheme.numericFontFamily
                     font.weight: Font.Medium
-                    font.preferTypoLineMetrics: UiTheme.numericPreferTypoMetrics
+                    Component.onCompleted: UiTheme.applyNumericFontMetrics(this)
                     elide: Text.ElideRight
                 }
             }

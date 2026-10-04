@@ -10,6 +10,14 @@ QtObject {
 
     function px(value) { return Math.round(value * scale) }
 
+    function applyNumericFontMetrics(textItem) {
+        // This optional font property was introduced in Qt 6.8.
+        if ("preferTypoLineMetrics" in textItem.font)
+            textItem.font.preferTypoLineMetrics = Qt.binding(function() {
+                return UiTheme.numericPreferTypoMetrics
+            })
+    }
+
     readonly property int space1: px(2)
     readonly property int space2: px(4)
     readonly property int space3: px(6)
