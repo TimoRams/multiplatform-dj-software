@@ -243,6 +243,11 @@ void configureLinuxVulkanBackend(bool& useVulkan,
 #endif
 }
 
+void configureEmbeddedQmlEngine(QQmlEngine& engine)
+{
+    engine.addImportPath(QStringLiteral("qrc:/"));
+}
+
 int runApplication(int argc, char *argv[])
 {
     bool startupCloseSmoke = false;
@@ -410,7 +415,7 @@ int runApplication(int argc, char *argv[])
     appConfig.init(settingsManager.getConfigDirectoryPath());
     logStartupStep("AppConfig init done");
     QQmlApplicationEngine engine;
-    engine.addImportPath(QStringLiteral("qrc:/"));
+    configureEmbeddedQmlEngine(engine);
 
     ApplicationRuntime runtime;
     runtime.engine = &engine;

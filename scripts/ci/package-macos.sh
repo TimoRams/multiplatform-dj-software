@@ -30,6 +30,11 @@ qt_libs="$("$qmake" -query QT_INSTALL_LIBS)"
     echo "Qt SQLite source plugin was not found" >&2
     exit 1
 }
+offscreen_source="$qt_plugins/platforms/libqoffscreen.dylib"
+[[ -f "$offscreen_source" ]] || {
+    echo "Qt offscreen source plugin was not found: $offscreen_source" >&2
+    exit 1
+}
 
 # macdeployqt deploys every SQL driver by default, including unrelated vendor
 # SDKs. Give only the deployment tool a private Qt plugin view; never alter Qt.
@@ -54,8 +59,19 @@ mkdir -p "$app/Contents/Frameworks"
 dylibbundler -of -b -x "$binary" \
     -d "$app/Contents/Frameworks" \
     -p '@executable_path/../Frameworks/'
+mkdir -p "$app/Contents/PlugIns/platforms"
+offscreen_plugin="$app/Contents/PlugIns/platforms/libqoffscreen.dylib"
+cp "$offscreen_source" "$offscreen_plugin"
+# macdeployqt deliberately selects only Cocoa; explicitly rewrite the additional
+# plugin's framework dependencies before the common closure/signature checks.
 "$deployment_stage/bin/macdeployqt" "$app" -qmldir="$repo_root/src/qml" \
-    -always-overwrite -verbose=2
+    -executable="$offscreen_plugin" -always-overwrite -verbose=2
+for platform_plugin in libqcocoa.dylib libqoffscreen.dylib; do
+    [[ -f "$app/Contents/PlugIns/platforms/$platform_plugin" ]] || {
+        echo "required macOS platform plugin is missing: $platform_plugin" >&2
+        exit 1
+    }
+done
 
 actual_archs="$(lipo -archs "$binary")"
 if [[ " $actual_archs " != *" $expected_arch "* ]]; then

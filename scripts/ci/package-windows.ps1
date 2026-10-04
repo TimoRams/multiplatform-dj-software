@@ -28,6 +28,13 @@ if (-not (Test-Path $windeployqt)) {
 & $windeployqt --release --qmldir $QmlDir --compiler-runtime --no-translations $stagedExe
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with exit code $LASTEXITCODE" }
 
+# CRT DLLs are deployed app-locally below; the redistributable installer is not
+# part of the application's PE runtime closure (its bootstrap can be x86).
+$runtimeInstaller = Join-Path $stage 'vc_redist.x64.exe'
+if (Test-Path $runtimeInstaller -PathType Leaf) {
+    Remove-Item -LiteralPath $runtimeInstaller -Force
+}
+
 $stageFiles = [System.Collections.Generic.Dictionary[string, string]]::new(
     [System.StringComparer]::OrdinalIgnoreCase
 )

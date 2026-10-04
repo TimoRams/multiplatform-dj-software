@@ -71,7 +71,10 @@ above, including QtQuick.Templates (required by Controls) and QtQml.Models,
 along with `libqt6sql6-sqlite` for the QSQLITE driver used by the database-worker
 tests. Linking Qt SQL or SQLCipher alone does not supply that driver. These
 packages retain Ubuntu 24.04's system Qt 6.4.2 baseline.
-The application explicitly includes the embedded `qrc:/` module import root.
+The application and CI smoke engine share initialization of the embedded
+`qrc:/` module import root. App-enabled builds register `ci_runtime_smoke`
+with CTest to exercise the complete `--ci-smoke-test` entrypoint, including
+its QML/database preflight and both isolated window startup/close paths.
 The optional Qt 6.8 typographic font metrics are applied only when available,
 so older Qt versions can still load the deck display.
 

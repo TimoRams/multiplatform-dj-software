@@ -81,6 +81,11 @@ credentials without changing the build/package separation.
 The isolated SQL-driver view avoids deploying unused PostgreSQL, ODBC and
 Mimer plugins linked to vendor SDKs absent from the runner. It does not remove
 SQLite or SQLCipher, and does not install those unrelated database servers.
+`macdeployqt` normally deploys only the Cocoa platform plugin. The script also
+copies Qt's Offscreen plugin and supplies it as an additional executable to
+`macdeployqt` so its framework references are rewritten. Both plugins are
+required before the common architecture, dependency and signature checks.
+The extracted ZIP smoke uses that bundled Offscreen plugin, not the runner's.
 
 ## Windows ZIP
 
@@ -95,6 +100,9 @@ are bundled app-locally and undergo the same dependency and x64 checks;
 an installed runner runtime is not accepted as a substitute. Unresolved
 non-system dependencies and non-x64 PE images fail packaging. The script
 does not copy the entire vcpkg `bin` directory.
+The unused `vc_redist.x64.exe` installer is removed from staging before PE
+inspection; its bootstrap architecture is not the runtime DLL architecture.
+No application executable or DLL is excluded from the x64 checks.
 
 The completed ZIP is extracted into a clean temporary directory and its
 `BrockDJ.exe --ci-smoke-test` must pass with Qt/developer paths removed from

@@ -147,12 +147,15 @@ int runCiSmokeTest(int argc, char* argv[])
         return fail(QStringLiteral("embedded controller mapping resource is missing"));
 
     QQmlEngine qmlEngine;
+    configureEmbeddedQmlEngine(qmlEngine);
     QQmlComponent component(&qmlEngine, QUrl(QStringLiteral("qrc%1").arg(qmlResource)));
     while (component.isLoading())
         QCoreApplication::processEvents();
     if (component.isError())
-        return fail(QStringLiteral("main QML failed to load:\n%1")
-                        .arg(component.errorString()));
+        return fail(QStringLiteral("main QML failed to load (Qt %1; import paths: %2):\n%3")
+                        .arg(QString::fromLatin1(qVersion()),
+                             qmlEngine.importPathList().join(QStringLiteral(", ")),
+                             component.errorString()));
 
     QTemporaryDir temporaryDirectory;
     if (!temporaryDirectory.isValid())

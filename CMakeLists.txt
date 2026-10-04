@@ -524,6 +524,8 @@ include(CTest)
 if(BUILD_TESTING)
 
 if(NOT BROCKDJ_TESTS_ONLY)
+    add_test(NAME ci_runtime_smoke COMMAND BrockDJ --ci-smoke-test)
+    set_tests_properties(ci_runtime_smoke PROPERTIES TIMEOUT 70)
     add_test(NAME startup_close_smoke COMMAND BrockDJ --ci-startup-smoke-test)
     set_tests_properties(startup_close_smoke PROPERTIES TIMEOUT 40)
     add_test(NAME startup_early_close_smoke COMMAND BrockDJ --ci-startup-early-close-test)
