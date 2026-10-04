@@ -91,7 +91,12 @@ The extracted ZIP smoke uses that bundled Offscreen plugin, not the runner's.
 
 Windows uses MSVC 2022, Qt's `win64_msvc2022_64` package and the pinned vcpkg
 manifest. `scripts/ci/package-windows.ps1` runs `windeployqt` with `src/qml`,
-then follows `dumpbin /dependents` for every staged PE image, including Qt
+excluding the SQL-driver category and copying only the required QSQLITE driver
+from the same Qt installation. Unused Mimer, ODBC and PostgreSQL drivers and
+their vendor SDK dependencies are not packaged. Offscreen is explicitly
+included alongside the Windows platform plugin for the extracted ZIP smoke;
+all three required plugins are checked before dependency inspection.
+The script then follows `dumpbin /dependents` for every staged PE image, including Qt
 platform and QML plugin DLLs. It copies only referenced DLLs from the vcpkg or
 Qt runtime directories. Referenced MSVC runtime DLLs are also resolved from
 the active toolchain's `VCToolsRedistDir/x64/Microsoft.VC*.CRT` directories,

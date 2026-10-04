@@ -25,8 +25,33 @@ $windeployqt = Join-Path $env:QT_ROOT_DIR 'bin\windeployqt.exe'
 if (-not (Test-Path $windeployqt)) {
     $windeployqt = (Get-Command windeployqt.exe -ErrorAction Stop).Source
 }
-& $windeployqt --release --qmldir $QmlDir --compiler-runtime --no-translations $stagedExe
+$sqliteSource = Join-Path $env:QT_ROOT_DIR 'plugins\sqldrivers\qsqlite.dll'
+$offscreenSource = Join-Path $env:QT_ROOT_DIR 'plugins\platforms\qoffscreen.dll'
+foreach ($requiredPlugin in @($sqliteSource, $offscreenSource)) {
+    if (-not (Test-Path $requiredPlugin -PathType Leaf)) {
+        throw "required Qt runtime plugin was not found: $requiredPlugin"
+    }
+}
+
+# Only SQLite is used by BrockDJ. Do not pull unrelated vendor SDKs into the
+# package; explicitly include the headless platform used by the ZIP smoke.
+& $windeployqt --release --qmldir $QmlDir --compiler-runtime --no-translations `
+    --verbose 1 --skip-plugin-types sqldrivers --include-plugins qoffscreen $stagedExe
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with exit code $LASTEXITCODE" }
+
+$sqlDriverDirectory = Join-Path $stage 'sqldrivers'
+New-Item -ItemType Directory -Force $sqlDriverDirectory | Out-Null
+Copy-Item -LiteralPath $sqliteSource -Destination (Join-Path $sqlDriverDirectory 'qsqlite.dll')
+foreach ($driver in (Get-ChildItem -LiteralPath $sqlDriverDirectory -File -Filter '*.dll')) {
+    if ($driver.Name -ne 'qsqlite.dll') {
+        throw "unexpected SQL driver in Windows stage: $($driver.FullName)"
+    }
+}
+foreach ($plugin in @('sqldrivers\qsqlite.dll', 'platforms\qwindows.dll', 'platforms\qoffscreen.dll')) {
+    if (-not (Test-Path (Join-Path $stage $plugin) -PathType Leaf)) {
+        throw "required Qt runtime plugin is missing from the Windows stage: $plugin"
+    }
+}
 
 # CRT DLLs are deployed app-locally below; the redistributable installer is not
 # part of the application's PE runtime closure (its bootstrap can be x86).
