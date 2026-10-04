@@ -59,10 +59,14 @@ GnuTLS and its other non-allowlisted dependencies still have to be bundled.
 
 CMake creates `BrockDJ.app` directly for both architectures. The package job:
 
-1. runs `macdeployqt` with the repository QML source directory;
-2. copies and rewrites non-Qt Homebrew dependencies with `dylibbundler`;
-3. rejects remaining `/opt/homebrew`, `/usr/local/Cellar`, `/usr/local/opt` or
-   runner-user references from Mach-O load commands;
+1. copies and rewrites non-Qt Homebrew dependencies with `dylibbundler`,
+   overwriting individual libraries rather than deleting `Frameworks`;
+2. runs `macdeployqt` with the repository QML source directory and an isolated
+   plugin view containing only QSQLITE in the SQL-driver category; other
+   plugin categories and the installed Qt tree remain unchanged;
+3. resolves every bundled Mach-O dependency through its loader/executable
+   paths and runpaths, rejecting missing or external non-system libraries
+   (including remaining Homebrew/runner references);
 4. verifies the requested architecture on the app and every bundled Mach-O
    file using `lipo`;
 5. applies an ad-hoc recursive signature and verifies it with `codesign`;
@@ -73,6 +77,10 @@ CMake creates `BrockDJ.app` directly for both architectures. The package job:
 Ad-hoc signing makes the bundle structurally verifiable but is not Apple
 notarization. A future public release can add Developer ID signing and notary
 credentials without changing the build/package separation.
+
+The isolated SQL-driver view avoids deploying unused PostgreSQL, ODBC and
+Mimer plugins linked to vendor SDKs absent from the runner. It does not remove
+SQLite or SQLCipher, and does not install those unrelated database servers.
 
 ## Windows ZIP
 

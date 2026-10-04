@@ -35,7 +35,10 @@ main-branch pushes, version tags and manual dispatches.
 
 Qt 6.4 remains supported. Explicit Vulkan pipeline-cache load/save files are
 enabled only with Qt 6.5 or newer; Qt 6.4 retains the same Vulkan rendering
-configuration without those optional APIs. The waveform raster worker uses
+configuration without those optional APIs. Linux USB mount/eject operations
+set interactive authorization on the D-Bus message itself, an API available
+in Qt 6.4, rather than requiring a newer interface convenience method.
+The waveform raster worker uses
 `std::thread` with explicit stop/wake/join so it does not require Apple's
 libc++ to provide `std::jthread` or `std::stop_token`.
 

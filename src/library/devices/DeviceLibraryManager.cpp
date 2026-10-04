@@ -15,6 +15,7 @@
 #include <QDBusConnection>
 #include <QDBusError>
 #include <QDBusInterface>
+#include <QDBusMessage>
 #include <QDBusObjectPath>
 #include <QDBusPendingCallWatcher>
 #include <QDBusPendingReply>
@@ -49,6 +50,17 @@ constexpr auto kObjectManagerInterface = "org.freedesktop.DBus.ObjectManager";
 constexpr auto kBlockInterface = "org.freedesktop.UDisks2.Block";
 constexpr auto kFilesystemInterface = "org.freedesktop.UDisks2.Filesystem";
 constexpr auto kDriveInterface = "org.freedesktop.UDisks2.Drive";
+
+QDBusPendingCall deviceOperationCall(const QString& path, const char* interface,
+                                    const QString& method)
+{
+    auto message = QDBusMessage::createMethodCall(
+        QString::fromLatin1(kUDisksService), path,
+        QString::fromLatin1(interface), method);
+    message.setArguments({QVariantMap {}});
+    message.setInteractiveAuthorizationAllowed(true);
+    return QDBusConnection::systemBus().asyncCall(message);
+}
 
 QString firstMountPoint(const QVariant& value)
 {
@@ -728,13 +740,9 @@ void DeviceLibraryManager::mountDevice(const QString& deviceId)
     setStatusMessage(found->status);
     publishDevices();
 
-    QDBusInterface fileSystem(QString::fromLatin1(kUDisksService),
-                              found->systemObjectPath,
-                              QString::fromLatin1(kFilesystemInterface),
-                              QDBusConnection::systemBus());
-    fileSystem.setInteractiveAuthorizationAllowed(true);
     auto* watcher = new QDBusPendingCallWatcher(
-        fileSystem.asyncCall(QStringLiteral("Mount"), QVariantMap {}), this);
+        deviceOperationCall(found->systemObjectPath, kFilesystemInterface,
+                            QStringLiteral("Mount")), this);
     connect(watcher, &QDBusPendingCallWatcher::finished, this,
             [this, watcher, deviceId](QDBusPendingCallWatcher*) {
         const QDBusPendingReply<QString> reply = *watcher;
@@ -810,12 +818,9 @@ void DeviceLibraryManager::continueEject(const std::shared_ptr<EjectOperation>& 
 #if defined(BROCKDJ_HAS_QT_DBUS)
     if (!operation->fileSystemObjects.isEmpty()) {
         const QString object = operation->fileSystemObjects.takeFirst();
-        QDBusInterface fileSystem(QString::fromLatin1(kUDisksService), object,
-                                  QString::fromLatin1(kFilesystemInterface),
-                                  QDBusConnection::systemBus());
-        fileSystem.setInteractiveAuthorizationAllowed(true);
         auto* watcher = new QDBusPendingCallWatcher(
-            fileSystem.asyncCall(QStringLiteral("Unmount"), QVariantMap {}), this);
+            deviceOperationCall(object, kFilesystemInterface,
+                                QStringLiteral("Unmount")), this);
         connect(watcher, &QDBusPendingCallWatcher::finished, this,
                 [this, watcher, operation](QDBusPendingCallWatcher*) {
             const QDBusPendingReply<> reply = *watcher;
@@ -841,13 +846,8 @@ void DeviceLibraryManager::continueEject(const std::shared_ptr<EjectOperation>& 
 
     const QString method = operation->canPowerOff ? QStringLiteral("PowerOff")
                                                    : QStringLiteral("Eject");
-    QDBusInterface drive(QString::fromLatin1(kUDisksService),
-                         operation->driveObjectPath,
-                         QString::fromLatin1(kDriveInterface),
-                         QDBusConnection::systemBus());
-    drive.setInteractiveAuthorizationAllowed(true);
     auto* watcher = new QDBusPendingCallWatcher(
-        drive.asyncCall(method, QVariantMap {}), this);
+        deviceOperationCall(operation->driveObjectPath, kDriveInterface, method), this);
     connect(watcher, &QDBusPendingCallWatcher::finished, this,
             [this, watcher, operation](QDBusPendingCallWatcher*) {
         const QDBusPendingReply<> reply = *watcher;

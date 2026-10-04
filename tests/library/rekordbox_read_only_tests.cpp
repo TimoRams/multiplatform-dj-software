@@ -14,6 +14,14 @@
 #include <algorithm>
 #include <cstring>
 #include <iostream>
+#include <string>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #ifdef BROCKDJ_HAVE_SQLCIPHER
 #include <sqlite3.h>
@@ -30,6 +38,22 @@ bool require(bool value, const char* message)
     if (!value)
         std::cerr << "FAIL: " << message << '\n';
     return value;
+}
+
+bool createFileSymlink(const QString& targetPath, const QString& linkPath)
+{
+#ifdef Q_OS_WIN
+    const std::wstring target = QDir::toNativeSeparators(targetPath).toStdWString();
+    const std::wstring link = QDir::toNativeSeparators(linkPath).toStdWString();
+    if (::CreateSymbolicLinkW(link.c_str(), target.c_str(),
+                              SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0)
+        return true;
+    std::cerr << "CreateSymbolicLinkW failed with Windows error "
+              << ::GetLastError() << '\n';
+    return false;
+#else
+    return QFile::link(targetPath, linkPath);
+#endif
 }
 
 void putLe16(QByteArray& bytes, qsizetype offset, quint16 value)
@@ -545,9 +569,12 @@ int main(int argc, char** argv)
                   "path traversal rejected");
     const QString outsidePath = temp.path() + QStringLiteral("/outside.mp3");
     saveFile(outsidePath, QByteArray("outside"));
-    QFile::link(outsidePath, mount + QStringLiteral("/Contents/Test/escape.mp3"));
-    ok &= require(rekordbox::DeviceSource::resolveContainedPath(
-                      mount, QStringLiteral("Contents/Test/escape.mp3")).isEmpty(),
+    const QString escapePath = mount + QStringLiteral("/Contents/Test/escape.mp3");
+    const bool escapeLinkCreated = createFileSymlink(outsidePath, escapePath);
+    ok &= require(escapeLinkCreated, "create file symlink escape fixture");
+    ok &= require(escapeLinkCreated
+                      && rekordbox::DeviceSource::resolveContainedPath(
+                             mount, QStringLiteral("Contents/Test/escape.mp3")).isEmpty(),
                   "symlink escape rejected");
 
     QByteArray invalidPdb = pdb;

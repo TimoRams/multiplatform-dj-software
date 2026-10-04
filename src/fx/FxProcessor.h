@@ -228,7 +228,7 @@ private:
     // ── Stretch (granular freeze) ─────────────────────────────────────────────
     static constexpr int kStretchBuf = 65536; // ~1.37 s @ 48 kHz — avoids rapid wrap-click
     struct StretchState {
-        float  buf[2][kStretchBuf] = {};
+        std::array<std::vector<float>, 2> buf;
         int    writePos = 0;
         double readPos  = 0.0;
     };
@@ -238,7 +238,7 @@ private:
     // ── Roll / Slip Roll ──────────────────────────────────────────────────────
     static constexpr int kRollBuf = 65536;
     struct RollState {
-        float  buf[2][kRollBuf] = {};
+        std::array<std::vector<float>, 2> buf;
         int    writePos    = 0;
         int    loopStart   = 0;
         int    loopLen     = 0;
@@ -347,3 +347,6 @@ private:
                    juce::AudioBuffer<float>& wet, int start, int n);
     juce::AudioBuffer<float> m_wetScratch;
 };
+
+static_assert(sizeof(FxProcessor) < (64U << 10),
+              "Large FX sample buffers must not be embedded in stack-owned processors");

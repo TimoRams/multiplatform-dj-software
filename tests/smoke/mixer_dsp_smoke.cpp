@@ -177,6 +177,8 @@ void testFxSwitchingAtBlockBoundaries()
 
     int block = 0;
     for (int pass = 0; pass < 3; ++pass) {
+        if (pass != 0)
+            fx->prepare(pass == 1 ? 44100.0 : 48000.0, 1024, 2);
         for (int rawType = static_cast<int>(EffectType::None);
              rawType <= static_cast<int>(EffectType::RollOut); ++rawType) {
             const auto type = static_cast<EffectType>(rawType);

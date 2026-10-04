@@ -141,6 +141,7 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} --parallel 2
 
       - name: Test
+        id: ctest
         run: ctest --preset ${{ matrix.preset }}
 
       - name: Validate architecture and headless startup
@@ -161,6 +162,14 @@ jobs:
           mkdir -p dist
           ./scripts/ci/package-appimage.sh \
             "${{ matrix.build_dir }}/bin/BrockDJ" "dist/${{ matrix.output }}"
+
+      - name: Upload failed Linux test diagnostics
+        if: ${{ failure() && steps.ctest.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-diagnostics-${{ matrix.artifact }}
+          path: ${{ matrix.build_dir }}/Testing/Temporary/*.log
+          if-no-files-found: error
 
       - name: Upload Linux package
         if: env.PACKAGE_ARTIFACTS == 'true'
@@ -245,6 +254,7 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} --parallel 2
 
       - name: Test
+        id: ctest
         run: ctest --preset ${{ matrix.preset }}
 
       - name: Validate architecture and headless startup
@@ -266,6 +276,14 @@ jobs:
           ./scripts/ci/package-macos.sh \
             "${{ matrix.build_dir }}/bin/BrockDJ.app" \
             "${{ matrix.package_arch }}" "dist/${{ matrix.output }}"
+
+      - name: Upload failed macOS test diagnostics
+        if: ${{ failure() && steps.ctest.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-diagnostics-${{ matrix.artifact }}
+          path: ${{ matrix.build_dir }}/Testing/Temporary/*.log
+          if-no-files-found: error
 
       - name: Upload macOS package
         if: env.PACKAGE_ARTIFACTS == 'true'
@@ -384,6 +402,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "CMake build failed with exit code $LASTEXITCODE" }
 
       - name: Test
+        id: ctest
         shell: pwsh
         run: |
           ctest --preset ci-windows-x64
@@ -415,6 +434,14 @@ jobs:
             -QmlDir src/qml `
             -Output dist/BrockDJ-Windows-x64.zip
           if ($LASTEXITCODE -ne 0) { throw "Windows packaging failed with exit code $LASTEXITCODE" }
+
+      - name: Upload failed Windows test diagnostics
+        if: ${{ failure() && steps.ctest.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-diagnostics-BrockDJ-windows-x86_64
+          path: build-ci-windows-x64/Testing/Temporary/*.log
+          if-no-files-found: error
 
       - name: Upload Windows package
         if: env.PACKAGE_ARTIFACTS == 'true'

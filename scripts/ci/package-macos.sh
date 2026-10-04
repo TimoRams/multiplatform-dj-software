@@ -21,11 +21,41 @@ fi
 [[ -x "$macdeployqt" ]] || { echo "macdeployqt was not found" >&2; exit 1; }
 command -v dylibbundler >/dev/null || { echo "dylibbundler was not found" >&2; exit 1; }
 
-"$macdeployqt" "$app" -qmldir="$repo_root/src/qml" -always-overwrite -verbose=2
+qmake="$(dirname "$macdeployqt")/qmake"
+[[ -x "$qmake" ]] || { echo "qmake beside macdeployqt was not found" >&2; exit 1; }
+qt_prefix="$("$qmake" -query QT_INSTALL_PREFIX)"
+qt_plugins="$("$qmake" -query QT_INSTALL_PLUGINS)"
+qt_libs="$("$qmake" -query QT_INSTALL_LIBS)"
+[[ -f "$qt_plugins/sqldrivers/libqsqlite.dylib" ]] || {
+    echo "Qt SQLite source plugin was not found" >&2
+    exit 1
+}
+
+# macdeployqt deploys every SQL driver by default, including unrelated vendor
+# SDKs. Give only the deployment tool a private Qt plugin view; never alter Qt.
+deployment_stage="$(mktemp -d "${RUNNER_TEMP:-/tmp}/brockdj-macos-deploy.XXXXXX")"
+trap 'rm -r -- "$deployment_stage"' EXIT
+mkdir -p "$deployment_stage/bin" "$deployment_stage/plugins/sqldrivers"
+cp "$macdeployqt" "$deployment_stage/bin/macdeployqt"
+ln -s "$qt_libs" "$deployment_stage/lib"
+for plugin_category in "$qt_plugins"/*; do
+    [[ -d "$plugin_category" ]] || continue
+    [[ "$(basename "$plugin_category")" == sqldrivers ]] && continue
+    ln -s "$plugin_category" "$deployment_stage/plugins/$(basename "$plugin_category")"
+done
+ln -s "$qt_plugins/sqldrivers/libqsqlite.dylib" \
+    "$deployment_stage/plugins/sqldrivers/libqsqlite.dylib"
+printf '[Paths]\nPrefix=%s\nPlugins=%s\n' "$qt_prefix" "$deployment_stage/plugins" \
+    > "$deployment_stage/bin/qt.conf"
+
+# Bundle native dependencies before Qt rewrites their paths. -of overwrites
+# individual libraries, unlike -od which deletes the entire Frameworks tree.
 mkdir -p "$app/Contents/Frameworks"
-dylibbundler -od -b -x "$binary" \
+dylibbundler -of -b -x "$binary" \
     -d "$app/Contents/Frameworks" \
     -p '@executable_path/../Frameworks/'
+"$deployment_stage/bin/macdeployqt" "$app" -qmldir="$repo_root/src/qml" \
+    -always-overwrite -verbose=2
 
 actual_archs="$(lipo -archs "$binary")"
 if [[ " $actual_archs " != *" $expected_arch "* ]]; then
@@ -42,6 +72,71 @@ fi
     exit 1
 }
 
+load_rpaths() {
+    otool -arch "$expected_arch" -l "$1" | awk '
+        $1 == "cmd" && $2 == "LC_RPATH" { rpath = 1; next }
+        rpath && $1 == "path" {
+            sub(/^[[:space:]]*path /, "")
+            sub(/ \(offset [0-9]+\)$/, "")
+            print
+            rpath = 0
+        }'
+}
+
+expand_loader_path() {
+    local path="$1" loader="$2"
+    case "$path" in
+        @executable_path*) printf '%s%s\n' "$(dirname "$binary")" "${path#@executable_path}" ;;
+        @loader_path*) printf '%s%s\n' "$(dirname "$loader")" "${path#@loader_path}" ;;
+        /*) printf '%s\n' "$path" ;;
+        *) return 1 ;;
+    esac
+}
+
+binary_rpaths="$(load_rpaths "$binary")"
+app_real="$(cd "$app" && pwd -P)"
+check_dependency() {
+    local loader="$1" dependency="$2" candidate="" rpath expanded owner rpaths
+    case "$dependency" in
+        /System/Library/*|/usr/lib/*) return 0 ;; # Includes dyld's shared cache.
+        @rpath/*)
+            # dyld searches this image's runpaths, then those of its executable.
+            for owner in "$loader" "$binary"; do
+                if [[ "$owner" == "$binary" ]]; then
+                    rpaths="$binary_rpaths"
+                else
+                    rpaths="$(load_rpaths "$owner")"
+                fi
+                while IFS= read -r rpath; do
+                    [[ -n "$rpath" ]] || continue
+                    if expanded="$(expand_loader_path "$rpath" "$owner")"; then
+                        if [[ -f "$expanded/${dependency#@rpath/}" ]]; then
+                            candidate="$expanded/${dependency#@rpath/}"
+                            break
+                        fi
+                    fi
+                done <<< "$rpaths"
+                [[ -z "$candidate" ]] || break
+            done
+            ;;
+        *)
+            candidate="$(expand_loader_path "$dependency" "$loader")" || {
+                echo "unsupported Mach-O dependency: $dependency (required by $loader)" >&2
+                return 1
+            }
+            ;;
+    esac
+    if [[ ! -f "$candidate" ]]; then
+        echo "unresolved Mach-O dependency: $dependency (required by $loader)" >&2
+        return 1
+    fi
+    candidate="$(realpath "$candidate")"
+    if [[ "$candidate" != "$app_real/"* ]]; then
+        echo "dependency outside macOS bundle: $dependency -> $candidate (required by $loader)" >&2
+        return 1
+    fi
+}
+
 while IFS= read -r mach_o; do
     if ! file "$mach_o" | grep -q 'Mach-O'; then
         continue
@@ -53,11 +148,15 @@ while IFS= read -r mach_o; do
         exit 1
     fi
 
-    dependencies="$(otool -L "$mach_o")"
+    dependencies="$(otool -arch "$expected_arch" -L "$mach_o")"
     if grep -E '/opt/homebrew|/usr/local/(Cellar|opt)|/Users/runner' <<<"$dependencies"; then
         echo "external Homebrew/runner dependency remains in bundle: $mach_o" >&2
         exit 1
     fi
+    while IFS= read -r dependency; do
+        check_dependency "$mach_o" "$dependency"
+    done < <(printf '%s\n' "$dependencies" \
+        | sed '1d; s/^[[:space:]]*//; s/ (compatibility version.*$//')
 done < <(find "$app/Contents" -type f)
 
 codesign --force --deep --sign - "$app"

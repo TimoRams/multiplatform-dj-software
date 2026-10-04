@@ -195,10 +195,14 @@ void FxProcessor::prepare(double sampleRate, int maxBlockSize, int numChannels)
     // SC crush per-channel state
     m_scCrushState.bc.assign(static_cast<size_t>(numChannels), BitcrusherState{});
 
-    // Roll/Slip/Mobius/Nobius buffers are stack-allocated (fixed size), just reset positions
+    // Prepare the large loop buffers here so audio processing never allocates them.
     m_rollState   = RollState{};
+    for (auto& channelBuffer : m_rollState.buf)
+        channelBuffer.assign(kRollBuf, 0.0f);
     m_mobiusState = MobiusState{};
     m_stretchState = StretchState{};
+    for (auto& channelBuffer : m_stretchState.buf)
+        channelBuffer.assign(kStretchBuf, 0.0f);
 
 }
 
