@@ -49,22 +49,22 @@ QtObject {
 
     // Canonical design-token names. Existing aliases below remain during the
     // component migration; new UI code uses these semantic names.
-    readonly property color surface:           "#181818"
-    readonly property color surfaceRaised:     "#1c1c1c"
-    readonly property color surfaceInset:      "#141414"
-    readonly property color displayBackground: "#101114"
-    readonly property color borderSubtle:      "#262626"
-    readonly property color borderStrong:      "#3a3a3a"
+    readonly property color surface:           "#e6212730"
+    readonly property color surfaceRaised:     "#e62c3440"
+    readonly property color surfaceInset:      "#151b24"
+    readonly property color displayBackground: "#10151d"
+    readonly property color borderSubtle:      "#28313e"
+    readonly property color borderStrong:      "#465366"
     readonly property color warning:           "#e6a019"
     readonly property color error:             "#e03535"
     readonly property color play:              "#43d17b"
     readonly property color cue:               "#f2b134"
     readonly property color sync:              "#56a8ff"
 
-    // ── Flat panel surfaces (no faux-3D) ───────────────────────────────────
+    // Tinted translucency, without refraction, gloss or faux-3D.
     readonly property color panel:         surface
     readonly property color panelDeep:     surfaceInset
-    readonly property color panelInset:    "#161616"
+    readonly property color panelInset:    "#bd1a212b"
     readonly property color panelRaised:   surfaceRaised
 
     // Legacy aliases — keep call sites working with the flat palette
@@ -73,12 +73,12 @@ QtObject {
     readonly property color bg1:           panel
     readonly property color bg2:           panelRaised
     readonly property color bg3:           panelRaised
-    readonly property color bg4:           "#222222"
-    readonly property color bg5:           "#282828"
+    readonly property color bg4:           "#384657"
+    readonly property color bg5:           "#46566b"
     readonly property color bgDisplay:     displayBackground
 
     // ── Separators (soft grey, never pitch-black) ─────────────────────────
-    readonly property color separator:       "#2a2a2a"
+    readonly property color separator:       "#364253"
     readonly property color separatorSubtle: borderSubtle
     readonly property color divider:         separatorSubtle
     readonly property color dividerStrong:   separator
@@ -90,43 +90,43 @@ QtObject {
     readonly property color bezelShadow:     separatorSubtle
 
     // ── Controls ──────────────────────────────────────────────────────────
-    readonly property color border:        "#303030"
-    readonly property color borderHover:   "#454545"
-    readonly property color borderActive:  "#555555"
+    readonly property color border:        "#3b4758"
+    readonly property color borderHover:   "#61738b"
+    readonly property color borderActive:  "#83a4ce"
 
     // ── Text ──────────────────────────────────────────────────────────────
-    readonly property color textPrimary:   "#ececec"
-    readonly property color textSecondary: "#9a9a9a"
-    readonly property color textLabel:     "#5c5c5c"
-    readonly property color textDim:       "#484848"
-    readonly property color textMuted:     "#383838"
+    readonly property color textPrimary:   "#eef2f8"
+    readonly property color textSecondary: "#b0bdce"
+    readonly property color textLabel:     "#8e9db1"
+    readonly property color textDim:       "#718096"
+    readonly property color textMuted:     "#58667a"
 
     // ── Functional accents ────────────────────────────────────────────────
-    readonly property color green:       "#3acc3a"
+    readonly property color green:       "#62cf9e"
     readonly property color greenBright:  "#5dffa0"
-    readonly property color greenDim:    "#1a241a"
-    readonly property color greenGlow:   "#243828"
-    readonly property color blue:        "#5bb6ff"
-    readonly property color blueDim:     "#141820"
-    readonly property color masterBlue:  "#0080c8"
-    readonly property color orange:      "#ffaa00"
-    readonly property color orangeDim:   "#241808"
+    readonly property color greenDim:    "#243c36"
+    readonly property color greenGlow:   "#2c5144"
+    readonly property color blue:        "#89b8f5"
+    readonly property color blueDim:     "#26364e"
+    readonly property color masterBlue:  blue
+    readonly property color orange:      "#e9b16c"
+    readonly property color orangeDim:   "#3b3229"
     readonly property color red:         "#e03535"
-    readonly property color playhead:    "#f0f0f0"
+    readonly property color playhead:    "#ffffff"
 
     // ── Deck identity ─────────────────────────────────────────────────────
-    readonly property color deckA:  "#ff8c00"
-    readonly property color deckB:  "#00b8e6"
-    readonly property color deckC:  "#b855ff"
-    readonly property color deckD:  "#3de8a8"
+    readonly property color deckA:  "#e9b16c"
+    readonly property color deckB:  "#89b8f5"
+    readonly property color deckC:  "#be9bea"
+    readonly property color deckD:  "#62cfb6"
 
     // ── Knob / fader ──────────────────────────────────────────────────────
-    readonly property color knobTrack:   "#1e1e1e"
-    readonly property color knobFace:    "#181818"
-    readonly property color knobHandle:  "#c8c8c8"
-    readonly property color faderTrack:  "#161616"
-    readonly property color faderFill:   "#404040"
-    readonly property color faderCap:    "#c8c8c8"
+    readonly property color knobTrack:   "#303c4c"
+    readonly property color knobFace:    "#202935"
+    readonly property color knobHandle:  "#d3deec"
+    readonly property color faderTrack:  "#101720"
+    readonly property color faderFill:   "#7289a6"
+    readonly property color faderCap:    "#d3deec"
     readonly property real  knobArcW:    0.08
 
     // ── VU meters (shared across mixer + header for a consistent look) ──────
@@ -138,7 +138,7 @@ QtObject {
     readonly property color vuOff:   knobTrack    // unlit segment
 
     // ── Performance pads ──────────────────────────────────────────────────
-    readonly property color padEmpty:    "#161616"
+    readonly property color padEmpty:    panelInset
     readonly property color padBorder:   separatorSubtle
     readonly property color padBorderHi: separator
 
@@ -156,8 +156,8 @@ QtObject {
         switch (name) {
         case "A": return orangeDim
         case "B": return blueDim
-        case "C": return "#1a0a28"
-        case "D": return "#0a2018"
+        case "C": return "#332d43"
+        case "D": return "#243c38"
         default:  return orangeDim
         }
     }

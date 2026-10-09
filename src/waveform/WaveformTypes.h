@@ -242,14 +242,16 @@ inline WaveformPriorityScore priorityForRange(
 inline WaveformDemand makeViewportDemand(
     double playheadSec, double viewportWidth, double pixelsPerSecond,
     bool playing, bool reverse, bool scratching, std::uint8_t lodLevel,
-    std::uint64_t generation) noexcept
+    std::uint64_t generation, double playheadPosition = 0.5) noexcept
 {
     WaveformDemand demand;
     demand.playheadSec = std::max(0.0, playheadSec);
     const double visibleDuration = pixelsPerSecond > 0.0
         ? std::max(0.0, viewportWidth / pixelsPerSecond) : 0.0;
-    demand.visibleBeforeSec = visibleDuration * 0.5;
-    demand.visibleAfterSec = visibleDuration * 0.5;
+    const double position = std::isfinite(playheadPosition)
+        ? std::clamp(playheadPosition, 0.0, 1.0) : 0.5;
+    demand.visibleBeforeSec = visibleDuration * position;
+    demand.visibleAfterSec = visibleDuration * (1.0 - position);
     demand.playing = playing;
     demand.reverse = reverse;
     demand.scratching = scratching;

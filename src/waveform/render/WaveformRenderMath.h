@@ -105,10 +105,17 @@ inline double physicalPixelSnap(double logicalPosition,
     return std::round(logicalPosition * dpr) / dpr;
 }
 
-inline double viewportPhysicalPixelCenter(double logicalWidth,
-                                          double devicePixelRatio) noexcept
+inline double validatedPlayheadPosition(double position) noexcept
 {
-    return physicalPixelCenter(std::max(0.0, logicalWidth) * 0.5,
+    return std::isfinite(position) ? std::clamp(position, 0.2, 0.5) : 0.5;
+}
+
+inline double viewportPhysicalPixelCenter(double logicalWidth,
+                                          double devicePixelRatio,
+                                          double playheadPosition = 0.5) noexcept
+{
+    return physicalPixelCenter(std::max(0.0, logicalWidth)
+                                   * validatedPlayheadPosition(playheadPosition),
                                devicePixelRatio);
 }
 
@@ -116,9 +123,10 @@ inline double smoothTimelineTranslation(double width,
                                         double playheadLine,
                                         double originLine,
                                         double pixelsPerLine,
-                                        double devicePixelRatio) noexcept
+                                        double devicePixelRatio,
+                                        double playheadPosition = 0.5) noexcept
 {
-    return viewportPhysicalPixelCenter(width, devicePixelRatio)
+    return viewportPhysicalPixelCenter(width, devicePixelRatio, playheadPosition)
         - (playheadLine - originLine) * pixelsPerLine;
 }
 

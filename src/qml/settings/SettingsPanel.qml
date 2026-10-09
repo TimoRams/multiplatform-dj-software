@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
+import DJSoftware
 
 Item {
     id: settingsWindow
@@ -84,7 +85,7 @@ Item {
         Text {
             Layout.preferredWidth: 76
             text: audioRoleRow.roleDefinition.label
-            color: "#ddd"
+            color: UiTheme.textSecondary
             font.pixelSize: 12
         }
 
@@ -516,7 +517,7 @@ Item {
 
         if (!deckToApply) {
             audioApplyStatus.text = "Audio engine is still starting. Open Settings again in a moment."
-            audioApplyStatus.color = "#ffb86c"
+            audioApplyStatus.color = UiTheme.warning
             return
         }
 
@@ -525,7 +526,7 @@ Item {
             audioApplyStatus.text = deckToApply.jackServerStatus
                 ? deckToApply.jackServerStatus()
                 : "JACK server not running. Start PipeWire-JACK or jackd."
-            audioApplyStatus.color = "#ffb86c"
+            audioApplyStatus.color = UiTheme.warning
             return
         }
 
@@ -579,13 +580,13 @@ Item {
                 note = "Applied: Pre-cue uses channel pairs on the master device. Separate devices are not yet supported."
             }
             audioApplyStatus.text = note
-            audioApplyStatus.color = warningText ? "#ffb86c" : "#8fe388"
+            audioApplyStatus.color = warningText ? UiTheme.warning : UiTheme.green
         } else {
             var errText = (deckToApply && deckToApply.lastAudioDeviceError)
                 ? deckToApply.lastAudioDeviceError
                 : "Saved, but the requested device, channels, or buffer could not be applied right now."
             audioApplyStatus.text = errText
-            audioApplyStatus.color = "#ffb86c"
+            audioApplyStatus.color = UiTheme.warning
         }
     }
 
@@ -597,7 +598,7 @@ Item {
         Rectangle {
             Layout.preferredWidth: 200
             Layout.fillHeight: true
-            color: "#141414"
+            color: UiTheme.panel
 
             // Top: app / window title
             Rectangle {
@@ -606,12 +607,12 @@ Item {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 height: 48
-                color: "#0f0f0f"
+                color: UiTheme.panelInset
 
                 Text {
                     anchors.centerIn: parent
                     text: "SETTINGS"
-                    color: "#ff9900"
+                    color: UiTheme.textPrimary
                     font.pixelSize: 13
                     font.bold: true
                     font.letterSpacing: 2
@@ -624,7 +625,7 @@ Item {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 height: 1
-                color: "#2a2a2a"
+                color: UiTheme.separatorSubtle
             }
 
             // Category list
@@ -645,8 +646,8 @@ Item {
                         width: parent.width
                         height: 40
                         color: settingsWindow.selectedCategory === index
-                               ? "#2a2a2a"
-                               : containsMouse ? "#1e1e1e" : "transparent"
+                               ? UiTheme.blueDim
+                               : containsMouse ? UiTheme.panelRaised : "transparent"
                         property bool containsMouse: false
 
                         // Active indicator bar (left edge)
@@ -655,8 +656,8 @@ Item {
                             anchors.top: parent.top
                             anchors.bottom: parent.bottom
                             width: 3
-                            radius: 1
-                            color: "#ff9900"
+                            radius: 0
+                            color: UiTheme.blue
                             visible: settingsWindow.selectedCategory === index
                         }
 
@@ -669,7 +670,7 @@ Item {
                             Text {
                                 text: modelData.icon
                                 color: settingsWindow.selectedCategory === index
-                                       ? "#ff9900" : "#666"
+                                       ? UiTheme.blue : UiTheme.textLabel
                                 font.pixelSize: 14
                                 anchors.verticalCenter: parent.verticalCenter
                             }
@@ -677,7 +678,7 @@ Item {
                             Text {
                                 text: modelData.label
                                 color: settingsWindow.selectedCategory === index
-                                       ? "#f0f0f0" : "#888"
+                                       ? UiTheme.textPrimary : UiTheme.textSecondary
                                 font.pixelSize: 12
                                 font.bold: settingsWindow.selectedCategory === index
                                 anchors.verticalCenter: parent.verticalCenter
@@ -708,14 +709,14 @@ Item {
                 text: "Settings-Ordner öffnen"
 
                 background: Rectangle {
-                    color: parent.down ? "#444" : "#333"
-                    border.color: parent.hovered ? "#555" : "#3a3a3a"
-                    radius: 4
+                    color: UiTheme.buttonBg(false, parent.hovered, parent.down)
+                    border.color: parent.hovered ? UiTheme.borderHover : UiTheme.border
+                    radius: 0
                 }
 
                 contentItem: Text {
                     text: parent.text
-                    color: "#fff"
+                    color: UiTheme.textPrimary
                     font.pixelSize: 12
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
@@ -732,9 +733,9 @@ Item {
                 anchors.bottomMargin: 12
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: "Brock DJ Engine"
-                color: "#333"
+                color: UiTheme.textMuted
                 font.pixelSize: 10
-                font.family: "monospace"
+                font.family: UiTheme.numericFontFamily
             }
         }
 
@@ -742,7 +743,7 @@ Item {
         Rectangle {
             Layout.preferredWidth: 1
             Layout.fillHeight: true
-            color: "#2a2a2a"
+            color: UiTheme.separatorSubtle
         }
 
         // ── RIGHT CONTENT AREA ───────────────────────────────────────────────
@@ -775,7 +776,7 @@ Item {
 
                         Text {
                             text: "Audio Setup"
-                            color: "#f0f0f0"
+                            color: UiTheme.textPrimary
                             font.pixelSize: 18
                             font.bold: true
                         }
@@ -783,7 +784,7 @@ Item {
                         Rectangle {
                             Layout.fillWidth: true
                             height: 1
-                            color: "#2a2a2a"
+                            color: UiTheme.separatorSubtle
                         }
 
                           // Global sound API
@@ -793,7 +794,7 @@ Item {
 
                               Text {
                                   text: "Sound API"
-                                  color: "#aaa"
+                                  color: UiTheme.textLabel
                                   font.pixelSize: 12
                                   Layout.preferredWidth: 130
                               }
@@ -823,9 +824,9 @@ Item {
                               columnSpacing: 12
                               rowSpacing: 10
 
-                              Text { text: "Role"; color: "#7b7b7b"; font.pixelSize: 11 }
-                              Text { text: "Device"; color: "#7b7b7b"; font.pixelSize: 11 }
-                              Text { text: "Channels"; color: "#7b7b7b"; font.pixelSize: 11 }
+                              Text { text: "Role"; color: UiTheme.textDim; font.pixelSize: 11 }
+                              Text { text: "Device"; color: UiTheme.textDim; font.pixelSize: 11 }
+                              Text { text: "Channels"; color: UiTheme.textDim; font.pixelSize: 11 }
 
                               Repeater {
                                   id: audioRoleRepeater
@@ -841,7 +842,7 @@ Item {
 
                             Text {
                                 text: settingsWindow.isJackDeviceSelected ? "Sample Rate (JACK)" : "Sample Rate"
-                                color: "#aaa"
+                                color: UiTheme.textLabel
                                 font.pixelSize: 12
                                 Layout.preferredWidth: 130
                             }
@@ -861,7 +862,7 @@ Item {
                                              ? "JACK server (" + (settingsWindow.pendingAudioSampleRate / 1000).toFixed(1) + " kHz)"
                                              : "JACK server")
                                           : (sampleRateCombo.currentIndex >= 0 ? sampleRateCombo.displayText : "44.1 kHz")
-                                    color: "#ccc"
+                                    color: UiTheme.textSecondary
                                     font.pixelSize: 12
                                     verticalAlignment: Text.AlignVCenter
                                     leftPadding: 12
@@ -872,20 +873,20 @@ Item {
                                     width: sampleRateCombo.width
                                     contentItem: Text {
                                         text: modelData.label
-                                        color: "#ddd"
+                                        color: UiTheme.textSecondary
                                         font.pixelSize: 12
                                         elide: Text.ElideRight
                                         verticalAlignment: Text.AlignVCenter
                                     }
                                     background: Rectangle {
-                                        color: highlighted ? "#3a3a3a" : "#252525"
+                                        color: highlighted ? UiTheme.surfaceRaised : UiTheme.surfaceInset
                                     }
                                 }
 
                                 background: Rectangle {
-                                    color: "#252525"
-                                    border.color: "#3a3a3a"
-                                    radius: 4
+                                    color: UiTheme.surfaceInset
+                                    border.color: UiTheme.border
+                                    radius: 0
                                 }
                             }
                         }
@@ -897,7 +898,7 @@ Item {
 
                             Text {
                                 text: settingsWindow.isJackDeviceSelected ? "Frames / Period" : "Buffer Size"
-                                color: "#aaa"
+                                color: UiTheme.textLabel
                                 font.pixelSize: 12
                                 Layout.preferredWidth: 130
                             }
@@ -913,7 +914,7 @@ Item {
 
                                 contentItem: Text {
                                     text: bufferSizeCombo.currentIndex >= 0 ? bufferSizeCombo.displayText : "512 samples"
-                                    color: "#ccc"
+                                    color: UiTheme.textSecondary
                                     font.pixelSize: 12
                                     verticalAlignment: Text.AlignVCenter
                                     leftPadding: 12
@@ -924,20 +925,20 @@ Item {
                                     width: bufferSizeCombo.width
                                     contentItem: Text {
                                         text: modelData.label
-                                        color: "#ddd"
+                                        color: UiTheme.textSecondary
                                         font.pixelSize: 12
                                         elide: Text.ElideRight
                                         verticalAlignment: Text.AlignVCenter
                                     }
                                     background: Rectangle {
-                                        color: highlighted ? "#3a3a3a" : "#252525"
+                                        color: highlighted ? UiTheme.surfaceRaised : UiTheme.surfaceInset
                                     }
                                 }
 
                                 background: Rectangle {
-                                    color: "#252525"
-                                    border.color: "#3a3a3a"
-                                    radius: 4
+                                    color: UiTheme.surfaceInset
+                                    border.color: UiTheme.border
+                                    radius: 0
                                 }
                             }
                         }
@@ -948,7 +949,7 @@ Item {
 
                             Text {
                                 text: "Keylock Engine"
-                                color: "#aaa"
+                                color: UiTheme.textLabel
                                 font.pixelSize: 12
                                 Layout.preferredWidth: 130
                             }
@@ -968,7 +969,7 @@ Item {
 
                         Text {
                             text: "Signalsmith is the default keylock engine. The selection applies to all decks immediately; Rubber Band remains available for compatibility."
-                            color: "#7b7b7b"
+                            color: UiTheme.textDim
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
@@ -978,7 +979,7 @@ Item {
                             text: settingsWindow.isJackDeviceSelected
                                 ? "JACK sample rate follows the server. Frames/period is requested from JACK/PipeWire and the actual opened value is shown after Apply."
                                 : "Use the lowest stable buffer your device supports. On Windows, ASIO will appear here when available; on macOS and Linux this lists the active system audio backends and outputs."
-                            color: settingsWindow.isJackDeviceSelected ? "#ffb86c" : "#7b7b7b"
+                            color: settingsWindow.isJackDeviceSelected ? UiTheme.warning : UiTheme.textDim
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
@@ -996,14 +997,14 @@ Item {
                                 Layout.preferredHeight: 32
 
                                 background: Rectangle {
-                                    color: parent.down ? "#444" : "#2a2a2a"
-                                    border.color: parent.hovered ? "#5a5a5a" : "#3a3a3a"
-                                    radius: 4
+                                    color: UiTheme.buttonBg(false, parent.hovered, parent.down)
+                                    border.color: parent.hovered ? UiTheme.borderHover : UiTheme.border
+                                    radius: 0
                                 }
 
                                 contentItem: Text {
                                     text: parent.text
-                                    color: "#f0f0f0"
+                                    color: UiTheme.textPrimary
                                     font.pixelSize: 12
                                     font.bold: true
                                     horizontalAlignment: Text.AlignHCenter
@@ -1017,7 +1018,7 @@ Item {
                         Text {
                             id: audioApplyStatus
                             text: ""
-                            color: "#8fe388"
+                            color: UiTheme.green
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
@@ -1145,7 +1146,7 @@ Item {
 
                     Text {
                         text: "MIDI Controller"
-                        color: "#f0f0f0"
+                        color: UiTheme.textPrimary
                         font.pixelSize: 18
                         font.bold: true
                     }
@@ -1153,7 +1154,7 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         height: 1
-                        color: "#2a2a2a"
+                        color: UiTheme.separatorSubtle
                     }
 
                     RowLayout {
@@ -1162,7 +1163,7 @@ Item {
                         spacing: 16
                         Text {
                             text: "MIDI Output"
-                            color: "#aaa"
+                            color: UiTheme.textLabel
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
                         }
@@ -1176,7 +1177,7 @@ Item {
 
                             contentItem: Text {
                                 text: midiOutputDeviceCombo.currentIndex >= 0 ? midiOutputDeviceCombo.displayText : "No MIDI output"
-                                color: "#ccc"
+                                color: UiTheme.textSecondary
                                 font.pixelSize: 12
                                 verticalAlignment: Text.AlignVCenter
                                 leftPadding: 12
@@ -1187,19 +1188,19 @@ Item {
                                 width: midiOutputDeviceCombo.width
                                 contentItem: Text {
                                     text: model.text
-                                    color: "#ddd"
+                                    color: UiTheme.textSecondary
                                     font.pixelSize: 12
                                     elide: Text.ElideRight
                                     verticalAlignment: Text.AlignVCenter
                                 }
                                 background: Rectangle {
-                                    color: highlighted ? "#3a3a3a" : "#252525"
+                                    color: highlighted ? UiTheme.surfaceRaised : UiTheme.surfaceInset
                                 }
                             }
 
                             background: Rectangle {
-                                color: "#252525"
-                                border.color: "#3a3a3a"
+                                color: UiTheme.surfaceInset
+                                border.color: UiTheme.border
                                 radius: 0
                             }
 
@@ -1213,7 +1214,7 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         height: 1
-                        color: "#2a2a2a"
+                        color: UiTheme.separatorSubtle
                     }
 
                     RowLayout {
@@ -1221,7 +1222,7 @@ Item {
 
                         Text {
                             text: "Integrated Controller"
-                            color: "#aaa"
+                            color: UiTheme.textLabel
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
                         }
@@ -1242,7 +1243,7 @@ Item {
 
                             Text {
                                 text: controllerManager ? controllerManager.flx10Status : ""
-                                color: controllerManager && controllerManager.flx10Connected ? "#8fe388" : "#aaa"
+                                color: controllerManager && controllerManager.flx10Connected ? UiTheme.green : UiTheme.textLabel
                                 font.pixelSize: 11
                                 wrapMode: Text.WordWrap
                                 Layout.fillWidth: true
@@ -1253,7 +1254,7 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         height: 1
-                        color: "#2a2a2a"
+                        color: UiTheme.separatorSubtle
                     }
 
                     // Device Selection
@@ -1261,7 +1262,7 @@ Item {
                         spacing: 16
                         Text {
                             text: "Controller Device"
-                            color: "#aaa"
+                            color: UiTheme.textLabel
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
                         }
@@ -1275,7 +1276,7 @@ Item {
 
                             contentItem: Text {
                                 text: midiDeviceCombo.currentIndex >= 0 ? midiDeviceCombo.displayText : "No MIDI device"
-                                color: "#ccc"
+                                color: UiTheme.textSecondary
                                 font.pixelSize: 12
                                 verticalAlignment: Text.AlignVCenter
                                 leftPadding: 12
@@ -1286,19 +1287,19 @@ Item {
                                 width: midiDeviceCombo.width
                                 contentItem: Text {
                                     text: model.text
-                                    color: "#ddd"
+                                    color: UiTheme.textSecondary
                                     font.pixelSize: 12
                                     elide: Text.ElideRight
                                     verticalAlignment: Text.AlignVCenter
                                 }
                                 background: Rectangle {
-                                    color: highlighted ? "#3a3a3a" : "#252525"
+                                    color: highlighted ? UiTheme.surfaceRaised : UiTheme.surfaceInset
                                 }
                             }
                             
                             background: Rectangle {
-                                color: "#252525"
-                                border.color: "#3a3a3a"
+                                color: UiTheme.surfaceInset
+                                border.color: UiTheme.border
                                 radius: 0
                             }
                             
@@ -1314,13 +1315,13 @@ Item {
                             Layout.preferredWidth: 32
                             Layout.preferredHeight: 32
                             background: Rectangle {
-                                color: parent.down ? "#444" : "#333"
-                                border.color: parent.hovered ? "#555" : "transparent"
+                                color: UiTheme.buttonBg(false, parent.hovered, parent.down)
+                                border.color: parent.hovered ? UiTheme.borderHover : "transparent"
                                 radius: 0
                             }
                             contentItem: Text {
                                 text: parent.text
-                                color: "#fff"
+                                color: UiTheme.textPrimary
                                 font.pixelSize: 16
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -1334,14 +1335,14 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         height: 1
-                        color: "#2a2a2a"
+                        color: UiTheme.separatorSubtle
                     }
 
                     RowLayout {
                         spacing: 16
                         Text {
                             text: "Mapping File"
-                            color: "#aaa"
+                            color: UiTheme.textLabel
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
                         }
@@ -1355,7 +1356,7 @@ Item {
 
                             contentItem: Text {
                                 text: mappingCombo.currentIndex >= 0 ? mappingCombo.displayText : "No Mapping"
-                                color: "#ccc"
+                                color: UiTheme.textSecondary
                                 font.pixelSize: 12
                                 verticalAlignment: Text.AlignVCenter
                                 leftPadding: 12
@@ -1366,20 +1367,20 @@ Item {
                                 width: mappingCombo.width
                                 contentItem: Text {
                                     text: model.text
-                                    color: "#ddd"
+                                    color: UiTheme.textSecondary
                                     font.pixelSize: 12
                                     elide: Text.ElideRight
                                     verticalAlignment: Text.AlignVCenter
                                 }
                                 background: Rectangle {
-                                    color: highlighted ? "#3a3a3a" : "#252525"
+                                    color: highlighted ? UiTheme.surfaceRaised : UiTheme.surfaceInset
                                 }
                             }
 
                             background: Rectangle {
-                                color: "#252525"
-                                border.color: "#3a3a3a"
-                                radius: 4
+                                color: UiTheme.surfaceInset
+                                border.color: UiTheme.border
+                                radius: 0
                             }
 
                             onActivated: {
@@ -1397,13 +1398,13 @@ Item {
                             Layout.preferredWidth: 32
                             Layout.preferredHeight: 32
                             background: Rectangle {
-                                color: parent.down ? "#444" : "#333"
-                                border.color: parent.hovered ? "#555" : "transparent"
-                                radius: 4
+                                color: UiTheme.buttonBg(false, parent.hovered, parent.down)
+                                border.color: parent.hovered ? UiTheme.borderHover : "transparent"
+                                radius: 0
                             }
                             contentItem: Text {
                                 text: parent.text
-                                color: "#fff"
+                                color: UiTheme.textPrimary
                                 font.pixelSize: 16
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -1418,7 +1419,7 @@ Item {
                         spacing: 16
                         Text {
                             text: "LED Tests"
-                            color: "#aaa"
+                            color: UiTheme.textLabel
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
                         }
@@ -1453,7 +1454,7 @@ Item {
 
                     Text {
                         text: midiManager ? "Mapping-Ordner: " + midiManager.getMappingsDirectoryPath() : ""
-                        color: "#777"
+                        color: UiTheme.textDim
                         font.pixelSize: 11
                         elide: Text.ElideMiddle
                         Layout.fillWidth: true
@@ -1462,7 +1463,7 @@ Item {
                     Text {
                         text: "MIDI Devices: " + (midiSettingsColumn.hasMidiDevices ? midiSettingsColumn.midiDeviceList.length : 0)
                               + " | Mappings: " + midiSettingsColumn.availableMappingCount
-                        color: "#666"
+                        color: UiTheme.textMuted
                         font.pixelSize: 10
                         Layout.fillWidth: true
                     }
@@ -1476,14 +1477,14 @@ Item {
                             Layout.preferredHeight: 32
 
                             background: Rectangle {
-                                color: parent.down ? "#444" : "#333"
-                                border.color: parent.hovered ? "#555" : "transparent"
-                                radius: 4
+                                color: UiTheme.buttonBg(false, parent.hovered, parent.down)
+                                border.color: parent.hovered ? UiTheme.borderHover : "transparent"
+                                radius: 0
                             }
 
                             contentItem: Text {
                                 text: parent.text
-                                color: "#fff"
+                                color: UiTheme.textPrimary
                                 font.pixelSize: 12
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -1499,16 +1500,16 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         height: 1
-                        color: "#2a2a2a"
+                        color: UiTheme.separatorSubtle
                     }
 
                     // ── Live MIDI monitor ─────────────────────────────────────────────
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 26
-                        color: "#0d0d0d"
-                        border.color: "#1c1c1c"
-                        radius: 4
+                        color: UiTheme.surfaceInset
+                        border.color: UiTheme.border
+                        radius: 0
 
                         Row {
                             anchors.fill: parent
@@ -1519,7 +1520,7 @@ Item {
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: "MIDI IN:"
-                                color: "#444"
+                                color: UiTheme.textDim
                                 font.pixelSize: 10
                                 font.bold: true
                                 font.letterSpacing: 0.5
@@ -1528,9 +1529,9 @@ Item {
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: midiManager ? (midiManager.lastMidiEvent || "–  (bewege einen Regler oder drücke eine Taste)") : "–"
-                                color: midiManager && midiManager.lastMidiEvent ? "#7cdb9a" : "#333"
+                                color: midiManager && midiManager.lastMidiEvent ? UiTheme.green : UiTheme.textMuted
                                 font.pixelSize: 11
-                                font.family: "monospace"
+                                font.family: UiTheme.numericFontFamily
                             }
                         }
                     }
@@ -1547,14 +1548,14 @@ Item {
                             Layout.preferredHeight: 34
 
                             background: Rectangle {
-                                color: parent.down ? "#3d2200" : (parent.hovered ? "#2a1a00" : "#1e1300")
-                                border.color: parent.hovered ? "#d08000" : "#7a4800"
-                                radius: 4
+                                color: UiTheme.buttonBg(false, parent.hovered, parent.down)
+                                border.color: parent.hovered ? UiTheme.borderHover : UiTheme.border
+                                radius: 0
                             }
 
                             contentItem: Text {
                                 text: parent.text
-                                color: "#ff9900"
+                                color: UiTheme.blue
                                 font.pixelSize: 12
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
@@ -1590,7 +1591,7 @@ Item {
 
                     Text {
                         text: "Library"
-                        color: "#f0f0f0"
+                        color: UiTheme.textPrimary
                         font.pixelSize: 18
                         font.bold: true
                     }
@@ -1598,7 +1599,7 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         height: 1
-                        color: "#2a2a2a"
+                        color: UiTheme.separatorSubtle
                     }
 
                     RowLayout {
@@ -1607,7 +1608,7 @@ Item {
 
                         Text {
                             text: "Music Folder"
-                            color: "#aaa"
+                            color: UiTheme.textLabel
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
                         }
@@ -1615,32 +1616,32 @@ Item {
                         Rectangle {
                             Layout.fillWidth: true
                             height: 32
-                            color: "#252525"
-                            border.color: "#3a3a3a"
-                            radius: 4
+                            color: UiTheme.surfaceInset
+                            border.color: UiTheme.border
+                            radius: 0
 
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
                                 anchors.left: parent.left
                                 anchors.leftMargin: 12
                                 text: "~/Music"
-                                color: "#ccc"
+                                color: UiTheme.textSecondary
                                 font.pixelSize: 12
-                                font.family: "monospace"
+                                font.family: UiTheme.numericFontFamily
                             }
                         }
 
                         Rectangle {
                             width: 70
                             height: 32
-                            color: "#2a2a2a"
-                            border.color: "#444"
-                            radius: 4
+                            color: UiTheme.buttonBg(false, false, false)
+                            border.color: UiTheme.border
+                            radius: 0
 
                             Text {
                                 anchors.centerIn: parent
                                 text: "Browse"
-                                color: "#bbb"
+                                color: UiTheme.textSecondary
                                 font.pixelSize: 11
                             }
 
@@ -1670,7 +1671,7 @@ Item {
 
                         Text {
                             text: "DJ / Sync"
-                            color: "#f0f0f0"
+                            color: UiTheme.textPrimary
                             font.pixelSize: 18
                             font.bold: true
                         }
@@ -1678,13 +1679,13 @@ Item {
                         Rectangle {
                             Layout.fillWidth: true
                             height: 1
-                            color: "#2a2a2a"
+                            color: UiTheme.separatorSubtle
                         }
 
                         Text {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            color: "#cfcfcf"
+                            color: UiTheme.textSecondary
                             font.pixelSize: 12
                             text: "When the same file plays on two synced decks, waveforms may align on the beat grid but not sample-for-sample. Summing them in the mixer can cause comb filtering (thin/hollow bass). Nudge one deck, use EQ, or polarity invert (−) on one channel."
                         }
@@ -1695,7 +1696,7 @@ Item {
 
                             Text {
                                 text: "Tight Double (same-file sample align)"
-                                color: "#ddd"
+                                color: UiTheme.textPrimary
                                 font.pixelSize: 12
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
@@ -1717,7 +1718,7 @@ Item {
                         Text {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            color: "#888"
+                            color: UiTheme.textDim
                             font.pixelSize: 11
                             text: "Optional: when SYNC is on and two decks share the same file, the follower trims transport position toward the master (including keylock latency). Off by default — normal beat/bar sync is unchanged."
                         }
@@ -1728,7 +1729,7 @@ Item {
 
                             Text {
                                 text: "Waveform rendering"
-                                color: "#ddd"
+                                color: UiTheme.textPrimary
                                 font.pixelSize: 12
                                 Layout.fillWidth: true
                             }
@@ -1750,9 +1751,46 @@ Item {
                         Text {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
-                            color: "#888"
+                            color: UiTheme.textDim
                             font.pixelSize: 11
                             text: "Changes visible waveform tiles and overviews only. Audio analysis, beatgrids and playback caches are not rebuilt."
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+                            Text {
+                                text: "Playhead position"
+                                color: UiTheme.textPrimary
+                                font.pixelSize: 12
+                                Layout.fillWidth: true
+                            }
+                            ComboBox {
+                                objectName: "waveformPlayheadPositionCombo"
+                                Layout.preferredWidth: 180
+                                readonly property var positions: [0.5, 0.4, 0.33, 0.25, 0.2]
+                                model: ["Center · 50%", "40%", "33%", "25%", "Left · 20%"]
+                                currentIndex: {
+                                    var value = (typeof settingsManager !== "undefined" && settingsManager)
+                                                ? settingsManager.waveformPlayheadPosition : 0.5
+                                    var closest = 0
+                                    for (var i = 1; i < positions.length; ++i)
+                                        if (Math.abs(positions[i] - value) < Math.abs(positions[closest] - value))
+                                            closest = i
+                                    return closest
+                                }
+                                onActivated: (index) => {
+                                    if (typeof settingsManager !== "undefined" && settingsManager)
+                                        settingsManager.waveformPlayheadPosition = positions[index]
+                                }
+                            }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: UiTheme.textSecondary
+                            font.pixelSize: 11
+                            text: "Move the white playhead left to see more upcoming audio. Applies to all scrolling waveforms and is saved automatically."
                         }
                     }
                 }
@@ -1773,7 +1811,7 @@ Item {
 
                     Text {
                         text: "Legal Notices"
-                        color: "#f0f0f0"
+                        color: UiTheme.textPrimary
                         font.pixelSize: 18
                         font.bold: true
                     }
@@ -1781,13 +1819,13 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         height: 1
-                        color: "#2a2a2a"
+                        color: UiTheme.separatorSubtle
                     }
 
                     Text {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
-                        color: "#cfcfcf"
+                        color: UiTheme.textSecondary
                         font.pixelSize: 12
                         text: "This software is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-or-later)."
                     }
@@ -1795,7 +1833,7 @@ Item {
                     Text {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
-                        color: "#9f9f9f"
+                        color: UiTheme.textLabel
                         font.pixelSize: 12
                         text: "You are entitled to receive the corresponding source code under the terms of the AGPL."
                     }
@@ -1803,7 +1841,7 @@ Item {
                     Text {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
-                        color: "#9f9f9f"
+                        color: UiTheme.textLabel
                         font.pixelSize: 12
                         text: "Source repository: https://github.com/TimoRams/multiplatform-dj-software"
                     }
@@ -1811,7 +1849,7 @@ Item {
                     Text {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
-                        color: "#9f9f9f"
+                        color: UiTheme.textLabel
                         font.pixelSize: 12
                         text: "License and third-party notices are documented in the NOTICE file."
                     }
@@ -1825,14 +1863,14 @@ Item {
                             Layout.preferredHeight: 32
 
                             background: Rectangle {
-                                color: parent.down ? "#444" : "#333"
-                                border.color: parent.hovered ? "#555" : "transparent"
-                                radius: 4
+                                color: UiTheme.buttonBg(false, parent.hovered, parent.down)
+                                border.color: parent.hovered ? UiTheme.borderHover : "transparent"
+                                radius: 0
                             }
 
                             contentItem: Text {
                                 text: parent.text
-                                color: "#fff"
+                                color: UiTheme.textPrimary
                                 font.pixelSize: 12
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -1846,14 +1884,14 @@ Item {
                             Layout.preferredHeight: 32
 
                             background: Rectangle {
-                                color: parent.down ? "#444" : "#333"
-                                border.color: parent.hovered ? "#555" : "transparent"
-                                radius: 4
+                                color: UiTheme.buttonBg(false, parent.hovered, parent.down)
+                                border.color: parent.hovered ? UiTheme.borderHover : "transparent"
+                                radius: 0
                             }
 
                             contentItem: Text {
                                 text: parent.text
-                                color: "#fff"
+                                color: UiTheme.textPrimary
                                 font.pixelSize: 12
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter

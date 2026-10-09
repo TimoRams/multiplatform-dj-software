@@ -14,6 +14,9 @@ Item {
     property bool beatgridEditMode: false
     property bool showBeatgridEditor: true
     property bool sameTrackDoubleHint: false
+    readonly property real playheadPosition:
+        (typeof settingsManager !== "undefined" && settingsManager)
+        ? settingsManager.waveformPlayheadPosition : 0.5
 
     readonly property real renderDpr: {
         var value = Screen.devicePixelRatio
@@ -296,6 +299,7 @@ Item {
                 height: deckRect.height
                 engine: root.engine
                 pixelsPerPoint: root.waveformZoom
+                playheadPosition: root.playheadPosition
                 backgroundColor: root.backgroundColor
                 renderStyle: (typeof settingsManager !== "undefined" && settingsManager)
                              ? settingsManager.waveformRenderStyle : 0
@@ -331,6 +335,7 @@ Item {
                     y: -deckRect.height * 0.5
                     engine: root.engine
                     pixelsPerPoint: root.waveformZoom
+                    playheadPosition: root.playheadPosition
                     backgroundColor: root.backgroundColor
                     renderStyle: (typeof settingsManager !== "undefined" && settingsManager)
                                  ? settingsManager.waveformRenderStyle : 0
@@ -405,8 +410,7 @@ Item {
             onReleased: (mouse) => {
                 if (root.engine === null) return
                 if (root.beatgridEditMode && mouse.button === Qt.LeftButton && !scrubEngaged) {
-                    // Renderer: x = w/2 + (t - playhead) * pxPerSec  →  t = playhead + (x - w/2) / pxPerSec
-                    // (Minus was wrong — felt mirrored; scrub drag uses minus because it's vinyl-pull.)
+                    // Hit testing uses the same configurable anchor as rendering.
                     if (waveItem.effectivePixelsPerSecond > 0) {
                         var wavePos = scrubArea.mapToItem(waveItem, mouse.x, mouse.y)
                         var clickedSec = waveItem.timelineSecondsAtX(
@@ -518,6 +522,15 @@ Item {
             height: root.physicalPixel
             color: UiTheme.separatorSubtle
             z: 22
+        }
+
+        Rectangle {
+            objectName: "waveformPlayhead"
+            x: Math.floor(parent.width * root.playheadPosition * root.renderDpr) / root.renderDpr
+            width: root.physicalPixel
+            height: parent.height
+            color: UiTheme.playhead
+            z: 23
         }
 
         // Grid editor overlays the left edge — does not shift waveform/playhead.

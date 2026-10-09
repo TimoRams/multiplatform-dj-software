@@ -33,6 +33,18 @@ Item {
     function openGrid() { leftPanel = "grid" }
     function closeLeftPanel() { leftPanel = "closed" }
 
+    component PerformanceText: Text {
+        font.family: UiTheme.uiFontFamily
+    }
+
+    component PerformanceScroll: Flickable {
+        clip: true
+        contentWidth: width
+        flickableDirection: Flickable.VerticalFlick
+        boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+    }
+
     component PerformanceActionButton: Rectangle {
         required property string label
         required property real rowHeight
@@ -41,19 +53,27 @@ Item {
         signal clicked()
         Layout.fillWidth: true
         Layout.preferredHeight: rowHeight
+        Layout.minimumHeight: rowHeight
         radius: 0
-        color: buttonMouse.pressed ? "#41474B" : (active ? "#3B3326" : "#31363A")
-        border.color: active ? accent : "#555C62"
+        color: buttonMouse.pressed ? UiTheme.surfaceRaised
+                                  : (active ? Qt.rgba(accent.r, accent.g, accent.b, 0.16)
+                                            : (buttonMouse.containsMouse ? UiTheme.panelRaised : UiTheme.surface))
+        border.color: active ? accent : (buttonMouse.containsMouse ? UiTheme.borderHover : UiTheme.borderSubtle)
         border.width: 1
-        Text {
+        PerformanceText {
             anchors.centerIn: parent
+            width: Math.max(0, parent.width - 8)
             text: parent.label
-            color: parent.active ? parent.accent : "#F2F0D7"
+            elide: Text.ElideRight
+            horizontalAlignment: Text.AlignHCenter
+            color: parent.active ? parent.accent : UiTheme.textPrimary
             font.pixelSize: 12
             font.weight: Font.DemiBold
             font.letterSpacing: 0.5
         }
-        MouseArea { id: buttonMouse; anchors.fill: parent; onClicked: parent.clicked() }
+        MouseArea { id: buttonMouse; anchors.fill: parent; hoverEnabled: true; onClicked: parent.clicked() }
+        ToolTip.visible: buttonMouse.containsMouse
+        ToolTip.text: label
     }
 
 
@@ -64,37 +84,55 @@ Item {
         property string deckName: "A"
         signal closeRequested()
 
-        readonly property int headerHeight: 48
-        readonly property int rowHeight: 48
+        readonly property int headerHeight: 32
+        readonly property int rowHeight: 32
         readonly property int panelMargin: 10
+        readonly property color accentColor: UiTheme.deckColor(deckName)
 
-        color: "#252A2E"
-        border.color: "#555C62"
+        color: "transparent"
+        border.color: UiTheme.borderSubtle
         border.width: 1
         radius: 0
 
 
 
-        ColumnLayout {
+        PerformanceScroll {
+            id: gridScroll
+            objectName: "gridScroll"
             anchors.fill: parent
+            contentHeight: gridContent.height
+        }
+        ColumnLayout {
+            id: gridContent
+            parent: gridScroll.contentItem
+            width: gridScroll.width
+            height: Math.max(gridScroll.height, implicitHeight)
             spacing: 0
 
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: root.headerHeight
-                color: "#555952"
-                Text {
+                Layout.minimumHeight: root.headerHeight
+                color: Qt.rgba(1, 1, 1, 0.06)
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: 2
+                    color: root.accentColor
+                }
+                PerformanceText {
                     anchors.left: parent.left; anchors.leftMargin: 12
                     anchors.verticalCenter: parent.verticalCenter
                     text: "‹"
-                    color: "#F2F0D7"; font.pixelSize: 24
+                    color: UiTheme.textSecondary; font.pixelSize: 24
                 }
-                Text {
+                PerformanceText {
                     anchors.left: parent.left; anchors.leftMargin: 36
                     anchors.right: parent.right; anchors.rightMargin: 10
                     anchors.verticalCenter: parent.verticalCenter
                     text: "BEATGRID  ·  DECK " + root.deckName
-                    color: "#F2F0D7"; font.pixelSize: 13; font.weight: Font.DemiBold
+                    color: UiTheme.textPrimary; font.pixelSize: 12; font.weight: Font.DemiBold
                     font.letterSpacing: 0.8
                     elide: Text.ElideRight
                     horizontalAlignment: Text.AlignHCenter
@@ -104,19 +142,20 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true; Layout.preferredHeight: root.rowHeight
+                Layout.minimumHeight: root.rowHeight
                 Layout.leftMargin: root.panelMargin; Layout.rightMargin: root.panelMargin
-                Text { text: "TEMPO"; color: "#C5C9C2"; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.5 }
+                PerformanceText { text: "TEMPO"; color: UiTheme.textLabel; font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 0.5 }
                 Item { Layout.fillWidth: true }
-                Text {
+                PerformanceText {
                     Layout.maximumWidth: Math.max(56, parent.width - 82)
                     text: root.engine && root.engine.trackData && root.engine.trackData.isBpmAnalyzed
                           ? root.engine.trackData.bpm.toFixed(2) + " BPM" : "BPM —"
-                    color: "#F2F0D7"; font.pixelSize: 18; font.family: "monospace"
+                    color: UiTheme.textPrimary; font.pixelSize: 18
                     elide: Text.ElideRight; horizontalAlignment: Text.AlignRight
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#555C62" }
+            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: UiTheme.borderSubtle }
 
             GridLayout {
                 Layout.fillWidth: true
@@ -126,30 +165,30 @@ Item {
                 columnSpacing: 4; rowSpacing: 4
                 PerformanceActionButton {
                     rowHeight: root.rowHeight
-                    accent: "#E99128"; label: "÷2 BPM"; onClicked: if (root.engine) root.engine.halveBpm() }
+                    accent: root.accentColor; label: "÷2 BPM"; onClicked: if (root.engine) root.engine.halveBpm() }
                 PerformanceActionButton {
                     rowHeight: root.rowHeight
-                    accent: "#E99128"; label: "×2 BPM"; onClicked: if (root.engine) root.engine.doubleBpm() }
+                    accent: root.accentColor; label: "×2 BPM"; onClicked: if (root.engine) root.engine.doubleBpm() }
                 PerformanceActionButton {
                         objectName: "gridNudgeMinusBeat"
                         rowHeight: root.rowHeight
-                        accent: "#E99128"; label: "− 1 BEAT"; onClicked: if (root.engine) root.engine.nudgeBeatgridBeats(-1) }
+                        accent: root.accentColor; label: "− 1 BEAT"; onClicked: if (root.engine) root.engine.nudgeBeatgridBeats(-1) }
                 PerformanceActionButton {
                     rowHeight: root.rowHeight
-                    accent: "#E99128"; label: "+ 1 BEAT"; onClicked: if (root.engine) root.engine.nudgeBeatgridBeats(1) }
+                    accent: root.accentColor; label: "+ 1 BEAT"; onClicked: if (root.engine) root.engine.nudgeBeatgridBeats(1) }
                 PerformanceActionButton {
                     rowHeight: root.rowHeight
-                    accent: "#E99128"; label: "− 10 ms"; onClicked: if (root.engine) root.engine.nudgeBeatgridMs(-10) }
+                    accent: root.accentColor; label: "− 10 ms"; onClicked: if (root.engine) root.engine.nudgeBeatgridMs(-10) }
                 PerformanceActionButton {
                     rowHeight: root.rowHeight
-                    accent: "#E99128"; label: "+ 10 ms"; onClicked: if (root.engine) root.engine.nudgeBeatgridMs(10) }
+                    accent: root.accentColor; label: "+ 10 ms"; onClicked: if (root.engine) root.engine.nudgeBeatgridMs(10) }
                 PerformanceActionButton {
                     rowHeight: root.rowHeight
-                    accent: "#E99128"; label: "SET DOWNBEAT"; onClicked: if (root.engine) root.engine.setDownbeatAtCurrentPosition() }
+                    accent: root.accentColor; label: "SET DOWNBEAT"; onClicked: if (root.engine) root.engine.setDownbeatAtCurrentPosition() }
                 PerformanceActionButton {
                     objectName: "gridLockButton"
                     rowHeight: root.rowHeight
-                    accent: "#E99128"
+                    accent: root.accentColor
                     label: root.engine && root.engine.beatgridLocked ? "GRID LOCKED" : "LOCK GRID"
                     active: root.engine && root.engine.beatgridLocked
                     onClicked: if (root.engine) root.engine.beatgridLocked = !root.engine.beatgridLocked
@@ -170,21 +209,21 @@ Item {
         signal gridRequested()
 
         readonly property int rowSpacing: 1
-        readonly property color panelText: "#ECEFF1"
-        readonly property color mutedText: "#7D858B"
-        readonly property color lineColor: "#2C3237"
-        readonly property color rowColor: "#1B1F23"
-        readonly property color accentColor: "#168FC4"
-        readonly property color playingColor: "#E99128"
+        readonly property color panelText: UiTheme.textPrimary
+        readonly property color mutedText: UiTheme.textSecondary
+        readonly property color lineColor: UiTheme.borderSubtle
+        readonly property color rowColor: Qt.rgba(0, 0, 0, 0.08)
+        readonly property color accentColor: UiTheme.deckColor(deckName)
+        readonly property color playingColor: UiTheme.play
         readonly property bool externalSourceTrack: engine && engine.hasTrack
                                                     && engine.readOnlyExternalTrack
-        readonly property color sourceColor: externalSourceTrack ? accentColor : "#4DD98A"
+        readonly property color sourceColor: externalSourceTrack ? UiTheme.blue : UiTheme.textSecondary
 
         // Ejecting mid-playback would cut the output, so the button only arms once
         // the deck is stopped — paused, or sitting at the end of the track.
         readonly property bool canEject: engine && engine.hasTrack && !engine.isPlaying
 
-        color: "#14171A"
+        color: "transparent"
         border.color: selected ? accentColor : lineColor
         border.width: 1
         radius: 0
@@ -208,16 +247,26 @@ Item {
             return "USB"
         }
 
-        ColumnLayout {
+        PerformanceScroll {
+            id: deckScroll
+            objectName: "deckScroll"
             anchors.fill: parent
             anchors.margins: 1
+            contentHeight: deckContent.height
+        }
+        ColumnLayout {
+            id: deckContent
+            parent: deckScroll.contentItem
+            width: deckScroll.width
+            height: Math.max(deckScroll.height, implicitHeight)
             spacing: root.rowSpacing
 
             // ── Deck header ─────────────────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 30
-                color: root.selected ? "#232A30" : "#1E2429"
+                Layout.preferredHeight: 28
+                Layout.minimumHeight: 28
+                color: root.selected ? Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.12) : Qt.rgba(1, 1, 1, 0.06)
 
                 Rectangle {
                     id: deckChip
@@ -225,10 +274,10 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.leftMargin: 7
                     width: 6; height: 14
-                    color: root.selected ? root.accentColor : "#3A444B"
+                    color: root.accentColor
                 }
 
-                Text {
+                PerformanceText {
                     anchors.left: deckChip.right
                     anchors.leftMargin: 7
                     anchors.verticalCenter: parent.verticalCenter
@@ -237,14 +286,14 @@ Item {
                     font.pixelSize: 12; font.weight: Font.DemiBold; font.letterSpacing: 0.8
                 }
 
-                Text {
+                PerformanceText {
                     id: deckState
                     anchors.right: ejectButton.left
                     anchors.rightMargin: 7
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.engine && root.engine.isPlaying ? "PLAYING" : "READY"
                     color: root.engine && root.engine.isPlaying ? root.playingColor : root.mutedText
-                    font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 0.6
+                    font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.6
                 }
 
                 // Eject sits directly beside the state caption, where the player is
@@ -262,7 +311,7 @@ Item {
                         anchors.centerIn: parent
                         width: 13; height: 13
                         property color glyphColor: ejectArea.containsMouse && root.canEject
-                                                   ? "#FFFFFF" : root.panelText
+                                                   ? UiTheme.blue : root.panelText
                         onGlyphColorChanged: requestPaint()
                         onPaint: {
                             var ctx = getContext("2d")
@@ -302,22 +351,22 @@ Item {
             // ── Loaded track ────────────────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true; Layout.fillHeight: true
-                Layout.minimumHeight: 40
+                Layout.minimumHeight: 28
                 color: root.rowColor
 
-                Column {
+                Row {
                     anchors.left: parent.left; anchors.leftMargin: 9
                     anchors.right: parent.right; anchors.rightMargin: 9
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: 3
-                    Text {
-                        width: parent.width
+                    spacing: 8
+                    PerformanceText {
+                        width: 48
                         text: "SOURCE"
-                        color: root.mutedText
-                        font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 0.7
+                        color: UiTheme.textLabel
+                        font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.7
                     }
-                    Text {
-                        width: parent.width
+                    PerformanceText {
+                        width: Math.max(0, parent.width - 56)
                         text: root.loadedSourceLabel()
                         color: root.engine && root.engine.hasTrack ? root.sourceColor : root.mutedText
                         font.pixelSize: 12; font.weight: Font.DemiBold
@@ -332,15 +381,15 @@ Item {
             // ── KEY ─────────────────────────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true; Layout.fillHeight: true
-                Layout.minimumHeight: 34
+                Layout.minimumHeight: 28
                 color: root.rowColor
-                Text {
+                PerformanceText {
                     anchors.left: parent.left; anchors.leftMargin: 9
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "KEY"; color: root.mutedText
-                    font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 0.6
+                    text: "KEY"; color: UiTheme.textLabel
+                    font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.6
                 }
-                Text {
+                PerformanceText {
                     anchors.right: parent.right; anchors.rightMargin: 9
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.engine && root.engine.trackKey !== "" ? root.engine.trackKey : "—"
@@ -354,30 +403,30 @@ Item {
             // ── BPM ─────────────────────────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true; Layout.fillHeight: true
-                Layout.minimumHeight: 34
+                Layout.minimumHeight: 28
                 color: root.rowColor
-                Text {
+                PerformanceText {
                     anchors.left: parent.left; anchors.leftMargin: 9
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "BPM"; color: root.mutedText
-                    font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 0.6
+                    text: "BPM"; color: UiTheme.textLabel
+                    font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.6
                 }
                 // Split so the decimal stays small, the way a player prints a tempo.
-                Text {
+                PerformanceText {
                     id: bpmDecimals
                     anchors.right: parent.right; anchors.rightMargin: 9
                     anchors.baseline: bpmWhole.baseline
                     text: root.engine && root.engine.currentBpm > 0
                           ? "." + (Math.round(root.engine.currentBpm * 10) % 10) : ".-"
-                    color: root.panelText; font.pixelSize: 12; font.family: "monospace"
+                    color: root.panelText; font.pixelSize: 12
                 }
-                Text {
+                PerformanceText {
                     id: bpmWhole
                     anchors.right: bpmDecimals.left
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.engine && root.engine.currentBpm > 0
                           ? Math.floor(root.engine.currentBpm).toString() : "---"
-                    color: root.panelText; font.pixelSize: 19; font.family: "monospace"
+                    color: root.panelText; font.pixelSize: 19; font.weight: Font.Medium
                 }
                 MouseArea { anchors.fill: parent; onClicked: root.selectedRequested() }
             }
@@ -387,14 +436,14 @@ Item {
             // ── BEAT JUMP ───────────────────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true; Layout.fillHeight: true
-                Layout.minimumHeight: 34
+                Layout.minimumHeight: 32
                 color: root.rowColor
-                Text {
+                PerformanceText {
                     anchors.left: parent.left; anchors.leftMargin: 9
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.right: jumpMinus.left; anchors.rightMargin: 6
-                    text: "BEAT\nJUMP"; color: root.mutedText; lineHeight: 0.95
-                    font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 0.6
+                    text: "BEAT\nJUMP"; color: UiTheme.textLabel; lineHeight: 0.95
+                    font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.6
                     elide: Text.ElideRight
                 }
                 Rectangle {
@@ -402,32 +451,34 @@ Item {
                     objectName: "beatJumpMinus"
                     anchors.right: jumpValue.left; anchors.rightMargin: 3
                     anchors.verticalCenter: parent.verticalCenter
-                    width: 22; height: Math.min(22, parent.height - 8)
-                    color: "#14171A"; border.color: root.lineColor; border.width: 1
-                    Text { anchors.centerIn: parent; text: "−"; color: root.panelText; font.pixelSize: 13 }
+                    width: 24; height: 24
+                    color: UiTheme.surface; border.color: root.lineColor; border.width: 1
+                    PerformanceText { anchors.centerIn: parent; text: "−"; color: root.panelText; font.pixelSize: 13 }
                     MouseArea {
                         anchors.fill: parent
                         onClicked: if (root.engine)
                             root.engine.beatJumpBeats = Math.max(0.5, root.engine.beatJumpBeats / 2)
                     }
                 }
-                Text {
+                PerformanceText {
                     id: jumpValue
                     anchors.right: jumpPlus.left; anchors.rightMargin: 3
                     anchors.verticalCenter: parent.verticalCenter
                     width: 30
+                    height: 24
                     text: root.engine ? root.engine.beatJumpBeats.toString() : "4"; color: root.panelText
-                    font.pixelSize: 15; font.family: "monospace"
+                    font.pixelSize: 15
                     horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
                     MouseArea { anchors.fill: parent; onClicked: if (root.engine) root.engine.beatJump(root.engine.beatJumpBeats) }
                 }
                 Rectangle {
                     id: jumpPlus
                     anchors.right: parent.right; anchors.rightMargin: 7
                     anchors.verticalCenter: parent.verticalCenter
-                    width: 22; height: Math.min(22, parent.height - 8)
-                    color: "#14171A"; border.color: root.lineColor; border.width: 1
-                    Text { anchors.centerIn: parent; text: "+"; color: root.panelText; font.pixelSize: 13 }
+                    width: 24; height: 24
+                    color: UiTheme.surface; border.color: root.lineColor; border.width: 1
+                    PerformanceText { anchors.centerIn: parent; text: "+"; color: root.panelText; font.pixelSize: 13 }
                     MouseArea {
                         anchors.fill: parent
                         onClicked: if (root.engine)
@@ -440,17 +491,18 @@ Item {
 
             // ── Quantize ────────────────────────────────────────────────────────
             Rectangle {
+                objectName: "quantizeRow"
                 Layout.fillWidth: true; Layout.fillHeight: true
-                Layout.minimumHeight: 30
+                Layout.minimumHeight: 28
                 color: root.rowColor
-                Text {
+                PerformanceText {
                     anchors.left: parent.left; anchors.leftMargin: 9
                     anchors.verticalCenter: parent.verticalCenter
                     text: "Q"
-                    color: root.engine && root.engine.quantizeEnabled ? root.playingColor : root.mutedText
+                    color: root.engine && root.engine.quantizeEnabled ? root.accentColor : root.mutedText
                     font.pixelSize: 12; font.weight: Font.DemiBold
                 }
-                Text {
+                PerformanceText {
                     anchors.right: parent.right; anchors.rightMargin: 9
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.engine && root.engine.quantizeEnabled ? "ON" : "OFF"
@@ -471,12 +523,12 @@ Item {
         signal closeRequested()
 
         readonly property int headerHeight: 28
-        readonly property color panelText: "#ECEFF1"
-        readonly property color mutedText: "#7D858B"
-        readonly property color lineColor: "#2C3237"
-        readonly property color rowColor: "#1B1F23"
-        readonly property color activeColor: "#168FC4"
-        readonly property color accentColor: "#E99128"
+        readonly property color panelText: UiTheme.textPrimary
+        readonly property color mutedText: UiTheme.textSecondary
+        readonly property color lineColor: UiTheme.borderSubtle
+        readonly property color rowColor: Qt.rgba(0, 0, 0, 0.08)
+        readonly property color activeColor: UiTheme.blue
+        readonly property color accentColor: UiTheme.blue
 
         readonly property var divisions: [
             { label: "1/16", value: 0.0625 }, { label: "1/8", value: 0.125 },
@@ -505,7 +557,7 @@ Item {
         // to do nothing.
         readonly property bool effectOn: fx && fx.effectType1 !== "---" && fx.enabled1
 
-        color: "#14171A"
+        color: "transparent"
         border.color: lineColor
         border.width: 1
         radius: 0
@@ -552,20 +604,30 @@ Item {
             }
         }
 
-        ColumnLayout {
+        PerformanceScroll {
+            id: fxScroll
+            objectName: "fxScroll"
             anchors.fill: parent
             anchors.margins: 1
+            contentHeight: fxContent.height
+        }
+        ColumnLayout {
+            id: fxContent
+            parent: fxScroll.contentItem
+            width: fxScroll.width
+            height: Math.max(fxScroll.height, implicitHeight)
             spacing: 1
 
             // ── Section header ──────────────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true; Layout.preferredHeight: root.headerHeight
-                color: "#1E2429"
-                Text {
+                Layout.minimumHeight: root.headerHeight
+                color: Qt.rgba(1, 1, 1, 0.06)
+                PerformanceText {
                     anchors.centerIn: parent; text: "BEAT FX"; color: root.panelText
                     font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 1.0
                 }
-                Text {
+                PerformanceText {
                     anchors.right: parent.right; anchors.rightMargin: 9
                     anchors.verticalCenter: parent.verticalCenter
                     text: "×"; color: root.mutedText; font.pixelSize: 16
@@ -578,23 +640,24 @@ Item {
             // ── Tempo the effect is locked to ───────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true; Layout.preferredHeight: 44
+                Layout.minimumHeight: 44
                 color: root.rowColor
 
-                Text {
+                PerformanceText {
                     id: fxBpmDecimals
                     anchors.right: bpmBadge.left; anchors.rightMargin: 6
                     anchors.baseline: fxBpmWhole.baseline
                     text: root.fx && root.fx.displayBpm1 > 0
                           ? "." + (Math.round(root.fx.displayBpm1 * 10) % 10) : ".-"
-                    color: root.panelText; font.pixelSize: 13; font.family: "monospace"
+                    color: root.panelText; font.pixelSize: 13
                 }
-                Text {
+                PerformanceText {
                     id: fxBpmWhole
                     anchors.right: fxBpmDecimals.left
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.fx && root.fx.displayBpm1 > 0
                           ? Math.floor(root.fx.displayBpm1).toString() : "---"
-                    color: root.panelText; font.pixelSize: 24; font.family: "monospace"
+                    color: root.panelText; font.pixelSize: 24; font.weight: Font.Medium
                 }
 
                 // AUTO/MAN over the BPM caption, the way a player labels the tempo
@@ -605,19 +668,21 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 1
                     Rectangle {
-                        width: 34; height: 12
-                        color: root.fx && root.fx.syncEnabled1 ? root.panelText : "#2C3237"
-                        Text {
+                        width: 34; height: 14
+                        color: root.fx && root.fx.syncEnabled1 ? Qt.rgba(root.activeColor.r, root.activeColor.g, root.activeColor.b, 0.16) : UiTheme.surface
+                        border.color: root.fx && root.fx.syncEnabled1 ? root.activeColor : root.lineColor
+                        border.width: 1
+                        PerformanceText {
                             anchors.centerIn: parent
                             text: root.fx && root.fx.syncEnabled1 ? "AUTO" : "MAN"
-                            color: root.fx && root.fx.syncEnabled1 ? "#14171A" : root.mutedText
-                            font.pixelSize: 8; font.weight: Font.DemiBold
+                            color: root.fx && root.fx.syncEnabled1 ? root.activeColor : root.mutedText
+                            font.pixelSize: 9; font.weight: Font.DemiBold
                         }
                     }
-                    Text {
+                    PerformanceText {
                         width: 34; horizontalAlignment: Text.AlignHCenter
-                        text: "BPM"; color: root.mutedText
-                        font.pixelSize: 8; font.weight: Font.DemiBold; font.letterSpacing: 0.4
+                        text: "BPM"; color: UiTheme.textLabel
+                        font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.4
                     }
                 }
                 MouseArea {
@@ -631,8 +696,9 @@ Item {
             // ── Selected effect ─────────────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true; Layout.preferredHeight: 40
+                Layout.minimumHeight: 40
                 color: root.rowColor
-                Text {
+                PerformanceText {
                     anchors.centerIn: parent
                     width: parent.width - 12
                     horizontalAlignment: Text.AlignHCenter
@@ -649,6 +715,7 @@ Item {
             // ── Beat division: previous / current / next, all directly selectable ─
             RowLayout {
                 Layout.fillWidth: true; Layout.preferredHeight: 34
+                Layout.minimumHeight: 34
                 spacing: 1
                 Repeater {
                     model: 3
@@ -658,11 +725,13 @@ Item {
                         readonly property bool current: index === 1
                         readonly property bool available: divIndex >= 0 && divIndex < root.divisions.length
                         Layout.fillWidth: true; Layout.fillHeight: true
-                        color: current ? "#5A6167" : root.rowColor
-                        Text {
+                        color: current ? Qt.rgba(root.activeColor.r, root.activeColor.g, root.activeColor.b, 0.16) : root.rowColor
+                        border.color: current ? root.activeColor : root.lineColor
+                        border.width: 1
+                        PerformanceText {
                             anchors.centerIn: parent
                             text: available ? root.divisions[divIndex].label : ""
-                            color: current ? "#FFFFFF" : root.mutedText
+                            color: current ? root.activeColor : root.mutedText
                             font.pixelSize: current ? 14 : 12
                             font.weight: current ? Font.DemiBold : Font.Normal
                         }
@@ -680,25 +749,26 @@ Item {
             // ── Resulting effect time ───────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true; Layout.preferredHeight: 32
+                Layout.minimumHeight: 32
                 color: root.rowColor
-                Text {
+                PerformanceText {
                     anchors.left: parent.left; anchors.leftMargin: 9
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "TIME"; color: root.mutedText
-                    font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 0.6
+                    text: "TIME"; color: UiTheme.textLabel
+                    font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.6
                 }
-                Text {
+                PerformanceText {
                     id: timeUnit
                     anchors.right: parent.right; anchors.rightMargin: 9
                     anchors.baseline: timeValue.baseline
-                    text: "ms"; color: root.mutedText; font.pixelSize: 9
+                    text: "ms"; color: root.mutedText; font.pixelSize: 10
                 }
-                Text {
+                PerformanceText {
                     id: timeValue
                     anchors.right: timeUnit.left; anchors.rightMargin: 3
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.effectMs > 0 ? Math.round(root.effectMs).toString() : "---"
-                    color: root.panelText; font.pixelSize: 17; font.family: "monospace"
+                    color: root.panelText; font.pixelSize: 17
                 }
             }
 
@@ -707,39 +777,45 @@ Item {
             // ── Mix amount ──────────────────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true; Layout.preferredHeight: root.headerHeight - 6
-                color: "#1E2429"
-                Text {
-                    anchors.centerIn: parent; text: "FX PARAMETER"; color: root.mutedText
-                    font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 0.8
+                Layout.minimumHeight: root.headerHeight - 6
+                color: Qt.rgba(1, 1, 1, 0.06)
+                PerformanceText {
+                    anchors.centerIn: parent; text: "FX PARAMETER"; color: UiTheme.textLabel
+                    font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.8
                 }
             }
 
             Rectangle {
                 Layout.fillWidth: true; Layout.preferredHeight: 18
-                color: root.activeColor
-                Text {
-                    anchors.centerIn: parent; text: "LEVEL / DEPTH"; color: "#0B1216"
-                    font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 0.6
+                Layout.minimumHeight: 18
+                color: Qt.rgba(root.activeColor.r, root.activeColor.g, root.activeColor.b, 0.12)
+                PerformanceText {
+                    anchors.centerIn: parent; text: "LEVEL / DEPTH"; color: root.activeColor
+                    font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.6
                 }
             }
 
             Rectangle {
                 id: mixBar
                 Layout.fillWidth: true; Layout.preferredHeight: 40
-                color: "#14171A"
+                Layout.minimumHeight: 40
+                color: UiTheme.surfaceInset
+                border.color: root.lineColor
+                border.width: 1
 
                 Rectangle {
                     anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
                     width: Math.max(0, parent.width * (root.fx ? root.fx.wetDry1 : 0))
-                    color: root.effectOn ? root.activeColor : "#2E3439"
+                    color: root.effectOn ? Qt.rgba(root.activeColor.r, root.activeColor.g, root.activeColor.b, 0.32) : UiTheme.surfaceRaised
                 }
-                Text {
+                PerformanceText {
                     anchors.centerIn: parent
                     text: root.fx ? Math.round(root.fx.wetDry1 * 100) + " %" : "0 %"
-                    color: root.panelText; font.pixelSize: 15; font.family: "monospace"
+                    color: root.panelText; font.pixelSize: 15; font.weight: Font.Medium
                 }
                 MouseArea {
                     anchors.fill: parent
+                    preventStealing: true
                     onPressed: (mouse) => root.setMix(mouse.x / width)
                     onPositionChanged: (mouse) => root.setMix(mouse.x / width)
                 }
@@ -750,23 +826,28 @@ Item {
             // ── Routing and engage ──────────────────────────────────────────────
             RowLayout {
                 Layout.fillWidth: true; Layout.preferredHeight: 30
+                Layout.minimumHeight: 30
                 spacing: 1
                 Rectangle {
                     Layout.fillWidth: true; Layout.fillHeight: true
-                    color: root.routedA ? "#1F4A63" : root.rowColor
-                    Text {
+                    color: root.routedA ? Qt.rgba(UiTheme.deckA.r, UiTheme.deckA.g, UiTheme.deckA.b, 0.16) : root.rowColor
+                    border.color: root.routedA ? UiTheme.deckA : root.lineColor
+                    border.width: 1
+                    PerformanceText {
                         anchors.centerIn: parent; text: "CH A"
-                        color: root.routedA ? "#FFFFFF" : root.mutedText
+                        color: root.routedA ? UiTheme.deckA : root.mutedText
                         font.pixelSize: 11; font.weight: Font.DemiBold
                     }
                     MouseArea { anchors.fill: parent; onClicked: if (root.fx) root.fx.setDeckAssignment(1, 1, !root.routedA) }
                 }
                 Rectangle {
                     Layout.fillWidth: true; Layout.fillHeight: true
-                    color: root.routedB ? "#1F4A63" : root.rowColor
-                    Text {
+                    color: root.routedB ? Qt.rgba(UiTheme.deckB.r, UiTheme.deckB.g, UiTheme.deckB.b, 0.16) : root.rowColor
+                    border.color: root.routedB ? UiTheme.deckB : root.lineColor
+                    border.width: 1
+                    PerformanceText {
                         anchors.centerIn: parent; text: "CH B"
-                        color: root.routedB ? "#FFFFFF" : root.mutedText
+                        color: root.routedB ? UiTheme.deckB : root.mutedText
                         font.pixelSize: 11; font.weight: Font.DemiBold
                     }
                     MouseArea { anchors.fill: parent; onClicked: if (root.fx) root.fx.setDeckAssignment(1, 2, !root.routedB) }
@@ -774,14 +855,16 @@ Item {
             }
 
             Rectangle {
+                objectName: "fxEngageRow"
                 Layout.fillWidth: true; Layout.preferredHeight: 42
-                color: root.effectOn ? root.accentColor : root.rowColor
+                Layout.minimumHeight: 42
+                color: root.effectOn ? Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.16) : root.rowColor
                 border.color: root.effectOn ? root.accentColor : root.lineColor
                 border.width: 1
-                Text {
+                PerformanceText {
                     anchors.centerIn: parent
                     text: "BEAT FX  " + (root.effectOn ? "ON" : "OFF")
-                    color: root.effectOn ? "#241708" : root.mutedText
+                    color: root.effectOn ? root.accentColor : root.mutedText
                     font.pixelSize: 13; font.weight: Font.DemiBold; font.letterSpacing: 0.8
                 }
                 MouseArea { anchors.fill: parent; onClicked: root.toggleEffect() }
@@ -796,38 +879,44 @@ Item {
         NumberAnimation { duration: 190; easing.type: Easing.OutCubic }
     }
 
-    Rectangle { anchors.fill: parent; color: "#181B1E" }
+    // The capture source contains only waveforms: never the panels or their blur.
+    Item {
+        id: waveformBacking
+        objectName: "waveformBacking"
+        anchors.fill: parent
+        Rectangle { anchors.fill: parent; color: UiTheme.displayBackground }
 
-    EnlargedWaveform {
-        x: 0
-        y: 0
-        width: root.width
-        height: root.deckAHeight
-        deckName: "A"
-        engine: root.deckAEngine
-        backgroundColor: "#181B1E"
-        waveformZoom: root.waveformZoom
-        showBeatgridEditor: false
-    }
+        EnlargedWaveform {
+            x: 0
+            y: 0
+            width: root.width
+            height: root.deckAHeight
+            deckName: "A"
+            engine: root.deckAEngine
+            backgroundColor: UiTheme.displayBackground
+            waveformZoom: root.waveformZoom
+            showBeatgridEditor: false
+        }
 
-    Rectangle {
-        x: 0
-        y: root.deckAHeight
-        width: root.width
-        height: root.separatorHeight
-        color: "#555C62"
-    }
+        Rectangle {
+            x: 0
+            y: root.deckAHeight
+            width: root.width
+            height: root.separatorHeight
+            color: UiTheme.borderSubtle
+        }
 
-    EnlargedWaveform {
-        x: 0
-        y: root.deckBY
-        width: root.width
-        height: Math.max(0, root.height - y)
-        deckName: "B"
-        engine: root.deckBEngine
-        backgroundColor: "#181B1E"
-        waveformZoom: root.waveformZoom
-        showBeatgridEditor: false
+        EnlargedWaveform {
+            x: 0
+            y: root.deckBY
+            width: root.width
+            height: Math.max(0, root.height - y)
+            deckName: "B"
+            engine: root.deckBEngine
+            backgroundColor: UiTheme.displayBackground
+            waveformZoom: root.waveformZoom
+            showBeatgridEditor: false
+        }
     }
 
     // Waveform context controls stay independent from both side panels.
@@ -838,12 +927,12 @@ Item {
         spacing: 3
         z: 20
         Rectangle {
-            width: 42; height: 34; radius: 0; color: "#31363A"; border.color: "#555C62"; border.width: 1
-            Text { anchors.centerIn: parent; text: "−"; color: "#F2F0D7"; font.pixelSize: 18 }
+            width: 42; height: 34; radius: 0; color: UiTheme.surface; border.color: UiTheme.borderSubtle; border.width: 1
+            PerformanceText { anchors.centerIn: parent; text: "−"; color: UiTheme.textPrimary; font.pixelSize: 18 }
             MouseArea { anchors.fill: parent; onClicked: if (waveformZoomController) waveformZoomController.zoomOut() }
         }
         Rectangle {
-            width: 54; height: 34; radius: 0; color: "#31363A"; border.color: "#555C62"; border.width: 1
+            width: 54; height: 34; radius: 0; color: UiTheme.surface; border.color: UiTheme.borderSubtle; border.width: 1
 
             // Where the current zoom sits in the whole range, so the level is
             // readable at a glance without parsing the number.
@@ -853,14 +942,14 @@ Item {
                 anchors.bottom: parent.bottom
                 anchors.margins: 1
                 height: 2
-                color: "#2A2E31"
+                color: UiTheme.surfaceInset
                 Rectangle {
                     anchors.left: parent.left
                     anchors.top: parent.top
                     anchors.bottom: parent.bottom
                     width: parent.width * (waveformZoomController
                                            ? waveformZoomController.zoomFraction : 0)
-                    color: "#E99128"
+                    color: UiTheme.blue
                 }
             }
 
@@ -871,29 +960,37 @@ Item {
                 anchors.verticalCenterOffset: -1
                 width: parent.width
                 spacing: 0
-                Text {
+                PerformanceText {
                     width: parent.width
                     horizontalAlignment: Text.AlignHCenter
-                    text: "ZOOM"; color: "#9AA0A6"
-                    font.pixelSize: 8; font.weight: Font.DemiBold
+                    text: "ZOOM"; color: UiTheme.textLabel
+                    font.pixelSize: 9; font.weight: Font.DemiBold
                 }
-                Text {
+                PerformanceText {
                     width: parent.width
                     horizontalAlignment: Text.AlignHCenter
                     text: waveformZoomController ? waveformZoomController.zoomLabel : "–"
-                    color: "#F2F0D7"
+                    color: UiTheme.textPrimary
                     font.pixelSize: 11; font.weight: Font.DemiBold
                 }
             }
         }
         Rectangle {
-            width: 42; height: 34; radius: 0; color: "#31363A"; border.color: "#555C62"; border.width: 1
-            Text { anchors.centerIn: parent; text: "+"; color: "#F2F0D7"; font.pixelSize: 18 }
+            width: 42; height: 34; radius: 0; color: UiTheme.surface; border.color: UiTheme.borderSubtle; border.width: 1
+            PerformanceText { anchors.centerIn: parent; text: "+"; color: UiTheme.textPrimary; font.pixelSize: 18 }
             MouseArea { anchors.fill: parent; onClicked: if (waveformZoomController) waveformZoomController.zoomIn() }
         }
         Rectangle {
-            width: 54; height: 34; radius: 0; color: root.leftPanel === "grid" ? "#4A3A23" : "#31363A"; border.color: "#E99128"; border.width: 1
-            Text { anchors.centerIn: parent; text: "GRID"; color: "#F2F0D7"; font.pixelSize: 10; font.weight: Font.DemiBold }
+            width: 54; height: 34; radius: 0
+            readonly property color deckAccent: UiTheme.deckColor(root.selectedDeck)
+            color: root.leftPanel === "grid" ? Qt.rgba(deckAccent.r, deckAccent.g, deckAccent.b, 0.16) : UiTheme.surface
+            border.color: root.leftPanel === "grid" ? UiTheme.deckColor(root.selectedDeck) : UiTheme.borderSubtle
+            border.width: 1
+            PerformanceText {
+                anchors.centerIn: parent; text: "GRID"
+                color: root.leftPanel === "grid" ? UiTheme.deckColor(root.selectedDeck) : UiTheme.textPrimary
+                font.pixelSize: 10; font.weight: Font.DemiBold
+            }
             MouseArea { anchors.fill: parent; onClicked: root.openGrid() }
         }
     }
@@ -906,6 +1003,13 @@ Item {
         visible: root.leftPanelReveal > 0.001
         z: 30
 
+        PerformanceBackdrop {
+            objectName: "leftBackdrop"
+            anchors.fill: parent
+            sourceItem: waveformBacking
+            sourceOrigin: Qt.point(leftHost.x, leftHost.y)
+            requested: root.leftPanel !== "closed"
+        }
         PerformanceBeatgridPanel {
             objectName: "beatgridPanelInstance"
             anchors.fill: parent
@@ -918,21 +1022,24 @@ Item {
         Rectangle {
             anchors.fill: parent
             visible: root.leftPanel === "deck"
-            color: "#171A1D"
-            border.color: "#343B40"; border.width: 1
-            ColumnLayout {
-                anchors.fill: parent; spacing: 1
+            color: "transparent"
+            border.color: UiTheme.borderSubtle; border.width: 1
+            Item {
+                anchors.fill: parent
                 PerformanceDeckQuickPanel {
                     objectName: "deckQuickPanelA"
-                    Layout.fillWidth: true; Layout.fillHeight: true
+                    width: parent.width; height: root.deckAHeight
                     engine: root.deckAEngine; deckName: "A"; selected: root.selectedDeck === "A"
                     onSelectedRequested: root.selectedDeck = "A"
                     onGridRequested: root.openGrid()
                 }
-                Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#343B40" }
+                Rectangle {
+                    width: parent.width; y: root.deckAHeight
+                    height: root.separatorHeight; color: UiTheme.borderSubtle
+                }
                 PerformanceDeckQuickPanel {
                     objectName: "deckQuickPanelB"
-                    Layout.fillWidth: true; Layout.fillHeight: true
+                    width: parent.width; y: root.deckBY; height: Math.max(0, root.height - y)
                     engine: root.deckBEngine; deckName: "B"; selected: root.selectedDeck === "B"
                     onSelectedRequested: root.selectedDeck = "B"
                     onGridRequested: root.openGrid()
@@ -946,8 +1053,8 @@ Item {
         width: root.handleWidth; height: 42
         anchors.left: root.leftPanel === "closed" ? parent.left : leftHost.right
         anchors.verticalCenter: parent.verticalCenter
-        color: "#24292D"; border.color: "#3D454B"; border.width: 1; radius: 2; z: 32
-        Text { anchors.centerIn: parent; text: root.leftPanel === "closed" ? "›" : "‹"; color: "#D8DCDF"; font.pixelSize: 15 }
+        color: UiTheme.panelRaised; border.color: UiTheme.borderSubtle; border.width: 1; radius: 0; z: 32
+        PerformanceText { anchors.centerIn: parent; text: root.leftPanel === "closed" ? "›" : "‹"; color: UiTheme.textSecondary; font.pixelSize: 15 }
         MouseArea { anchors.fill: parent; onClicked: root.toggleDeckPanel() }
     }
 
@@ -958,6 +1065,13 @@ Item {
         x: root.width - width * root.rightPanelReveal
         visible: root.rightPanelReveal > 0.001
         z: 30
+        PerformanceBackdrop {
+            objectName: "rightBackdrop"
+            anchors.fill: parent
+            sourceItem: waveformBacking
+            sourceOrigin: Qt.point(rightHost.x, rightHost.y)
+            requested: root.rightPanelOpen
+        }
         PerformanceBeatFxPanel {
             objectName: "beatFxPanelInstance"
             anchors.fill: parent
@@ -971,8 +1085,8 @@ Item {
         width: root.handleWidth; height: 42
         anchors.right: root.rightPanelOpen ? rightHost.left : parent.right
         anchors.verticalCenter: parent.verticalCenter
-        color: "#24292D"; border.color: "#3D454B"; border.width: 1; radius: 2; z: 32
-        Text { anchors.centerIn: parent; text: root.rightPanelOpen ? "›" : "‹"; color: "#D8DCDF"; font.pixelSize: 15 }
+        color: UiTheme.panelRaised; border.color: UiTheme.borderSubtle; border.width: 1; radius: 0; z: 32
+        PerformanceText { anchors.centerIn: parent; text: root.rightPanelOpen ? "›" : "‹"; color: UiTheme.textSecondary; font.pixelSize: 15 }
         MouseArea { anchors.fill: parent; onClicked: root.rightPanelOpen = !root.rightPanelOpen }
     }
 }

@@ -55,7 +55,7 @@ elseif(CCACHE_PROGRAM AND MSVC)
 endif()
 
 # Qt setup
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Concurrent)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Concurrent ShaderTools)
 if(UNIX AND NOT APPLE)
     find_package(Qt6 REQUIRED COMPONENTS DBus)
 endif()
@@ -550,11 +550,17 @@ add_executable(BrockDJ_ui_layout_tests tests/ui/ui_layout_tests.cpp)
 target_compile_features(BrockDJ_ui_layout_tests PRIVATE cxx_std_23)
 add_test(NAME ui_layout COMMAND BrockDJ_ui_layout_tests)
 
-add_executable(BrockDJ_qml_component_tests tests/ui/qml_component_tests.cpp)
+add_executable(BrockDJ_qml_component_tests tests/ui/qml_component_tests.cpp src/app/ControlClock.cpp)
+target_include_directories(BrockDJ_qml_component_tests PRIVATE src)
 target_compile_definitions(BrockDJ_qml_component_tests PRIVATE BROCKDJ_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(BrockDJ_qml_component_tests PRIVATE Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Test)
 target_compile_features(BrockDJ_qml_component_tests PRIVATE cxx_std_23)
 add_test(NAME qml_component COMMAND BrockDJ_qml_component_tests)
+qt_add_shaders(BrockDJ_qml_component_tests "test_sidebar_shaders"
+    PREFIX "/shaders"
+    BASE "src/qml/performance"
+    FILES "src/qml/performance/sidebarblur.frag"
+)
 
 add_executable(BrockDJ_waveform_render_stability_tests
     tests/waveform/waveform_render_stability_tests.cpp)

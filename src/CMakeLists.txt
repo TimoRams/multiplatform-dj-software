@@ -191,6 +191,7 @@ set(BROCKDJ_QML_FILES
     src/qml/mixer/FxBar.qml
     src/qml/performance/PerformanceWorkspace.qml
     src/qml/performance/PerformanceWaveformScreen.qml
+    src/qml/performance/PerformanceBackdrop.qml
     src/qml/performance/PerformancePads.qml
     src/qml/library/Library.qml
     src/qml/library/SourcePage.qml
@@ -200,4 +201,9 @@ set(BROCKDJ_QML_FILES
     src/qml/shell/TopHeader.qml
     src/qml/development/DevelopmentControlsWindow.qml
     PARENT_SCOPE
+)
+qt_add_shaders(${PROJECT_NAME} "sidebar_shaders"
+    PREFIX "/shaders"
+    BASE "qml/performance"
+    FILES "qml/performance/sidebarblur.frag"
 )

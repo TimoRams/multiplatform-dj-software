@@ -1,10 +1,11 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls.Basic
+import DJSoftware as Design
 
 Rectangle {
     id: libraryRoot
-    color: "#141414"
+    color: Design.UiTheme.panelDeep
     focus: true
 
     // ── External API ───────────────────────────────────────────────────────
@@ -116,33 +117,33 @@ Rectangle {
     }
 
     // ── Theme ───────────────────────────────────────────────────────────────
-    readonly property color bgBase:      "#141414"
-    readonly property color bgSidebar:   "#0d0d0d"
-    readonly property color bgSidebarHv: "#121212"
-    readonly property color bgToolbar:   "#191919"
-    readonly property color bgHeader:    "#1c1c1c"
-    readonly property color bgRowEven:   "#181818"
-    readonly property color bgRowOdd:    "#1b1b1b"
-    readonly property color bgRowHover:  "#242424"
-    readonly property color bgRowActive: "#1d3a52"
-    readonly property color borderSub:   "#1f1f1f"
-    readonly property color borderMain:  "#272727"
-    readonly property color borderHigh:  "#383838"
-    readonly property color textPrimary: "#dcdcdc"
-    readonly property color textSecond:  "#727272"
-    readonly property color textDim:     "#383838"
-    readonly property color accentBlue:  "#2d7dd2"
-    readonly property color accentBlueLt:"#4a99e0"
-    readonly property color accentGreen: "#4dd98a"
-    readonly property color accentGreenLt:"#6fefab"
-    readonly property color accentOrange:"#ff9d2d"
-    readonly property color accentRed:   "#ef5350"
-    readonly property color accentKey:   "#5bb6ff"
-    readonly property color accentKeyMatch: "#3acc3a"
-    readonly property color accentKeyCompat: "#7ad4ff"
-    readonly property color sidebarSel:  "#0d2e52"
-    readonly property color textMeta:    "#888888"
-    readonly property color textNav:     "#aaaaaa"
+    readonly property color bgBase:      Design.UiTheme.panelDeep
+    readonly property color bgSidebar:   Design.UiTheme.panel
+    readonly property color bgSidebarHv: Design.UiTheme.panelRaised
+    readonly property color bgToolbar:   Design.UiTheme.panel
+    readonly property color bgHeader:    Design.UiTheme.panelRaised
+    readonly property color bgRowEven:   Design.UiTheme.panelInset
+    readonly property color bgRowOdd:    Design.UiTheme.panel
+    readonly property color bgRowHover:  Design.UiTheme.bg4
+    readonly property color bgRowActive: Design.UiTheme.blueDim
+    readonly property color borderSub:   Design.UiTheme.borderSubtle
+    readonly property color borderMain:  Design.UiTheme.border
+    readonly property color borderHigh:  Design.UiTheme.borderStrong
+    readonly property color textPrimary: Design.UiTheme.textPrimary
+    readonly property color textSecond:  Design.UiTheme.textSecondary
+    readonly property color textDim:     Design.UiTheme.textDim
+    readonly property color accentBlue:  Design.UiTheme.blue
+    readonly property color accentBlueLt:Design.UiTheme.blue
+    readonly property color accentGreen: Design.UiTheme.green
+    readonly property color accentGreenLt:Design.UiTheme.greenBright
+    readonly property color accentOrange:Design.UiTheme.orange
+    readonly property color accentRed:   Design.UiTheme.red
+    readonly property color accentKey:   Design.UiTheme.blue
+    readonly property color accentKeyMatch: Design.UiTheme.green
+    readonly property color accentKeyCompat: Design.UiTheme.deckD
+    readonly property color sidebarSel:  Design.UiTheme.blueDim
+    readonly property color textMeta:    Design.UiTheme.textLabel
+    readonly property color textNav:     Design.UiTheme.textSecondary
 
     readonly property int rowH:       24
     readonly property int rowHNormal: 56

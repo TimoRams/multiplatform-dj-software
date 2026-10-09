@@ -2,6 +2,7 @@
 #include "UiPreferences.h"
 #include "audio/device/AudioDeviceService.h"
 #include "audio/device/AudioDeviceUtils.h"
+#include "waveform/render/WaveformRenderMath.h"
 #include <algorithm>
 #include <cmath>
 #include <QDebug>
@@ -576,6 +577,21 @@ void SettingsManager::setWaveformRenderStyle(int style)
         return;
     writeSetting(*this, "Waveform/RenderStyle", normalized);
     emit waveformRenderStyleChanged();
+}
+
+double SettingsManager::waveformPlayheadPosition() const
+{
+    return waveform_render::validatedPlayheadPosition(
+        readDoubleSetting(*this, "Waveform/PlayheadPosition", 0.5));
+}
+
+void SettingsManager::setWaveformPlayheadPosition(double position)
+{
+    const double normalized = waveform_render::validatedPlayheadPosition(position);
+    if (qFuzzyCompare(waveformPlayheadPosition(), normalized))
+        return;
+    writeSetting(*this, "Waveform/PlayheadPosition", normalized);
+    emit waveformPlayheadPositionChanged();
 }
 
 void SettingsManager::setTimeStretchBackend(const QString& backend)

@@ -151,8 +151,9 @@ void latenessAndCoalescing()
     assert(stats.skippedWaveformTicks == 1);
     assert(stats.skippedFeedbackTicks == 1);
     assert(stats.skippedDisplayTicks == 1);
-    assert(stats.skippedMeterTicks == 1);
-    assert(stats.skippedLinkTicks == 1);
+    assert(counts.meters == before.meters + 1);
+    assert(stats.skippedMeterTicks == 0);
+    assert(stats.skippedLinkTicks == 0);
     assert(stats.skippedStatisticsTicks == 1);
     assert(stats.skippedHousekeepingTicks == 1);
 
@@ -178,6 +179,33 @@ void latenessAndCoalescing()
     };
     sendMidi(64); sendMidi(64); sendMidi(65);
     assert(midiMessages == 2);
+}
+
+void sustainedLatePublication()
+{
+    ControlClock clock;
+    Counts counts;
+    auto registration = clock.registerCallbacks(callbacksFor(counts));
+    int linkTicks = 0;
+    QObject::connect(&clock, &ControlClock::linkTick, [&] { ++linkTicks; });
+    clock.advanceForTesting(0.004);
+    for (int index = 0; index < 60; ++index)
+        clock.advanceForTesting(1.0 / 60.0);
+    // Every tick is severely late relative to the 4 ms base timer. Both
+    // publications used to remain stuck at their first value indefinitely.
+    assert(counts.meters >= 30 && counts.meters <= 31);
+    assert(linkTicks >= 20 && linkTicks <= 21);
+    assert(counts.waveform == 1);
+    const int before = counts.meters;
+    const int linkBefore = linkTicks;
+    clock.advanceForTesting(2.0);
+    assert(counts.meters == before + 1 && linkTicks == linkBefore + 1);
+    clock.setBackgroundMode(true);
+    clock.advanceForTesting(0.1);
+    assert(counts.meters == before + 1);
+    clock.setBackgroundMode(false);
+    clock.advanceForTesting(0.1);
+    assert(counts.meters == before + 2);
 }
 
 void performance()
@@ -248,6 +276,7 @@ int main(int argc, char** argv)
     basicAndRates();
     orderingAndRegistration();
     latenessAndCoalescing();
+    sustainedLatePublication();
     performance();
     std::cout << "ControlClock tests passed\n";
     return 0;

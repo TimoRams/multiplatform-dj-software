@@ -57,5 +57,13 @@ int main()
                           "pixel-aligned waveform split must preserve total height");
         }
     }
+    for (const double available : {0.0, 89.0, 180.0, 240.0, 320.0, 420.0, 2160.0}) {
+        for (const double scaled : {180.0, 375.0, 600.0}) {
+            const double preferred = std::min(available, scaled);
+            const double minimum = std::min(scaled, preferred);
+            ok &= require(minimum <= preferred && preferred <= available,
+                          "waveform minimum must never contradict its adaptive available height");
+        }
+    }
     return ok ? 0 : 1;
 }

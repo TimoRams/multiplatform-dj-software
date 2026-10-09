@@ -6,7 +6,7 @@ import DJSoftware
 
 Rectangle {
     id: root
-    color: UiTheme.bg0
+    color: UiTheme.surface
     // The expanded tray deliberately paints below this fixed-height item as an
     // overlay.  Keeping it unclipped prevents the workspace from being moved.
     clip: false
@@ -77,7 +77,7 @@ Rectangle {
         width: cardWidth
         height: hidden ? 0 : 26
         visible: !hidden
-        color: toggleMouse.containsMouse ? "#191919" : "#131313"
+        color: toggleMouse.containsMouse ? UiTheme.surfaceRaised : UiTheme.panel
 
         Text {
             anchors.verticalCenter: parent.verticalCenter
@@ -86,7 +86,7 @@ Rectangle {
             anchors.right: togglePill.left
             anchors.rightMargin: 8
             text: toggleCard.label
-            color: toggleCard.on ? "#c0c0c0" : "#484848"
+            color: toggleCard.on ? UiTheme.textPrimary : UiTheme.textMuted
             font.pixelSize: root.sp(9)
             elide: Text.ElideRight
         }
@@ -99,13 +99,13 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             anchors.right: parent.right
             anchors.rightMargin: 12
-            color: toggleCard.on ? "#1e7bd4" : "#252525"
+            color: toggleCard.on ? UiTheme.blue : UiTheme.surfaceInset
 
             Rectangle {
                 width: 8
                 height: 8
                 radius: 4
-                color: "#e0e0e0"
+                color: UiTheme.textPrimary
                 y: 2
                 x: toggleCard.on ? parent.width - 10 : 2
                 Behavior on x { NumberAnimation { duration: 80 } }
@@ -143,6 +143,17 @@ Rectangle {
                 root.refreshLatencyInfo()
         }
         function onLinkTick() { root.beatUiTick++ }
+    }
+
+    Connections {
+        target: deckA
+        function onProgressChanged() { root.beatUiTick++ }
+        function onPlayingChanged() { root.beatUiTick++ }
+    }
+    Connections {
+        target: deckB
+        function onProgressChanged() { root.beatUiTick++ }
+        function onPlayingChanged() { root.beatUiTick++ }
     }
 
     Component.onCompleted: {
@@ -211,7 +222,7 @@ Rectangle {
             minimumWidth: 600
             minimumHeight: 400
             visible: false
-            color: "#1e1e19"
+            color: UiTheme.surfaceInset
             flags: Qt.Dialog
 
             SettingsPanel {
@@ -238,25 +249,25 @@ Rectangle {
         modal: false; focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         padding: 0
-        background: Rectangle { color: "#0e0e0e"; border.color: "#222"; border.width: 1 }
+        background: Rectangle { color: UiTheme.surface; border.color: UiTheme.border; border.width: 1 }
 
         contentItem: Column {
             spacing: 0
 
             Rectangle {
                 width: latencyPopup.width; height: 28
-                color: "#161616"
+                color: UiTheme.panelInset
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left: parent.left; anchors.leftMargin: 12
                     text: "LATENCY BREAKDOWN"
-                    color: "#999"; font.pixelSize: root.sp(9); font.bold: true; font.letterSpacing: 0.6
+                    color: UiTheme.textLabel; font.pixelSize: root.sp(9); font.bold: true; font.letterSpacing: 0.6
                 }
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.right: parent.right; anchors.rightMargin: 12
                     text: root.totalLatencyMs.toFixed(1) + " ms"
-                    color: "#9ecbff"; font.pixelSize: root.sp(9); font.family: "monospace"; font.bold: true
+                    color: UiTheme.blue; font.pixelSize: root.sp(9); font.family: UiTheme.numericFontFamily; font.bold: true
                 }
             }
 
@@ -266,25 +277,25 @@ Rectangle {
                     required property var modelData
                     required property int index
                     width: latencyPopup.width; height: 26
-                    color: index % 2 === 0 ? "#121212" : "#151515"
+                    color: index % 2 === 0 ? UiTheme.surfaceInset : UiTheme.panelInset
                     Row {
                         anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
                         Text {
                             width: 170; anchors.verticalCenter: parent.verticalCenter
                             text: modelData.name
-                            color: modelData.countInTotal === false ? "#555" : "#aaa"
+                            color: modelData.countInTotal === false ? UiTheme.textMuted : UiTheme.textSecondary
                             font.pixelSize: root.sp(8); elide: Text.ElideRight
                         }
                         Text {
                             width: 54; anchors.verticalCenter: parent.verticalCenter
                             text: Number(modelData.ms).toFixed(1) + " ms"
-                            color: "#efefef"; font.pixelSize: root.sp(8); font.family: "monospace"
+                            color: UiTheme.textPrimary; font.pixelSize: root.sp(8); font.family: UiTheme.numericFontFamily
                             horizontalAlignment: Text.AlignRight
                         }
                         Text {
                             width: 66; anchors.verticalCenter: parent.verticalCenter
                             text: Number(modelData.samples).toString() + " smp"
-                            color: "#666"; font.pixelSize: root.sp(8); font.family: "monospace"
+                            color: UiTheme.textDim; font.pixelSize: root.sp(8); font.family: UiTheme.numericFontFamily
                             horizontalAlignment: Text.AlignRight
                         }
                     }
@@ -293,40 +304,40 @@ Rectangle {
 
             Rectangle {
                 width: latencyPopup.width; height: 28
-                color: "#161616"
+                color: UiTheme.panelInset
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left: parent.left; anchors.leftMargin: 12
                     text: "CALLBACK PROFILE"
-                    color: "#999"; font.pixelSize: root.sp(9); font.bold: true; font.letterSpacing: 0.6
+                    color: UiTheme.textLabel; font.pixelSize: root.sp(9); font.bold: true; font.letterSpacing: 0.6
                 }
             }
 
             Rectangle {
                 width: latencyPopup.width; height: 28
-                color: "#121212"
+                color: UiTheme.surfaceInset
                 Row {
                     anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
                     Text {
                         width: 82; anchors.verticalCenter: parent.verticalCenter
                         text: "AVG"
-                        color: "#777"; font.pixelSize: root.sp(8); font.bold: true
+                        color: UiTheme.textDim; font.pixelSize: root.sp(8); font.bold: true
                     }
                     Text {
                         width: 62; anchors.verticalCenter: parent.verticalCenter
                         text: ((Number(root.audioPerfStats.callbackAverageUsec) || 0.0) / 1000.0).toFixed(3) + " ms"
-                        color: "#efefef"; font.pixelSize: root.sp(8); font.family: "monospace"
+                        color: UiTheme.textPrimary; font.pixelSize: root.sp(8); font.family: UiTheme.numericFontFamily
                         horizontalAlignment: Text.AlignRight
                     }
                     Text {
                         width: 54; anchors.verticalCenter: parent.verticalCenter
                         text: "WORST"
-                        color: "#777"; font.pixelSize: root.sp(8); font.bold: true
+                        color: UiTheme.textDim; font.pixelSize: root.sp(8); font.bold: true
                     }
                     Text {
                         width: 62; anchors.verticalCenter: parent.verticalCenter
                         text: ((Number(root.audioPerfStats.callbackWorstUsec) || 0.0) / 1000.0).toFixed(3) + " ms"
-                        color: "#efefef"; font.pixelSize: root.sp(8); font.family: "monospace"
+                        color: UiTheme.textPrimary; font.pixelSize: root.sp(8); font.family: UiTheme.numericFontFamily
                         horizontalAlignment: Text.AlignRight
                     }
                 }
@@ -334,30 +345,30 @@ Rectangle {
 
             Rectangle {
                 width: latencyPopup.width; height: 28
-                color: "#151515"
+                color: UiTheme.panelInset
                 Row {
                     anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
                     Text {
                         width: 82; anchors.verticalCenter: parent.verticalCenter
                         text: "BUDGET"
-                        color: "#777"; font.pixelSize: root.sp(8); font.bold: true
+                        color: UiTheme.textDim; font.pixelSize: root.sp(8); font.bold: true
                     }
                     Text {
                         width: 62; anchors.verticalCenter: parent.verticalCenter
                         text: ((Number(root.audioPerfStats.callbackBudgetUsec) || 0.0) / 1000.0).toFixed(3) + " ms"
-                        color: "#efefef"; font.pixelSize: root.sp(8); font.family: "monospace"
+                        color: UiTheme.textPrimary; font.pixelSize: root.sp(8); font.family: UiTheme.numericFontFamily
                         horizontalAlignment: Text.AlignRight
                     }
                     Text {
                         width: 54; anchors.verticalCenter: parent.verticalCenter
                         text: "DSP XRUNS"
-                        color: "#777"; font.pixelSize: root.sp(8); font.bold: true
+                        color: UiTheme.textDim; font.pixelSize: root.sp(8); font.bold: true
                     }
                     Text {
                         width: 62; anchors.verticalCenter: parent.verticalCenter
                         text: Number(root.audioPerfStats.callbackOverruns) ? Number(root.audioPerfStats.callbackOverruns).toString() : "0"
-                        color: Number(root.audioPerfStats.callbackOverruns) > 0 ? "#ff5f52" : "#efefef"
-                        font.pixelSize: root.sp(8); font.family: "monospace"
+                        color: Number(root.audioPerfStats.callbackOverruns) > 0 ? UiTheme.error : UiTheme.textPrimary
+                        font.pixelSize: root.sp(8); font.family: UiTheme.numericFontFamily
                         horizontalAlignment: Text.AlignRight
                     }
                 }
@@ -365,19 +376,19 @@ Rectangle {
 
             Rectangle {
                 width: latencyPopup.width; height: 24
-                color: "#121212"
+                color: UiTheme.surfaceInset
                 Row {
                     anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
                     Text {
                         width: 136; anchors.verticalCenter: parent.verticalCenter
                         text: "DEVICE XRUNS"
-                        color: "#777"; font.pixelSize: root.sp(8); font.bold: true
+                        color: UiTheme.textDim; font.pixelSize: root.sp(8); font.bold: true
                     }
                     Text {
                         width: 62; anchors.verticalCenter: parent.verticalCenter
                         text: Number(root.audioPerfStats.hardwareXruns) ? Number(root.audioPerfStats.hardwareXruns).toString() : "0"
-                        color: Number(root.audioPerfStats.hardwareXruns) > 0 ? "#ff5f52" : "#efefef"
-                        font.pixelSize: root.sp(8); font.family: "monospace"
+                        color: Number(root.audioPerfStats.hardwareXruns) > 0 ? UiTheme.error : UiTheme.textPrimary
+                        font.pixelSize: root.sp(8); font.family: UiTheme.numericFontFamily
                         horizontalAlignment: Text.AlignRight
                     }
                 }
@@ -385,13 +396,13 @@ Rectangle {
 
             Rectangle {
                 width: latencyPopup.width; height: 24
-                color: "#151515"
+                color: UiTheme.panelInset
                 Row {
                     anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
                     Text {
                         width: 136; anchors.verticalCenter: parent.verticalCenter
                         text: "RT SCHEDULER"
-                        color: "#777"; font.pixelSize: root.sp(8); font.bold: true
+                        color: UiTheme.textDim; font.pixelSize: root.sp(8); font.bold: true
                     }
                     Text {
                         width: 150; anchors.verticalCenter: parent.verticalCenter
@@ -399,9 +410,9 @@ Rectangle {
                         color: {
                             const state = String(root.audioPerfStats.realtimeScheduling || "")
                             return state === "sched-fifo-active" || state === "already-realtime"
-                                ? "#61d095" : "#ffb25b"
+                                ? UiTheme.green : UiTheme.warning
                         }
-                        font.pixelSize: root.sp(8); font.family: "monospace"
+                        font.pixelSize: root.sp(8); font.family: UiTheme.numericFontFamily
                         horizontalAlignment: Text.AlignRight
                     }
                 }
@@ -409,13 +420,13 @@ Rectangle {
 
             Rectangle {
                 width: latencyPopup.width; height: 24
-                color: "#121212"
+                color: UiTheme.surfaceInset
                 Row {
                     anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
                     Text {
                         width: 136; anchors.verticalCenter: parent.verticalCenter
                         text: "UI RENDER"
-                        color: "#777"; font.pixelSize: root.sp(8); font.bold: true
+                        color: UiTheme.textDim; font.pixelSize: root.sp(8); font.bold: true
                     }
                     Text {
                         width: 150; anchors.verticalCenter: parent.verticalCenter
@@ -430,15 +441,15 @@ Rectangle {
                         color: {
                             if (typeof renderPressurePolicy === "undefined"
                                     || !renderPressurePolicy)
-                                return "#efefef"
+                                return UiTheme.textPrimary
                             const tier = String(renderPressurePolicy.tier)
                             if (tier === "audio-first")
-                                return "#ffb25b"
+                                return UiTheme.warning
                             if (tier === "suspended")
-                                return "#777"
-                            return "#61d095"
+                                return UiTheme.textDim
+                            return UiTheme.green
                         }
-                        font.pixelSize: root.sp(8); font.family: "monospace"
+                        font.pixelSize: root.sp(8); font.family: UiTheme.numericFontFamily
                         horizontalAlignment: Text.AlignRight
                     }
                 }
@@ -449,29 +460,29 @@ Rectangle {
                 Rectangle {
                     required property var modelData
                     width: latencyPopup.width; height: 24
-                    color: "#121212"
+                    color: UiTheme.surfaceInset
                     Row {
                         anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
                         Text {
                             width: 136; anchors.verticalCenter: parent.verticalCenter
                             text: modelData.name
-                            color: "#777"; font.pixelSize: root.sp(8); elide: Text.ElideRight
+                            color: UiTheme.textDim; font.pixelSize: root.sp(8); elide: Text.ElideRight
                         }
                         Text {
                             width: 62; anchors.verticalCenter: parent.verticalCenter
                             text: ((Number(modelData.averageUsec) || 0.0) / 1000.0).toFixed(3) + " ms"
-                            color: "#efefef"; font.pixelSize: root.sp(8); font.family: "monospace"
+                            color: UiTheme.textPrimary; font.pixelSize: root.sp(8); font.family: UiTheme.numericFontFamily
                             horizontalAlignment: Text.AlignRight
                         }
                         Text {
                             width: 46; anchors.verticalCenter: parent.verticalCenter
                             text: "max"
-                            color: "#555"; font.pixelSize: root.sp(8); font.bold: true
+                            color: UiTheme.textMuted; font.pixelSize: root.sp(8); font.bold: true
                         }
                         Text {
                             width: 62; anchors.verticalCenter: parent.verticalCenter
                             text: ((Number(modelData.worstUsec) || 0.0) / 1000.0).toFixed(3) + " ms"
-                            color: "#efefef"; font.pixelSize: root.sp(8); font.family: "monospace"
+                            color: UiTheme.textPrimary; font.pixelSize: root.sp(8); font.family: UiTheme.numericFontFamily
                             horizontalAlignment: Text.AlignRight
                         }
                     }
@@ -488,19 +499,19 @@ Rectangle {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         padding: 0
         width: 210
-        background: Rectangle { color: "#0e0e0e"; border.color: "#222"; border.width: 1 }
+        background: Rectangle { color: UiTheme.surface; border.color: UiTheme.border; border.width: 1 }
 
         contentItem: Column {
             spacing: 0
 
             Rectangle {
                 width: viewMenuPopup.width; height: 28
-                color: "#161616"
+                color: UiTheme.panelInset
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left: parent.left; anchors.leftMargin: 12
                     text: "VIEW TOGGLES"
-                    color: "#999"; font.pixelSize: root.sp(9); font.bold: true; font.letterSpacing: 0.6
+                    color: UiTheme.textLabel; font.pixelSize: root.sp(9); font.bold: true; font.letterSpacing: 0.6
                 }
             }
 
@@ -520,7 +531,7 @@ Rectangle {
                 id: vt_deckMode
                 width: viewMenuPopup.width
                 height: 30
-                color: vt_deckModeMouse.containsMouse ? "#191919" : "#131313"
+                color: vt_deckModeMouse.containsMouse ? UiTheme.surfaceRaised : UiTheme.panel
                 readonly property bool fourDeck: root.Window.window ? root.Window.window.fourDeckMode : false
 
                 Text {
@@ -528,7 +539,7 @@ Rectangle {
                     anchors.left: parent.left
                     anchors.leftMargin: 12
                     text: "Deck Layout"
-                    color: "#c0c0c0"
+                    color: UiTheme.textSecondary
                     font.pixelSize: root.sp(9)
                 }
 
@@ -541,30 +552,30 @@ Rectangle {
                     Rectangle {
                         width: 26
                         height: 16
-                        radius: 2
-                        color: !vt_deckMode.fourDeck ? "#1e7bd4" : "#242424"
+                        radius: 0
+                        color: !vt_deckMode.fourDeck ? UiTheme.blue : UiTheme.surfaceInset
                         Text {
                             anchors.centerIn: parent
                             text: "2"
-                            color: !vt_deckMode.fourDeck ? "#ffffff" : "#555"
+                            color: !vt_deckMode.fourDeck ? UiTheme.textPrimary : UiTheme.textMuted
                             font.pixelSize: root.sp(8)
                             font.bold: true
-                            font.family: "monospace"
+                            font.family: UiTheme.numericFontFamily
                         }
                     }
 
                     Rectangle {
                         width: 26
                         height: 16
-                        radius: 2
-                        color: vt_deckMode.fourDeck ? "#1e7bd4" : "#242424"
+                        radius: 0
+                        color: vt_deckMode.fourDeck ? UiTheme.blue : UiTheme.surfaceInset
                         Text {
                             anchors.centerIn: parent
                             text: "4"
-                            color: vt_deckMode.fourDeck ? "#ffffff" : "#555"
+                            color: vt_deckMode.fourDeck ? UiTheme.textPrimary : UiTheme.textMuted
                             font.pixelSize: root.sp(8)
                             font.bold: true
-                            font.family: "monospace"
+                            font.family: UiTheme.numericFontFamily
                         }
                     }
                 }
@@ -626,14 +637,14 @@ Rectangle {
                     spacing: 1
                     Text {
                         text: "BROCKDJ"
-                        color: "#e8e8e8"
+                        color: UiTheme.textPrimary
                         font.pixelSize: root.sp(10)
                         font.bold: true
                         font.letterSpacing: 1.4
                     }
                     Text {
                         text: "ramsbrock.net"
-                        color: "#333333"
+                        color: UiTheme.textDim
                         font.pixelSize: root.sp(6)
                         font.letterSpacing: 0.3
                     }
@@ -642,7 +653,7 @@ Rectangle {
         }
 
         // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
 
         Rectangle {
             id: sourceButton
@@ -651,14 +662,14 @@ Rectangle {
             readonly property bool active: root.Window.window
                                            ? root.Window.window.sourcePanelActive
                                            : false
-            color: sourceMouse.pressed ? "#203446"
-                 : active ? "#162b3b"
-                 : (sourceMouse.containsMouse ? "#1a2025" : "#121212")
+            color: sourceMouse.pressed ? UiTheme.blueDim
+                 : active ? UiTheme.blueDim
+                 : (sourceMouse.containsMouse ? UiTheme.surfaceRaised : UiTheme.panel)
             Row {
                 anchors.centerIn: parent
                 spacing: 5
-                Text { text: "⊙"; color: sourceButton.active ? "#a9d4ff" : "#788692"; font.pixelSize: root.sp(14); anchors.verticalCenter: parent.verticalCenter }
-                Text { text: "SOURCE"; color: sourceButton.active ? "#dceeff" : "#aab2b8"; font.pixelSize: root.sp(8); font.bold: true; font.letterSpacing: 0.5; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "⊙"; color: sourceButton.active ? UiTheme.blue : UiTheme.textLabel; font.pixelSize: root.sp(14); anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "SOURCE"; color: sourceButton.active ? UiTheme.textPrimary : UiTheme.textSecondary; font.pixelSize: root.sp(8); font.bold: true; font.letterSpacing: 0.5; anchors.verticalCenter: parent.verticalCenter }
             }
             Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 2; visible: sourceButton.active; color: root.accentBlue }
             MouseArea {
@@ -671,7 +682,7 @@ Rectangle {
             }
         }
 
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
 
         // ── Primary navigation ───────────────────────────────────────────────
         Rectangle {
@@ -683,31 +694,31 @@ Rectangle {
                                               ? root.Window.window.libraryPanelActive
                                               : root.Window.window.showLibrary)
                                            : false
-            color: libraryMouse.pressed ? "#203446"
-                 : active ? "#162b3b"
-                 : (libraryMouse.containsMouse ? "#1a2025" : "#121212")
+            color: libraryMouse.pressed ? UiTheme.blueDim
+                 : active ? UiTheme.blueDim
+                 : (libraryMouse.containsMouse ? UiTheme.surfaceRaised : UiTheme.panel)
             Row {
                 anchors.centerIn: parent
                 spacing: 5
-                Text { text: "▤"; color: libraryButton.active ? "#a9d4ff" : "#788692"; font.pixelSize: root.sp(15); anchors.verticalCenter: parent.verticalCenter }
-                Text { text: "LIBRARY"; color: libraryButton.active ? "#dceeff" : "#aab2b8"; font.pixelSize: root.sp(8); font.bold: true; font.letterSpacing: 0.5; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "▤"; color: libraryButton.active ? UiTheme.blue : UiTheme.textLabel; font.pixelSize: root.sp(15); anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "LIBRARY"; color: libraryButton.active ? UiTheme.textPrimary : UiTheme.textSecondary; font.pixelSize: root.sp(8); font.bold: true; font.letterSpacing: 0.5; anchors.verticalCenter: parent.verticalCenter }
             }
             Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 2; visible: libraryButton.active; color: root.accentBlue }
             MouseArea { id: libraryMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: if (root.Window.window) root.Window.window.toggleAllInOneLibrary() }
         }
 
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
 
         Rectangle {
             id: searchButton
             Layout.preferredWidth: 74
             Layout.fillHeight: true
-            color: searchMouse.pressed ? "#202428" : (searchMouse.containsMouse ? "#1a1e21" : "#121212")
+            color: searchMouse.pressed ? UiTheme.surfaceRaised : (searchMouse.containsMouse ? UiTheme.panelRaised : UiTheme.panel)
             Row {
                 anchors.centerIn: parent
                 spacing: 4
-                Text { text: "⌕"; color: "#7d8992"; font.pixelSize: root.sp(17); anchors.verticalCenter: parent.verticalCenter }
-                Text { text: "SEARCH"; color: "#9aa3a9"; font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.3; anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "⌕"; color: UiTheme.textLabel; font.pixelSize: root.sp(17); anchors.verticalCenter: parent.verticalCenter }
+                Text { text: "SEARCH"; color: UiTheme.textSecondary; font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.3; anchors.verticalCenter: parent.verticalCenter }
             }
             MouseArea { id: searchMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }
         }
@@ -723,7 +734,7 @@ Rectangle {
             Layout.fillHeight: true
             property bool on: false
             property real gr: deckA ? deckA.gainReduction : 1.0
-            color: !on       ? "#131313"
+            color: !on       ? UiTheme.panel
                  : gr < 0.5  ? "#3d0000"
                  : gr < 0.7  ? "#6b1010"
                  : gr < 0.99 ? "#8a4a00"
@@ -736,15 +747,15 @@ Rectangle {
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: "A-CLP"
-                    color: !antiClipBlock.on ? "#3a3a3a"
-                         : antiClipBlock.gr < 0.99 ? "#ffffff" : "#88cc88"
+                    color: !antiClipBlock.on ? UiTheme.textDim
+                         : antiClipBlock.gr < 0.99 ? UiTheme.textPrimary : UiTheme.green
                     font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.3
                 }
 
                 Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: 16; height: 2
-                    color: !antiClipBlock.on ? "#2a2a2a"
+                    color: !antiClipBlock.on ? UiTheme.separatorSubtle
                          : antiClipBlock.gr < 0.5  ? "#ff3333"
                          : antiClipBlock.gr < 0.7  ? "#ff7733"
                          : antiClipBlock.gr < 0.99 ? "#ffaa00"
@@ -762,13 +773,13 @@ Rectangle {
         }
 
         // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
 
         // ── Master volume ─────────────────────────────────────────────────────
         Rectangle {
             Layout.preferredWidth: root.dialSz + root.padH * 2 + 12
             Layout.fillHeight: true
-            color: "#131313"
+            color: UiTheme.panel
 
             Row {
                 anchors.centerIn: parent
@@ -776,7 +787,7 @@ Rectangle {
 
                 Text {
                     text: "MST"
-                    color: "#404040"
+                    color: UiTheme.textLabel
                     font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.3
                     anchors.verticalCenter: parent.verticalCenter
                 }
@@ -806,12 +817,12 @@ Rectangle {
                                 ctx.lineWidth = Math.max(1.5, width * 0.07)
                                 ctx.lineCap   = "butt"
                                 // track
-                                ctx.strokeStyle = "#222"
+                                ctx.strokeStyle = UiTheme.knobTrack
                                 ctx.beginPath()
                                 ctx.arc(cx, cy, r, 120 * Math.PI/180, (120+300) * Math.PI/180)
                                 ctx.stroke()
                                 // fill
-                                ctx.strokeStyle = "#1e7bd4"
+                                ctx.strokeStyle = UiTheme.blue
                                 ctx.beginPath()
                                 ctx.arc(cx, cy, r, 120 * Math.PI/180, (120 + norm*300) * Math.PI/180)
                                 ctx.stroke()
@@ -824,7 +835,7 @@ Rectangle {
                         Rectangle {
                             anchors.centerIn: parent
                             width: parent.width * 0.72; height: parent.height * 0.72
-                            radius: width / 2; color: "#1c1c1c"
+                            radius: width / 2; color: UiTheme.knobFace
                         }
                     }
 
@@ -835,7 +846,7 @@ Rectangle {
                         width:  masterVolDial.width  * 0.72
                         height: masterVolDial.height * 0.72
                         Rectangle {
-                            width: 1.5; height: parent.height * 0.42; color: "#c0c0c0"
+                            width: 1.5; height: parent.height * 0.42; color: UiTheme.knobHandle
                             anchors.horizontalCenter: parent.horizontalCenter
                             anchors.top: parent.top; anchors.topMargin: -1
                         }
@@ -859,14 +870,14 @@ Rectangle {
         }
 
         // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
 
         // ── Headphone cue ────────────────────────────────────────────────────
         Rectangle {
             id: headphoneCueBlock
             Layout.preferredWidth: root.dialSz + root.padH * 2 + 42
             Layout.fillHeight: true
-            color: "#121212"
+            color: UiTheme.panel
 
             property bool syncingCueMix: false
             readonly property bool masterCueOn: deckA ? deckA.masterCueEnabled : false
@@ -887,14 +898,14 @@ Rectangle {
                 Rectangle {
                     width: 32
                     height: Math.max(16, root.btnH * 0.48)
-                    radius: 3
-                    color: headphoneCueBlock.masterCueOn ? "#0c1e2f" : "#171717"
-                    border.color: headphoneCueBlock.masterCueOn ? "#1e7bd4" : "#2a2a2a"
+                    radius: 0
+                    color: headphoneCueBlock.masterCueOn ? UiTheme.blueDim : UiTheme.surfaceInset
+                    border.color: headphoneCueBlock.masterCueOn ? UiTheme.blue : UiTheme.border
 
                     Text {
                         anchors.centerIn: parent
                         text: "MC"
-                        color: headphoneCueBlock.masterCueOn ? "#7ab8f5" : "#555"
+                        color: headphoneCueBlock.masterCueOn ? UiTheme.blue : UiTheme.textMuted
                         font.pixelSize: root.sp(7)
                         font.bold: true
                         font.letterSpacing: 0.5
@@ -904,7 +915,7 @@ Rectangle {
                     Rectangle {
                         anchors.fill: parent
                         radius: parent.radius
-                        color: "#ffffff"
+                        color: UiTheme.textPrimary
                         opacity: masterCueHover.hovered && !headphoneCueBlock.masterCueOn ? 0.04 : 0.0
                     }
                     MouseArea {
@@ -942,11 +953,11 @@ Rectangle {
                                 var norm = Math.max(0, Math.min(1, cueMixDial.value))
                                 ctx.lineWidth = Math.max(1.5, width * 0.07)
                                 ctx.lineCap = "butt"
-                                ctx.strokeStyle = "#222"
+                                ctx.strokeStyle = UiTheme.knobTrack
                                 ctx.beginPath()
                                 ctx.arc(cx, cy, r, 120 * Math.PI / 180, 420 * Math.PI / 180)
                                 ctx.stroke()
-                                ctx.strokeStyle = "#7ab8f5"
+                                ctx.strokeStyle = UiTheme.blue
                                 ctx.beginPath()
                                 ctx.arc(cx, cy, r, 120 * Math.PI / 180, (120 + norm * 300) * Math.PI / 180)
                                 ctx.stroke()
@@ -961,7 +972,7 @@ Rectangle {
                             width: parent.width * 0.72
                             height: parent.height * 0.72
                             radius: width / 2
-                            color: "#1c1c1c"
+                            color: UiTheme.knobFace
                         }
                     }
 
@@ -974,7 +985,7 @@ Rectangle {
                         Rectangle {
                             width: 1.5
                             height: parent.height * 0.42
-                            color: "#c0c0c0"
+                            color: UiTheme.knobHandle
                             anchors.horizontalCenter: parent.horizontalCenter
                             anchors.top: parent.top
                             anchors.topMargin: -1
@@ -997,7 +1008,7 @@ Rectangle {
 
                 Text {
                     text: "MST"
-                    color: headphoneCueBlock.masterCueOn ? "#7ab8f5" : "#3f3f3f"
+                    color: headphoneCueBlock.masterCueOn ? UiTheme.blue : UiTheme.textMuted
                     font.pixelSize: root.sp(7)
                     font.bold: true
                     anchors.verticalCenter: parent.verticalCenter
@@ -1006,24 +1017,24 @@ Rectangle {
         }
 
         // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
 
         // ── System monitor — LAT + CPU + RAM ─────────────────────────────────
         Rectangle {
             id: monitorBlock
             Layout.preferredWidth: 106   // fixed — prevents layout jitter as values change
             Layout.fillHeight: true
-            color: latMouse.containsMouse ? "#161616" : "#121212"
+            color: latMouse.containsMouse ? UiTheme.surfaceRaised : UiTheme.panel
             Behavior on color { ColorAnimation { duration: 100 } }
 
-            readonly property color latClr: root.totalLatencyMs >= 35.0 ? "#ff5f52"
-                                           : root.totalLatencyMs >= 20.0 ? "#ffcc44"
-                                           : "#5bb8f5"
+            readonly property color latClr: root.totalLatencyMs >= 35.0 ? UiTheme.error
+                                           : root.totalLatencyMs >= 20.0 ? UiTheme.warning
+                                           : UiTheme.sync
             readonly property real cpuVal: sysMonitor ? sysMonitor.cpuUsage : 0
             readonly property real ramVal: sysMonitor ? sysMonitor.ramUsage : 0
 
             function metricColor(v) {
-                return v > 0.8 ? "#cc4444" : v > 0.5 ? "#cc8800" : "#484848"
+                return v > 0.8 ? UiTheme.error : v > 0.5 ? UiTheme.warning : UiTheme.textMuted
             }
             function barColor(v, hue) {
                 return v > 0.8 ? "#cc3333" : v > 0.5 ? "#bb7700" : hue
@@ -1039,7 +1050,7 @@ Rectangle {
                     spacing: 3
 
                     Text {
-                        text: "LAT"; color: "#383838"
+                        text: "LAT"; color: UiTheme.textDim
                         font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.5
                         anchors.verticalCenter: parent.verticalCenter
                     }
@@ -1047,13 +1058,13 @@ Rectangle {
                         width: 44
                         text: root.totalLatencyMs > 0 ? root.totalLatencyMs.toFixed(1) + " ms" : "—  ms"
                         color: monitorBlock.latClr
-                        font.pixelSize: root.sp(8); font.bold: true; font.family: "monospace"
+                        font.pixelSize: root.sp(8); font.bold: true; font.family: UiTheme.numericFontFamily
                         horizontalAlignment: Text.AlignRight
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Text {
                         text: latencyPopup.opened ? "▴" : "▾"
-                        color: "#363636"; font.pixelSize: root.sp(7)
+                        color: UiTheme.textDim; font.pixelSize: root.sp(7)
                         anchors.verticalCenter: parent.verticalCenter
                     }
                 }
@@ -1064,49 +1075,49 @@ Rectangle {
                     spacing: 2
 
                     Text {
-                        text: "C"; color: "#2e2e2e"
+                        text: "C"; color: UiTheme.textMuted
                         font.pixelSize: root.sp(7); font.bold: true
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Rectangle {
-                        width: 18; height: 3; radius: 1; color: "#1c1c1c"
+                        width: 18; height: 3; radius: 1; color: UiTheme.knobTrack
                         anchors.verticalCenter: parent.verticalCenter
                         Rectangle {
                             width: Math.max(0, Math.round(parent.width * monitorBlock.cpuVal))
                             height: parent.height; radius: 1
-                            color: monitorBlock.barColor(monitorBlock.cpuVal, "#2a5a38")
+                            color: monitorBlock.barColor(monitorBlock.cpuVal, UiTheme.greenDim)
                             Behavior on width { NumberAnimation { duration: 350; easing.type: Easing.OutQuad } }
                         }
                     }
                     Text {
                         width: 18; text: Math.round(monitorBlock.cpuVal * 100) + "%"
                         color: monitorBlock.metricColor(monitorBlock.cpuVal)
-                        font.pixelSize: root.sp(7); font.family: "monospace"
+                        font.pixelSize: root.sp(7); font.family: UiTheme.numericFontFamily
                         horizontalAlignment: Text.AlignRight
                         anchors.verticalCenter: parent.verticalCenter
                     }
 
-                    Rectangle { width: 1; height: 7; color: "#252525"; anchors.verticalCenter: parent.verticalCenter }
+                    Rectangle { width: 1; height: 7; color: UiTheme.separatorSubtle; anchors.verticalCenter: parent.verticalCenter }
 
                     Text {
-                        text: "R"; color: "#2e2e2e"
+                        text: "R"; color: UiTheme.textMuted
                         font.pixelSize: root.sp(7); font.bold: true
                         anchors.verticalCenter: parent.verticalCenter
                     }
                     Rectangle {
-                        width: 18; height: 3; radius: 1; color: "#1c1c1c"
+                        width: 18; height: 3; radius: 1; color: UiTheme.knobTrack
                         anchors.verticalCenter: parent.verticalCenter
                         Rectangle {
                             width: Math.max(0, Math.round(parent.width * monitorBlock.ramVal))
                             height: parent.height; radius: 1
-                            color: monitorBlock.barColor(monitorBlock.ramVal, "#1a3a5a")
+                            color: monitorBlock.barColor(monitorBlock.ramVal, UiTheme.blueDim)
                             Behavior on width { NumberAnimation { duration: 350; easing.type: Easing.OutQuad } }
                         }
                     }
                     Text {
                         width: 18; text: Math.round(monitorBlock.ramVal * 100) + "%"
                         color: monitorBlock.metricColor(monitorBlock.ramVal)
-                        font.pixelSize: root.sp(7); font.family: "monospace"
+                        font.pixelSize: root.sp(7); font.family: UiTheme.numericFontFamily
                         horizontalAlignment: Text.AlignRight
                         anchors.verticalCenter: parent.verticalCenter
                     }
@@ -1128,14 +1139,14 @@ Rectangle {
         }
 
         // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
 
         // ── Ableton Link ─────────────────────────────────────────────────────
         Rectangle {
             id: linkBlock
             Layout.preferredWidth: 48
             Layout.fillHeight: true
-            color: linkMouse.pressed ? "#162016" : ((linkManager && linkManager.enabled) ? "#0d1a12" : "#121212")
+            color: linkMouse.pressed ? UiTheme.greenDim : ((linkManager && linkManager.enabled) ? UiTheme.greenDim : UiTheme.panel)
 
             readonly property bool on: linkManager && linkManager.enabled
             readonly property int beatIndex: linkManager ? (((Math.floor(linkManager.beat) % 4) + 4) % 4) : 0
@@ -1150,11 +1161,11 @@ Rectangle {
                     Rectangle {
                         width: 4; height: 4; radius: 2
                         anchors.verticalCenter: parent.verticalCenter
-                        color: linkBlock.on ? "#3de87a" : "#2a2a2a"
+                        color: linkBlock.on ? UiTheme.play : UiTheme.separatorSubtle
                     }
                     Text {
                         text: "LINK"
-                        color: linkBlock.on ? "#3de87a" : "#454545"
+                        color: linkBlock.on ? UiTheme.play : UiTheme.textMuted
                         font.pixelSize: root.sp(6)
                         font.bold: true
                         font.letterSpacing: 0.3
@@ -1164,9 +1175,9 @@ Rectangle {
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: linkManager ? linkManager.bpm.toFixed(1) : "120.0"
-                    color: linkBlock.on ? "#e8f5e8" : "#555555"
+                    color: linkBlock.on ? UiTheme.textPrimary : UiTheme.textMuted
                     font.pixelSize: root.sp(10)
-                    font.family: "monospace"
+                    font.family: UiTheme.numericFontFamily
                     font.bold: true
                 }
 
@@ -1180,7 +1191,7 @@ Rectangle {
                             width: 7
                             height: 2
                             radius: 1
-                            color: linkBlock.on && index === linkBlock.beatIndex ? "#3de87a" : "#242424"
+                            color: linkBlock.on && index === linkBlock.beatIndex ? UiTheme.play : UiTheme.surfaceInset
                         }
                     }
                 }
@@ -1195,21 +1206,21 @@ Rectangle {
         }
 
         // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
 
         // ── View toggles ──────────────────────────────────────────────────────
         Rectangle {
             id: viewMenuBtn
             Layout.preferredWidth: root.btnH
             Layout.fillHeight: true
-            color: viewBtnMouse.pressed ? "#1e1e1e" : (viewBtnMouse.containsMouse ? "#181818" : "#121212")
+            color: viewBtnMouse.pressed ? UiTheme.surfaceRaised : (viewBtnMouse.containsMouse ? UiTheme.panelRaised : UiTheme.panel)
 
             Column {
                 anchors.centerIn: parent
                 spacing: 3
                 Repeater {
                     model: 3
-                    Rectangle { width: 10; height: 1; color: "#555555" }
+                    Rectangle { width: 10; height: 1; color: UiTheme.textMuted }
                 }
             }
 
@@ -1230,20 +1241,20 @@ Rectangle {
         }
 
         // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: "#1c1c1c" }
+        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
 
         // ── Clock ─────────────────────────────────────────────────────────────
         Rectangle {
             Layout.preferredWidth: 52
             Layout.fillHeight: true
-            color: "#121212"
+            color: UiTheme.panel
 
             Text {
                 id: clockText
                 anchors.centerIn: parent
                 text: root.currentTime
-                color: "#888888"
-                font.pixelSize: root.sp(12); font.family: "monospace"; font.bold: true
+                color: UiTheme.textSecondary
+                font.pixelSize: root.sp(12); font.family: UiTheme.numericFontFamily; font.bold: true
             }
         }
 
@@ -1262,7 +1273,7 @@ Rectangle {
         y: root.collapsedHeight - height
            + height * (root.Window.window ? root.Window.window.topBarPullProgress : 0.0)
         height: UiTheme.toolbarPullExtra
-        color: "#101214"
+        color: UiTheme.surface
         opacity: Math.min(1.0, (root.Window.window ? root.Window.window.topBarPullProgress : 0.0) * 3.0)
         visible: opacity > 0.01
         z: 5
@@ -1273,7 +1284,7 @@ Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
             height: 1
-            color: "#252a2e"
+            color: UiTheme.separatorSubtle
         }
 
         RowLayout {
@@ -1285,12 +1296,12 @@ Rectangle {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                radius: 5
-                color: quickModeMouse.pressed ? "#1f3345" : "#18232d"
+                radius: 0
+                color: quickModeMouse.pressed ? UiTheme.blueDim : UiTheme.surfaceRaised
                 Text {
                     anchors.centerIn: parent
                     text: root.Window.window && root.Window.window.allInOneMode ? "AIO MODE" : "DESKTOP MODE"
-                    color: "#a9d4ff"; font.pixelSize: root.sp(10); font.bold: true
+                    color: UiTheme.blue; font.pixelSize: root.sp(10); font.bold: true
                 }
                 MouseArea {
                     id: quickModeMouse; anchors.fill: parent
@@ -1304,12 +1315,12 @@ Rectangle {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                radius: 5
-                color: quickLibraryMouse.pressed ? "#1f3345" : "#181b1e"
+                radius: 0
+                color: quickLibraryMouse.pressed ? UiTheme.blueDim : UiTheme.surfaceRaised
                 Text {
                     anchors.centerIn: parent
                     text: "LIBRARY"
-                    color: "#d5dce2"; font.pixelSize: root.sp(10); font.bold: true
+                    color: UiTheme.textPrimary; font.pixelSize: root.sp(10); font.bold: true
                 }
                 MouseArea {
                     id: quickLibraryMouse; anchors.fill: parent
@@ -1323,12 +1334,12 @@ Rectangle {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                radius: 5
-                color: quickSourceMouse.pressed ? "#1f3345" : "#181b1e"
+                radius: 0
+                color: quickSourceMouse.pressed ? UiTheme.blueDim : UiTheme.surfaceRaised
                 Text {
                     anchors.centerIn: parent
                     text: "SOURCE"
-                    color: "#d5dce2"; font.pixelSize: root.sp(10); font.bold: true
+                    color: UiTheme.textPrimary; font.pixelSize: root.sp(10); font.bold: true
                 }
                 MouseArea {
                     id: quickSourceMouse; anchors.fill: parent
@@ -1342,12 +1353,12 @@ Rectangle {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                radius: 5
-                color: quickPerformanceMouse.pressed ? "#1f3345" : "#181b1e"
+                radius: 0
+                color: quickPerformanceMouse.pressed ? UiTheme.blueDim : UiTheme.surfaceRaised
                 Text {
                     anchors.centerIn: parent
                     text: "PERFORMANCE"
-                    color: "#d5dce2"; font.pixelSize: root.sp(10); font.bold: true
+                    color: UiTheme.textPrimary; font.pixelSize: root.sp(10); font.bold: true
                 }
                 MouseArea {
                     id: quickPerformanceMouse; anchors.fill: parent
@@ -1362,13 +1373,13 @@ Rectangle {
                 id: quickSettingsBlock
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                radius: 5
+                radius: 0
                 readonly property bool active: root.Window.window ? root.Window.window.settingsPanelActive : false
-                color: quickSettingsMouse.pressed ? "#1f3345" : (active ? "#1a3042" : "#181b1e")
+                color: quickSettingsMouse.pressed ? UiTheme.blueDim : (active ? UiTheme.blueDim : UiTheme.surfaceRaised)
                 Text {
                     anchors.centerIn: parent
                     text: "SETTINGS"
-                    color: quickSettingsBlock.active ? "#a9d4ff" : "#d5dce2"
+                    color: quickSettingsBlock.active ? UiTheme.blue : UiTheme.textPrimary
                     font.pixelSize: root.sp(10); font.bold: true
                 }
                 MouseArea {
@@ -1390,13 +1401,13 @@ Rectangle {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                radius: 5
-                color: quickRecMouse.pressed ? "#3a1717" : "#211718"
+                radius: 0
+                color: quickRecMouse.pressed ? "#3a1717" : UiTheme.surfaceRaised
                 Row {
                     anchors.centerIn: parent
                     spacing: 5
                     Rectangle { width: 7; height: 7; radius: 4; color: "#c84848"; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: "REC"; color: "#e2a4a4"; font.pixelSize: root.sp(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                    Text { text: "REC"; color: UiTheme.textSecondary; font.pixelSize: root.sp(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                 }
                 MouseArea {
                     id: quickRecMouse
@@ -1409,13 +1420,13 @@ Rectangle {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                radius: 5
-                color: quickFullscreenMouse.pressed ? "#1f3345" : "#181b1e"
+                radius: 0
+                color: quickFullscreenMouse.pressed ? UiTheme.blueDim : UiTheme.surfaceRaised
                 Row {
                     anchors.centerIn: parent
                     spacing: 5
-                    Text { text: "⛶"; color: "#a9bbc8"; font.pixelSize: root.sp(15); anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: "FULLSCREEN"; color: "#d5dce2"; font.pixelSize: root.sp(9); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                    Text { text: "⛶"; color: UiTheme.textSecondary; font.pixelSize: root.sp(15); anchors.verticalCenter: parent.verticalCenter }
+                    Text { text: "FULLSCREEN"; color: UiTheme.textPrimary; font.pixelSize: root.sp(9); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                 }
                 MouseArea {
                     id: quickFullscreenMouse
@@ -1452,7 +1463,7 @@ Rectangle {
             width: 54
             height: 4
             radius: 2
-            color: pullHandleMouse.pressed ? "#b5c9d9" : "#71808b"
+            color: pullHandleMouse.pressed ? UiTheme.textPrimary : UiTheme.textLabel
         }
 
         MouseArea {
@@ -1503,10 +1514,10 @@ Rectangle {
         z: 11
         width: 136
         height: 22
-        radius: 3
-        color: "#090909"
+        radius: 0
+        color: UiTheme.displayBackground
         border.width: 1
-        border.color: clipNow ? "#a82020" : "#1d1d1d"
+        border.color: clipNow ? UiTheme.error : UiTheme.border
 
         // Final MASTER 1/2 peak: after summed deck mix, master gain and limiter.
         // Never reconstruct this from one or more channel meters.
@@ -1521,10 +1532,10 @@ Rectangle {
             return Math.ceil((db + 54.0) * (segs / 66.0))
         }
         function segColor(i) {
-            if (i >= 22) return "#ff3b30"
-            if (i >= 19) return "#ff8c2a"
-            if (i >= 14) return "#d8a21a"
-            return "#35c46f"
+            if (i >= 22) return UiTheme.error
+            if (i >= 19) return UiTheme.warning
+            if (i >= 14) return UiTheme.cue
+            return UiTheme.play
         }
 
         Column {
@@ -1541,7 +1552,7 @@ Rectangle {
                         height: 3
                         radius: 1
                         readonly property int litCount: centerMeter.litSegments(centerMeter.levelL)
-                        color: index < litCount ? centerMeter.segColor(index) : "#1b1b1b"
+                        color: index < litCount ? centerMeter.segColor(index) : UiTheme.knobTrack
                     }
                 }
             }
@@ -1556,7 +1567,7 @@ Rectangle {
                         height: 3
                         radius: 1
                         readonly property int litCount: centerMeter.litSegments(centerMeter.levelR)
-                        color: index < litCount ? centerMeter.segColor(index) : "#1b1b1b"
+                        color: index < litCount ? centerMeter.segColor(index) : UiTheme.knobTrack
                     }
                 }
             }
@@ -1574,9 +1585,9 @@ Rectangle {
                         readonly property bool deckABeat: index < 4
                         readonly property int beatIndex: index % 4
                         readonly property var inf: deckABeat ? root.deckBeatInfo(deckA) : root.deckBeatInfo(deckB)
-                        color: !inf.valid ? "#222222"
+                        color: !inf.valid ? UiTheme.textMuted
                              : (beatIndex + 1) === inf.beatInBar ? (deckABeat ? root.clrA : root.clrB)
-                             : (deckABeat ? "#382500" : "#002436")
+                             : (deckABeat ? UiTheme.orangeDim : UiTheme.blueDim)
                     }
                 }
             }

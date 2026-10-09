@@ -32,6 +32,8 @@ class ScrollingWaveformItem : public QQuickItem
                NOTIFY backgroundColorChanged)
     Q_PROPERTY(int renderStyle READ renderStyle WRITE setRenderStyle
                NOTIFY renderStyleChanged)
+    Q_PROPERTY(double playheadPosition READ playheadPosition WRITE setPlayheadPosition
+               NOTIFY playheadPositionChanged)
     Q_PROPERTY(bool rasterWorkEnabled READ rasterWorkEnabled WRITE setRasterWorkEnabled
                NOTIFY rasterWorkEnabledChanged)
     Q_PROPERTY(bool slipPreview READ slipPreview WRITE setSlipPreview NOTIFY slipPreviewChanged)
@@ -59,6 +61,11 @@ public:
         return static_cast<int>(m_renderStyle.load(std::memory_order_relaxed));
     }
     void setRenderStyle(int style);
+    [[nodiscard]] double playheadPosition() const noexcept
+    {
+        return m_playheadPosition.load(std::memory_order_relaxed);
+    }
+    void setPlayheadPosition(double position);
     [[nodiscard]] bool rasterWorkEnabled() const noexcept { return m_rasterWorkEnabled; }
     void setRasterWorkEnabled(bool enabled);
     [[nodiscard]] bool slipPreview() const noexcept { return m_slipPreview; }
@@ -89,6 +96,7 @@ signals:
     void effectivePixelsPerSecondChanged();
     void backgroundColorChanged();
     void renderStyleChanged();
+    void playheadPositionChanged();
     void rasterWorkEnabledChanged();
     void slipPreviewChanged();
     void contentReadyChanged();
@@ -123,6 +131,7 @@ private:
     bool m_rasterWorkEnabled = true;
     bool m_slipPreview = false;
     float m_pixelsPerPoint = 0.22f;
+    std::atomic<double> m_playheadPosition{0.5};
     // Scene-graph scale belongs to this waveform instance. Keeping a local
     // snapshot prevents another deck's engine state (or a render-thread read
     // during its update) from leaking into this item's horizontal scale.

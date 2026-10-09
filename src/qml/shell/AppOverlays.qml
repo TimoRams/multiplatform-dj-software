@@ -25,6 +25,7 @@ Item {
     ExitOverlay {
         anchors.fill: parent
         appWindow: root.appWindow
+        mainLayout: root.mainLayout
     }
 
     component StartupOverlay: Item {
@@ -611,12 +612,24 @@ Item {
     component ExitOverlay: Rectangle {
         id: exitOverlay
         required property var appWindow
+        required property Item mainLayout
         readonly property var window: appWindow
         anchors.fill: parent
         z: 1000
         visible: window.exitPromptVisible
-        color: window.unifiedGray
+        color: "transparent"
         focus: visible
+
+        PerformanceBackdrop {
+            objectName: "exitBackdrop"
+            anchors.fill: parent
+            sourceItem: requested ? exitOverlay.mainLayout : null
+            sourceOrigin: Qt.point(0, 0)
+            requested: exitOverlay.visible && !window.exitShutdownInProgress
+            maximumCaptureSize: Qt.size(512, 512)
+            live: false
+            tint: Qt.rgba(0.06, 0.06, 0.06, 0.65)
+        }
 
         MouseArea {
             anchors.fill: parent

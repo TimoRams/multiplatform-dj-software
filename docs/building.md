@@ -44,6 +44,11 @@ in Qt 6.4, rather than requiring a newer interface convenience method.
 The waveform raster worker uses
 `std::thread` with explicit stop/wake/join so it does not require Apple's
 libc++ to provide `std::jthread` or `std::stop_token`.
+Frosted sidebars use Qt ShaderTools' `qsb` at build time; the compiled shader
+resources support Qt 6.4's ShaderEffect (no QtQuick.Effects dependency). The
+shipping application does not need the shader compiler. Qt's online installer
+needs the **Qt Shader Tools** (`qtshadertools`) module; Homebrew's `qt@6` includes
+it, and Arch Linux provides `qt6-shadertools`.
 
 ## Linux
 
@@ -53,7 +58,7 @@ Ubuntu 24.04 dependencies:
 sudo apt update
 sudo apt install -y \
   build-essential cmake curl ninja-build ccache pkg-config \
-  qt6-base-dev qt6-declarative-dev libqt6sql6-sqlite \
+  qt6-base-dev qt6-declarative-dev qt6-shadertools-dev qt6-shader-baker libqt6sql6-sqlite \
   qml6-module-qtqml qml6-module-qtqml-models \
   qml6-module-qtqml-workerscript qml6-module-qtquick \
   qml6-module-qtquick-controls qml6-module-qtquick-layouts \

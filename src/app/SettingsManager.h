@@ -30,6 +30,8 @@ class SettingsManager : public QObject
     Q_PROPERTY(QString timeStretchBackend READ timeStretchBackend WRITE setTimeStretchBackend NOTIFY timeStretchBackendChanged)
     Q_PROPERTY(int waveformRenderStyle READ waveformRenderStyle WRITE setWaveformRenderStyle
                NOTIFY waveformRenderStyleChanged)
+    Q_PROPERTY(double waveformPlayheadPosition READ waveformPlayheadPosition WRITE setWaveformPlayheadPosition
+               NOTIFY waveformPlayheadPositionChanged)
     Q_PROPERTY(bool previousRunUnclean READ previousRunUnclean CONSTANT)
     Q_PROPERTY(QString previousRunWarningMessage READ previousRunWarningMessage CONSTANT)
 
@@ -125,6 +127,8 @@ public:
     void setTimeStretchBackend(const QString& backend);
     int waveformRenderStyle() const;
     void setWaveformRenderStyle(int style);
+    double waveformPlayheadPosition() const;
+    void setWaveformPlayheadPosition(double position);
 
     // Generic persisted UI/layout state (mode, deck count, panel visibility, ...).
     // Stored under a "UI/" key prefix in the user properties file.
@@ -164,6 +168,7 @@ signals:
     void tightDoubleSyncChanged();
     void timeStretchBackendChanged();
     void waveformRenderStyleChanged();
+    void waveformPlayheadPositionChanged();
     void crossfaderSettingsChanged();
 
 private:

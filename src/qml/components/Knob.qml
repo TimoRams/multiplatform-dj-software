@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls as Controls
+import DJSoftware
 
 // Shared rotary knob.
 // – accentColor: the fill arc color (pass deck accent or unit accent)
@@ -9,7 +10,7 @@ Controls.Dial {
     id: knob
 
     property real  defaultValue: (from + to) / 2
-    property color accentColor:  "#aaaaaa"
+    property color accentColor: UiTheme.blue
 
     background: Rectangle {
         x: knob.width  / 2 - width  / 2
@@ -38,9 +39,9 @@ Controls.Dial {
                 var norm = c01((knob.value - knob.from) / (knob.to - knob.from))
 
                 ctx.lineWidth = lw
-                ctx.lineCap   = "round"
+                ctx.lineCap   = "butt"
 
-                ctx.strokeStyle = "#252525"
+                ctx.strokeStyle = UiTheme.knobTrack
                 ctx.beginPath()
                 ctx.arc(cx, cy, r, sDeg * Math.PI / 180, (sDeg + span) * Math.PI / 180, false)
                 ctx.stroke()
@@ -74,7 +75,8 @@ Controls.Dial {
             width:  parent.width  * 0.78
             height: parent.height * 0.78
             radius: width / 2
-            color:  "#1a1a1a"
+            color: UiTheme.knobFace
+            border.color: knob.visualFocus ? knob.accentColor : UiTheme.borderSubtle
         }
     }
 
@@ -87,7 +89,7 @@ Controls.Dial {
         color:  "transparent"
 
         Rectangle {
-            color:  "#c8c8c8"
+            color: UiTheme.knobHandle
             width:  1.5
             height: parent.height * 0.42
             anchors.horizontalCenter: parent.horizontalCenter

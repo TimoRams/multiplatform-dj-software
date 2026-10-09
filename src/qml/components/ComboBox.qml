@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Window
+import DJSoftware
 
 Controls.ComboBox {
     id: control
@@ -23,20 +24,22 @@ Controls.ComboBox {
 
     background: Rectangle {
         radius: 0
-        color:  control.pressed ? "#2d2d2d" : "#1e1e1e"
+        color: UiTheme.buttonBg(false, control.hovered, control.pressed)
+        border.color: control.visualFocus ? UiTheme.blue : UiTheme.border
 
         Rectangle {
             anchors.left:   parent.left
             anchors.right:  parent.right
             anchors.bottom: parent.bottom
             height: 1
-            color:  control.visualFocus ? "#ff9900" : "#333333"
+            color: control.visualFocus ? UiTheme.blue : UiTheme.border
         }
     }
 
     contentItem: Text {
         text:              control.displayText
-        color:             control.enabled ? "#e8e8e8" : "#444444"
+        color:             control.enabled ? UiTheme.textPrimary : UiTheme.textMuted
+        font.family:       UiTheme.uiFontFamily
         font.pixelSize:    control.sp(12)
         verticalAlignment: Text.AlignVCenter
         leftPadding:  Math.max(8, Math.round(control.implicitHeight * 0.3))
@@ -57,21 +60,22 @@ Controls.ComboBox {
             context.lineTo(width, 0)
             context.lineTo(width / 2, height)
             context.closePath()
-            context.fillStyle = control.enabled ? "#999999" : "#444444"
+            context.fillStyle = control.enabled ? UiTheme.textSecondary : UiTheme.textMuted
             context.fill()
         }
     }
 
     popup.background: Rectangle {
         radius: 0
-        color:  "#181818"
+        color: UiTheme.surfaceInset
+        border.color: UiTheme.borderStrong
 
         Rectangle {
             anchors.left:  parent.left
             anchors.right: parent.right
             anchors.top:   parent.top
             height: 1
-            color:  "#333333"
+            color: UiTheme.borderStrong
         }
     }
 }

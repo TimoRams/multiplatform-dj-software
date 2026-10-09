@@ -8,7 +8,7 @@ Controls.Button {
 
     readonly property var hostWindow: control.Window.window
     property bool useViewportScaling: false
-    property color accentColor: UiTheme.deckA
+    property color accentColor: UiTheme.blue
 
     function sp(px) {
         if (!hostWindow) return px
@@ -28,6 +28,8 @@ Controls.Button {
     background: Rectangle {
         radius: 0
         color:  UiTheme.buttonBg(control.checked || control.down, control.hovered, control.down)
+        border.color: control.visualFocus ? control.accentColor
+                      : (control.hovered ? UiTheme.borderHover : UiTheme.borderSubtle)
 
         Rectangle {
             anchors.left:   parent.left
@@ -49,6 +51,7 @@ Controls.Button {
                             ? (control.checked || control.down ? UiTheme.textPrimary : UiTheme.textSecondary)
                             : UiTheme.textMuted
         font.pixelSize:     control.sp(12)
+        font.family:        UiTheme.uiFontFamily
         font.bold:          control.checked || control.down
         font.letterSpacing: 0.4
         horizontalAlignment: Text.AlignHCenter

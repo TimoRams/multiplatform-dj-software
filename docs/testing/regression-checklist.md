@@ -53,6 +53,43 @@ and real selector mouse/keyboard/Escape behavior. Animation checks wait for
 observed state rather than assuming one event-loop pass completes a transition.
 It does not replace the real scene-graph or hardware rendering tests.
 
+The performance sidebar regression resizes already-created panels through
+180/240/320/420 px and large heights at 800/1280/1920 px widths, down and up again.
+It checks actual row/text bounds and overlaps, A/B waveform alignment, vertical
+action reachability, and native clicks on the bottom quantize/grid-lock/FX actions.
+Short panes scroll independently; no small-font or minimum-window-height workaround
+is needed. The waveform minimum never exceeds the available preferred height.
+
+Frosted sidebar captures contain only the waveform backing layer, never their
+own text, controls or blur output. Captures are pane-cropped, quarter-resolution
+and capped at 128x256 pixels each. One capture plus one intermediate plus one
+final render pass uses two five-tap GPU blur passes; the two offscreen textures
+are bounded (256 KiB RGBA per pane, excluding backend alignment/overheads).
+Updates follow dirty scene-graph frames without a separate clock. Closed/hidden
+panels, background operation and non-normal render-pressure tiers unload all
+capture/effect objects. Software rendering uses a readable flat tint instead.
+Check macOS/Metal and Linux GPU rendering manually for frosted translucency,
+sharp controls and square edges; this is not refractive/liquid-glass styling.
+Where a GPU backend is available, run the same harness with
+`QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=rhi QSG_RHI_BACKEND=opengl
+build-tests/BrockDJ_qml_component_tests`. Its RHI-only framebuffer probe checks
+that the backdrop blurs a stripe pattern while the captured backing stays sharp.
+
+The exit prompt uses the same separable GPU blur on `mainLayout` alone (never
+the app root or overlay controls). Its quarter-resolution textures are capped at
+512x512 each, frozen while the prompt stays open, refreshed on resize/reopen and
+detached before shutdown teardown. Software rendering, background operation and
+render pressure retain the readable flat fallback. The RHI harness verifies real
+stripe blur, frozen content, resize/reopen refresh and capture destruction.
+
+`control_clock` and the production-header QML harness exercise sustained 60 Hz
+GUI delivery against the 250 Hz clock: every base tick is severely late, but
+coalesced 30 Hz meter and 20 Hz beat/Link publications must still run. A long
+pause publishes current values once, not a catch-up backlog. Expensive visual
+groups still skip late ticks and background mode still suppresses meters.
+Also check master VU silence recovery and bar/beat changes after seek, play/pause,
+track load/eject and returning from the background during audio playback.
+
 The compact AIO bottom bar uses the shared buttons and native deck transport.
 `qml_component` covers per-deck play/pause, current beat-jump ranges, held CUE
 release when hidden, unloaded-deck disabling and persisted menu visibility.

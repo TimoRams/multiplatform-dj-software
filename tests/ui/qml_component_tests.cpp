@@ -7,9 +7,12 @@
 #include <QQmlExpression>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QPointer>
+#include <QSGRendererInterface>
 #include <QUrl>
 #include <QtTest/qtest.h>
 #include <QtTest/qtesttouch.h>
+#include "app/ControlClock.h"
 
 #include <algorithm>
 #include <cmath>
@@ -31,6 +34,7 @@ class ScrollingWaveformItemStub : public QQuickItem
     Q_PROPERTY(qreal pixelsPerPoint READ pixelsPerPoint WRITE setPixelsPerPoint)
     Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor)
     Q_PROPERTY(int renderStyle READ renderStyle WRITE setRenderStyle)
+    Q_PROPERTY(qreal playheadPosition READ playheadPosition WRITE setPlayheadPosition)
     Q_PROPERTY(bool rasterWorkEnabled READ rasterWorkEnabled WRITE setRasterWorkEnabled)
     Q_PROPERTY(bool slipPreview READ slipPreview WRITE setSlipPreview)
     Q_PROPERTY(bool contentReady READ contentReady CONSTANT)
@@ -45,6 +49,8 @@ public:
     void setBackgroundColor(const QColor& value) { m_backgroundColor = value; }
     int renderStyle() const { return m_renderStyle; }
     void setRenderStyle(int value) { m_renderStyle = value; }
+    qreal playheadPosition() const { return m_playheadPosition; }
+    void setPlayheadPosition(qreal value) { m_playheadPosition = value; }
     bool rasterWorkEnabled() const { return m_rasterWorkEnabled; }
     void setRasterWorkEnabled(bool value) { m_rasterWorkEnabled = value; }
     bool slipPreview() const { return m_slipPreview; }
@@ -56,7 +62,7 @@ public:
     Q_INVOKABLE qreal screenDeltaToSeconds(qreal delta) const { return delta / 100.0; }
     Q_INVOKABLE qreal timelineSecondsAtX(qreal x, qreal playhead) const
     {
-        return playhead + (x - width() * 0.5) / effectivePixelsPerSecond();
+        return playhead + (x - width() * m_playheadPosition) / effectivePixelsPerSecond();
     }
 
 private:
@@ -64,6 +70,7 @@ private:
     qreal m_pixelsPerPoint = 0.22;
     QColor m_backgroundColor;
     int m_renderStyle = 0;
+    qreal m_playheadPosition = 0.5;
     bool m_rasterWorkEnabled = true;
     bool m_slipPreview = false;
 };
@@ -633,6 +640,99 @@ bool clickItem(QQuickWindow& window, QObject* object, const char* description)
     return true;
 }
 
+bool headerPublicationTests(const std::string& header)
+{
+    QString methods;
+    if (!extractFunctions(header, {"deckBeatInfo"}, methods))
+        return false;
+    const auto connectionsBegin = header.find("    Connections {");
+    const auto connectionsEnd = header.find("    Component.onCompleted:", connectionsBegin);
+    if (!require(connectionsBegin != std::string::npos && connectionsEnd != std::string::npos,
+                 "production header publication connections exist"))
+        return false;
+    QQmlEngine engine;
+    ControlClock clock;
+    engine.rootContext()->setContextProperty("controlClock", &clock);
+    auto deck = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property var atomicState: ({position: 0})
+            property var trackData: ({isBpmAnalyzed: true, bpm: 120,
+                                     sampleRate: 48000, firstBeatSample: 0})
+            property real masterVuLevelL: 0
+            property real masterVuLevelR: 0
+            signal progressChanged()
+            signal playingChanged()
+            function getPlayheadPositionAtomic() { return atomicState.position }
+            function moveAtomic(position) { atomicState.position = position }
+        }
+    )"), "header atomic deck sink instantiates");
+    if (!deck)
+        return false;
+    engine.rootContext()->setContextProperty("deckA", deck.get());
+    engine.rootContext()->setContextProperty("deckB", deck.get());
+    const auto meterBegin = header.find("        property real levelL: deckA");
+    const auto meterEnd = header.find("\n        property bool clipNow:", meterBegin);
+    if (!require(meterBegin != std::string::npos && meterEnd != std::string::npos,
+                 "production master meter bindings exist"))
+        return false;
+    auto host = createQmlObject(engine, QStringLiteral(R"(
+        import QtQuick
+        Item {
+            id: root
+            property int beatUiTick: 0
+            property string currentTime: ""
+            property var beatInfo: deckBeatInfo(deckA)
+            function refreshLatencyInfo() {}
+    )") + methods
+        + QString::fromStdString(header.substr(connectionsBegin, connectionsEnd - connectionsBegin))
+        + QString::fromStdString(header.substr(meterBegin, meterEnd - meterBegin))
+        + QStringLiteral("\n}"), "real header tick and meter bindings instantiate");
+    if (!host)
+        return false;
+    double peak = 0.0;
+    ControlClock::Callbacks callbacks;
+    callbacks.meters = [&](const ControlTickContext&) {
+        deck->setProperty("masterVuLevelL", peak);
+        deck->setProperty("masterVuLevelR", peak * 0.5);
+    };
+    auto registration = clock.registerCallbacks(std::move(callbacks));
+    auto move = [&](double position) {
+        QQmlExpression expression(QQmlEngine::contextForObject(deck.get()), deck.get(),
+                                   QStringLiteral("moveAtomic(%1)").arg(position));
+        expression.evaluate();
+    };
+    auto bar = [&] {
+        QQmlExpression expression(QQmlEngine::contextForObject(host.get()), host.get(),
+                                  QStringLiteral("beatInfo.barNumber"));
+        return expression.evaluate().toInt();
+    };
+    clock.advanceForTesting(0.004);
+    move(8.5);
+    peak = 0.8;
+    for (int index = 0; index < 60; ++index)
+        clock.advanceForTesting(1.0 / 60.0);
+    bool ok = require(bar() == 5 && host->property("levelL").toDouble() == 0.8
+                          && host->property("levelR").toDouble() == 0.4,
+                      "sustained severely late ticks refresh actual header bar and master VU bindings");
+    move(0.5);
+    peak = 0;
+    clock.advanceForTesting(2.0);
+    ok &= require(bar() == 1 && host->property("levelL").toDouble() == 0,
+                  "a long stall coalesces directly to current seek position and silence");
+    move(16.5);
+    QMetaObject::invokeMethod(deck.get(), "progressChanged");
+    ok &= require(bar() == 9, "paused seek invalidates header immediately without a clock tick");
+    move(2.5);
+    QMetaObject::invokeMethod(deck.get(), "playingChanged");
+    ok &= require(bar() == 2, "play transition invalidates the atomic header position");
+    deck->setProperty("trackData", QVariantMap{{"isBpmAnalyzed", false}});
+    QQmlExpression valid(QQmlEngine::contextForObject(host.get()), host.get(),
+                          QStringLiteral("beatInfo.valid"));
+    ok &= require(!valid.evaluate().toBool(), "eject or unanalyzed track clears the header count");
+    return ok;
+}
+
 bool hamburgerToggleTests(const std::string& header)
 {
     const auto popupBegin = header.find("    Popup {\n        id: viewMenuPopup");
@@ -1016,6 +1116,9 @@ bool appOverlaysRuntimeTests(const std::string& source)
         "DJSoftware", 1, 0, "UiTheme");
     qmlRegisterType(QUrl::fromLocalFile(componentDirectory + QStringLiteral("Button.qml")),
                     "DJSoftware", 1, 0, "Button");
+    qmlRegisterType(QUrl::fromLocalFile(QString::fromUtf8(BROCKDJ_SOURCE_DIR)
+                        + QStringLiteral("/src/qml/performance/PerformanceBackdrop.qml")),
+                    "DJSoftware", 1, 0, "PerformanceBackdrop");
     QQmlEngine engine;
     auto appWindow = createQmlObject(engine, QStringLiteral(R"(
         import QtQuick
@@ -1038,8 +1141,20 @@ bool appOverlaysRuntimeTests(const std::string& source)
         }
     )"), "AppOverlays window sink instantiates");
     auto mainLayout = createQmlObject(engine, QStringLiteral(R"(
-        import QtQml
-        QtObject { property bool visible: false }
+        import QtQuick
+        Item {
+            width: 800; height: 600; visible: false
+            property color stripeColor: "white"
+            Rectangle { anchors.fill: parent; color: "black" }
+            Repeater {
+                model: 50
+                Rectangle {
+                    required property int index
+                    x: index * 16; width: 8; height: 600
+                    color: parent.stripeColor
+                }
+            }
+        }
     )"), "AppOverlays main-layout sink instantiates");
     auto appConfig = createQmlObject(engine, QStringLiteral(R"(
         import QtQml
@@ -1132,7 +1247,9 @@ bool appOverlaysRuntimeTests(const std::string& source)
 
     QQuickWindow window;
     window.resize(800, 600);
+    qobject_cast<QQuickItem*>(mainLayout.get())->setParentItem(window.contentItem());
     qobject_cast<QQuickItem*>(host.get())->setParentItem(window.contentItem());
+    qobject_cast<QQuickItem*>(host.get())->setSize(QSizeF(800, 600));
     window.show();
     QCoreApplication::processEvents();
     bool ok = require(!mainLayout->property("visible").toBool()
@@ -1179,6 +1296,66 @@ bool appOverlaysRuntimeTests(const std::string& source)
     QCoreApplication::processEvents();
     ok &= require(exitItem->isVisible() && exitItem->property("focus").toBool(),
                   "exit prompt visibility and focus follow the application window");
+    auto* backdrop = exitItem->findChild<QObject*>("exitBackdrop");
+    if (!require(backdrop != nullptr, "exit uses the shared GPU backdrop"))
+        return false;
+    ok &= require(backdrop->property("sourceItem").value<QQuickItem*>()
+                      == qobject_cast<QQuickItem*>(mainLayout.get())
+                      && !backdrop->property("live").toBool()
+                      && backdrop->property("maximumCaptureSize").toSize() == QSize(512, 512),
+                  "exit captures only mainLayout into bounded frozen textures");
+    const bool software = window.rendererInterface()->graphicsApi() == QSGRendererInterface::Software;
+    if (software)
+        ok &= require(!backdrop->property("blurActive").toBool(),
+                      "software exit has an opaque readable fallback");
+    QQmlExpression activate(QQmlEngine::contextForObject(backdrop), backdrop,
+                            QStringLiteral("graphicsAvailable = true; applicationActive = true"));
+    activate.evaluate();
+    QCoreApplication::processEvents();
+    QPointer<QObject> capture(backdrop->findChild<QObject*>("backdropCapture"));
+    ok &= require(capture && !capture->property("live").toBool()
+                      && !capture->property("recursive").toBool(),
+                  "exit creates a nonrecursive one-shot GPU capture");
+    if (!software) {
+        startupItem->setProperty("welcomeActive", false);
+        appWindow->setProperty("uncleanShutdownWarningVisible", false);
+        QTest::qWait(80);
+        const QImage first = window.grabWindow();
+        if (!require(!first.isNull(), "exit blur renders a framebuffer"))
+            return false;
+        const QColor firstPixel = first.pixelColor(36, 40);
+        ok &= require(std::abs(firstPixel.red() - first.pixelColor(44, 40).red()) < 30,
+                      "exit really blurs stripes instead of merely dimming them");
+        mainLayout->setProperty("stripeColor", QColor(Qt::red));
+        QTest::qWait(50);
+        const QImage frozen = window.grabWindow();
+        ok &= require(!frozen.isNull() && frozen.pixelColor(36, 40) == firstPixel,
+                      "exit snapshot does not recapture animated backing content");
+        appWindow->setProperty("exitPromptVisible", false);
+        QCoreApplication::processEvents();
+        appWindow->setProperty("exitPromptVisible", true);
+        QTest::qWait(50);
+        const QImage reopened = window.grabWindow();
+        ok &= require(!reopened.isNull() && reopened.pixelColor(36, 40).green() < firstPixel.green(),
+                      "reopening exit takes a fresh snapshot");
+        mainLayout->setProperty("stripeColor", QColor(Qt::blue));
+        qobject_cast<QQuickItem*>(mainLayout.get())->setSize(QSizeF(640, 480));
+        qobject_cast<QQuickItem*>(host.get())->setSize(QSizeF(640, 480));
+        window.resize(640, 480);
+        QTest::qWait(80);
+        const QImage resized = window.grabWindow();
+        ok &= require(!resized.isNull()
+                          && resized.pixelColor(36, 40).blue() > resized.pixelColor(36, 40).red()
+                          && backdrop->property("captureRect").toRectF().size() == QSizeF(640, 480),
+                      "resizing refreshes the frozen exit snapshot to current geometry and content");
+    }
+    appWindow->setProperty("exitShutdownInProgress", true);
+    QCoreApplication::processEvents();
+    ok &= require(QTest::qWaitFor([&] { return capture.isNull(); })
+                      && !backdrop->property("sourceItem").value<QQuickItem*>(),
+                  "shutdown detaches the source and destroys capture before layout teardown");
+    appWindow->setProperty("exitShutdownInProgress", false);
+    QCoreApplication::processEvents();
     appWindow->setProperty("exitPromptVisible", false);
     QCoreApplication::processEvents();
     ok &= require(!exitItem->isVisible(),
@@ -1416,6 +1593,9 @@ bool qmlMergeRuntimeTests()
     qmlRegisterType(QUrl::fromLocalFile(qmlDirectory
                         + QStringLiteral("waveform/EnlargedWaveform.qml")),
                     "DJSoftware", 1, 0, "EnlargedWaveform");
+    qmlRegisterType(QUrl::fromLocalFile(qmlDirectory
+                        + QStringLiteral("performance/PerformanceBackdrop.qml")),
+                    "DJSoftware", 1, 0, "PerformanceBackdrop");
 
     QQmlEngine engine;
     auto windowContext = createQmlObject(engine, QStringLiteral(R"(
@@ -1439,11 +1619,17 @@ bool qmlMergeRuntimeTests()
             property string effectType2: "---"
             property string soundColorMode: "Filter"
             property real soundColorParam: 0.5
+            property real wetDry1: 0
+            property bool deck1A: false
+            property bool deck1B: false
             function setEffectType(unit, value) {
                 if (unit === 1) effectType1 = value; else effectType2 = value
             }
-            function setDeckAssignment(unit, deck, value) {}
-            function setWetDry(unit, value) {}
+            function setDeckAssignment(unit, deck, value) {
+                if (unit === 1 && deck === 1) deck1A = value
+                if (unit === 1 && deck === 2) deck1B = value
+            }
+            function setWetDry(unit, value) { if (unit === 1) wetDry1 = value }
             function unitEnabled(unit) { return unit === 1 ? enabled1 : enabled2 }
             function setUnitEnabled(unit, value) {
                 if (unit === 1) enabled1 = value; else enabled2 = value
@@ -1500,6 +1686,15 @@ bool qmlMergeRuntimeTests()
             function setManualBpm(value) {}
         }
     )"), "QML merge deck A context instantiates");
+    auto slipEngine = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool isPlaying: false
+            property bool scratchVisualActive: false
+            property bool slipPreviewActive: true
+            property real pixelsPerSecond: 0
+        }
+    )"), "slip-preview test engine instantiates");
     auto deckB = createQmlObject(engine, QStringLiteral(R"(
         import QtQml
         QtObject {
@@ -1526,12 +1721,25 @@ bool qmlMergeRuntimeTests()
             function setManualBpm(value) {}
         }
     )"), "QML merge deck B context instantiates");
+    auto settingsManager = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property int waveformRenderStyle: 0
+            property real waveformPlayheadPosition: 0.5
+        }
+    )"), "waveform settings context instantiates");
+    auto pressure = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject { property string tier: "normal" }
+    )"), "backdrop pressure context instantiates");
     if (!windowContext || !fxManager || !waveformZoom || !deviceLibrary
-        || !deckA || !deckB)
+        || !deckA || !deckB || !settingsManager || !slipEngine || !pressure)
         return false;
 
     QQmlContext context(engine.rootContext());
     context.setContextProperty(QStringLiteral("window"), windowContext.get());
+    context.setContextProperty(QStringLiteral("settingsManager"), settingsManager.get());
+    context.setContextProperty(QStringLiteral("renderPressurePolicy"), pressure.get());
     context.setContextProperty(QStringLiteral("fxManager"), fxManager.get());
     context.setContextProperty(QStringLiteral("waveformZoomController"), waveformZoom.get());
     context.setContextProperty(QStringLiteral("deviceLibraryManager"),
@@ -1549,6 +1757,7 @@ bool qmlMergeRuntimeTests()
     }
     performance->setProperty("deckAEngine", QVariant::fromValue(deckA.get()));
     performance->setProperty("deckBEngine", QVariant::fromValue(deckB.get()));
+    performance->setProperty("fx", QVariant::fromValue(fxManager.get()));
     auto* performanceItem = qobject_cast<QQuickItem*>(performance.get());
     if (!require(performanceItem != nullptr, "performance waveform host is visual"))
         return false;
@@ -1613,6 +1822,288 @@ bool qmlMergeRuntimeTests()
                   }),
                   "the right-side Beat FX panel remains host-controlled");
 
+    // Resize the existing instances: construction at 900x600 hid shrinking rows.
+    const auto checkPanelGeometry = [&](QObject* panel, const char* label) {
+        bool valid = true;
+        if (!panel)
+            return false;
+        for (auto* item : panel->findChildren<QQuickItem*>()) {
+            const QByteArray type(item->metaObject()->className());
+            if (type.contains("ColumnLayout") || type.contains("GridLayout")) {
+                for (auto* row : item->childItems()) {
+                    if (row->width() <= 0 || row->height() <= 0)
+                        continue;
+                    valid &= row->y() >= -0.5
+                        && row->y() + row->height() <= item->height() + 0.5;
+                    for (auto* other : item->childItems()) {
+                        if (other == row || other->width() <= 0 || other->height() <= 0)
+                            continue;
+                        const QRectF bounds(row->position(), row->size());
+                        const QRectF otherBounds(other->position(), other->size());
+                        const auto overlap = bounds.intersected(otherBounds);
+                        valid &= overlap.width() <= 0.5 || overlap.height() <= 0.5;
+                    }
+                }
+            }
+            if (type.startsWith("QQuickText") && item->parentItem() && item->isVisible()) {
+                valid &= item->y() >= -0.5 && item->x() >= -0.5
+                    && item->x() + item->width() <= item->parentItem()->width() + 0.5
+                    && item->y() + item->height() <= item->parentItem()->height() + 0.5;
+            }
+        }
+        if (!valid)
+            std::cerr << label << " overflows at viewport "
+                      << performanceItem->width() << 'x' << performanceItem->height()
+                      << ", panel height=" << panel->property("height").toDouble() << '\n';
+        return require(valid, label);
+    };
+    const auto revealAction = [&](QObject* panel, QQuickItem* action) {
+        if (!panel || !action)
+            return false;
+        auto* scroll = panel->findChild<QQuickItem*>(
+            panel == gridPanel ? QStringLiteral("gridScroll")
+                : (panel == beatFxPanel ? QStringLiteral("fxScroll")
+                                       : QStringLiteral("deckScroll")));
+        if (!scroll)
+            return false;
+        auto* content = scroll->property("contentItem").value<QQuickItem*>();
+        if (!content)
+            return false;
+        const qreal actionY = action->mapToItem(content, QPointF()).y();
+        const qreal maximum = std::max(0.0,
+            scroll->property("contentHeight").toDouble() - scroll->height());
+        scroll->setProperty("contentY", std::clamp(
+            actionY - (scroll->height() - action->height()) * 0.5, 0.0, maximum));
+        QCoreApplication::processEvents();
+        const QRectF bounds = action->mapRectToItem(scroll, QRectF(QPointF(), action->size()));
+        return bounds.top() >= -0.5 && bounds.bottom() <= scroll->height() + 0.5
+            && action->height() >= 24 && bounds.left() >= -0.5
+            && bounds.right() <= scroll->width() + 0.5
+            && scroll->property("contentWidth").toDouble() == scroll->width()
+            && scroll->clip();
+    };
+    const auto checkReachableActions = [&](QObject* panel) {
+        bool reachable = true;
+        for (auto* item : panel->findChildren<QQuickItem*>()) {
+            if (QByteArray(item->metaObject()->className()).startsWith("QQuickMouseArea")
+                && item->isVisible() && item->isEnabled()) {
+                // ScrollBar input belongs to the viewport, not the scrolling content.
+                if (item->parentItem()->metaObject()->className()
+                    == QByteArray("QQuickScrollBar"))
+                    continue;
+                reachable &= revealAction(panel, item);
+            }
+        }
+        return require(reachable, "every sidebar action is reachable without horizontal scrolling");
+    };
+    for (int width : {800, 1280, 1920}) {
+        for (int height : {180, 240, 320, 420, 800, 2160, 240, 600}) {
+            performanceWindow.resize(width, height);
+            performanceItem->setSize(QSizeF(width, height));
+            performance->setProperty("leftPanel", "deck");
+            QTest::qWait(220);
+            ok &= checkPanelGeometry(quickA, "deck A rows stay inside their content");
+            ok &= checkPanelGeometry(quickB, "deck B rows stay inside their content");
+            ok &= checkPanelGeometry(beatFxPanel, "FX rows do not squeeze below their text");
+            ok &= checkReachableActions(quickA);
+            ok &= checkReachableActions(quickB);
+            ok &= checkReachableActions(beatFxPanel);
+            ok &= require(std::abs(quickA->property("height").toDouble()
+                                      - performance->property("deckAHeight").toDouble()) < 0.5
+                              && std::abs(quickB->property("y").toDouble()
+                                      - performance->property("deckBY").toDouble()) < 0.5,
+                          "quick panels remain aligned with both waveform boundaries");
+            auto* quantize = quickB->findChild<QQuickItem*>(QStringLiteral("quantizeRow"));
+            const bool previousQuantize = deckB->property("quantizeEnabled").toBool();
+            ok &= revealAction(quickB, quantize)
+                && clickItem(performanceWindow, quantize, "scrolled deck B quantize is clickable");
+            ok &= require(deckB->property("quantizeEnabled").toBool() != previousQuantize,
+                          "deck B bottom action stays functional after resizing");
+            auto* engage = beatFxPanel->findChild<QQuickItem*>(QStringLiteral("fxEngageRow"));
+            const bool previousEnabled = fxManager->property("enabled1").toBool();
+            ok &= revealAction(beatFxPanel, engage)
+                && clickItem(performanceWindow, engage, "scrolled FX engage is clickable");
+            ok &= require(fxManager->property("enabled1").toBool() != previousEnabled,
+                          "FX bottom action stays functional after resizing");
+            performance->setProperty("leftPanel", "grid");
+            QCoreApplication::processEvents();
+            ok &= checkPanelGeometry(gridPanel, "beatgrid rows stay inside their content");
+            ok &= checkReachableActions(gridPanel);
+            const bool previousLocked = deckA->property("beatgridLocked").toBool();
+            ok &= revealAction(gridPanel, qobject_cast<QQuickItem*>(gridLock))
+                && clickItem(performanceWindow, gridLock, "scrolled grid lock is clickable");
+            ok &= require(deckA->property("beatgridLocked").toBool() != previousLocked,
+                          "beatgrid bottom action stays functional after resizing");
+            if (width == 800 && height == 180) {
+                std::cout << "Short sidebar geometry: deck viewport="
+                          << quickA->findChild<QObject*>(QStringLiteral("deckScroll"))
+                                 ->property("height").toDouble()
+                          << ", deck content="
+                          << quickA->findChild<QObject*>(QStringLiteral("deckScroll"))
+                                 ->property("contentHeight").toDouble()
+                          << ", grid content="
+                          << gridPanel->findChild<QObject*>(QStringLiteral("gridScroll"))
+                                 ->property("contentHeight").toDouble()
+                          << ", FX content="
+                          << beatFxPanel->findChild<QObject*>(QStringLiteral("fxScroll"))
+                                 ->property("contentHeight").toDouble() << '\n';
+            }
+        }
+    }
+    performanceItem->setSize(QSizeF(900, 600));
+    performanceWindow.resize(900, 600);
+
+    auto* backing = performance->findChild<QQuickItem*>(QStringLiteral("waveformBacking"));
+    auto* leftBackdrop = performance->findChild<QQuickItem*>(QStringLiteral("leftBackdrop"));
+    auto* rightBackdrop = performance->findChild<QQuickItem*>(QStringLiteral("rightBackdrop"));
+    ok &= require(backing && backing->findChildren<ScrollingWaveformItemStub*>().size() == 2,
+                  "the isolated blur source contains both waveform renderers");
+    for (auto* backdrop : {leftBackdrop, rightBackdrop}) {
+        if (!require(backdrop != nullptr, "each sidebar owns a scoped backdrop")) {
+            ok = false;
+            continue;
+        }
+        ok &= require(backdrop->property("sourceItem").value<QQuickItem*>() == backing
+                          && !backing->isAncestorOf(backdrop),
+                      "blur captures the waveform layer, never itself or its panel");
+        auto* loader = backdrop->findChild<QObject*>(QStringLiteral("backdropEffects"));
+        if (!require(loader != nullptr, "backdrop has a lazy effect loader")) {
+            ok = false;
+            continue;
+        }
+        backdrop->setProperty("graphicsAvailable", false);
+        QCoreApplication::processEvents();
+        ok &= require(!loader->property("active").toBool()
+                          && !loader->property("item").value<QObject*>(),
+                      "software rendering allocates no decorative captures or shader effects");
+        // Exercise lazy-object contracts on software too; GPU drawing is covered
+        // by running this same harness with QT_QUICK_BACKEND=rhi when available.
+        QQmlExpression forceBlur(&context, backdrop,
+            QStringLiteral("graphicsAvailable = true; applicationActive = true"));
+        forceBlur.evaluate();
+        ok &= require(!forceBlur.hasError(), "test override removes backend/activity bindings");
+        QCoreApplication::processEvents();
+        QPointer<QObject> capture(
+            backdrop->findChild<QObject*>(QStringLiteral("backdropCapture")));
+        QPointer<QObject> intermediate(
+            backdrop->findChild<QObject*>(QStringLiteral("backdropIntermediate")));
+        const QSize texture = backdrop->property("captureSize").toSize();
+        const QRectF crop = backdrop->property("captureRect").toRectF();
+        ok &= require(capture && intermediate && texture.width() <= 128 && texture.height() <= 256
+                          && capture->property("textureSize").toSize() == texture
+                          && intermediate->property("textureSize").toSize() == texture
+                          && !capture->property("recursive").toBool()
+                          && capture->property("sourceItem").value<QQuickItem*>() == backing
+                          && crop.width() <= 230 && crop.height() <= backing->height()
+                          && QRectF(QPointF(), backing->size()).contains(crop),
+                      "live nonrecursive capture stays cropped and both blur textures are capped");
+        performanceItem->setSize(QSizeF(1920, 2160));
+        QCoreApplication::processEvents();
+        ok &= require(QTest::qWaitFor([&] {
+            capture = backdrop->findChild<QObject*>(QStringLiteral("backdropCapture"));
+            intermediate = backdrop->findChild<QObject*>(QStringLiteral("backdropIntermediate"));
+            const QSize target = backdrop->property("captureSize").toSize();
+            return capture && intermediate && target.height() == 256
+                && capture->property("textureSize").toSize() == target
+                && intermediate->property("textureSize").toSize() == target;
+        }), "resized GPU capture bindings settle to the bounded target size");
+        const QSize tallTexture = backdrop->property("captureSize").toSize();
+        if (!capture || !intermediate) {
+            ok &= require(false, "visible backdrop restores bounded capture objects after resizing");
+            performanceItem->setSize(QSizeF(900, 600));
+            continue;
+        }
+        ok &= require(tallTexture.width() <= 128 && tallTexture.height() == 256
+                          && capture->property("textureSize").toSize() == tallTexture
+                          && intermediate->property("textureSize").toSize() == tallTexture,
+                      "a tall resized pane keeps both render targets at the hard height cap");
+        performanceItem->setSize(QSizeF(900, 600));
+        QCoreApplication::processEvents();
+        for (const char* tier : {"elevated", "critical", "suspended"}) {
+            pressure->setProperty("tier", tier);
+            QCoreApplication::processEvents();
+            ok &= require(!loader->property("active").toBool()
+                              && !loader->property("item").value<QObject*>(),
+                          "render pressure unloads all decorative capture/effect objects");
+        }
+        pressure->setProperty("tier", "normal");
+        QCoreApplication::processEvents();
+        ok &= require(loader->property("item").value<QObject*>() != nullptr,
+                      "normal pressure restores the lazy frosted backdrop");
+        backdrop->setProperty("applicationActive", false);
+        QCoreApplication::processEvents();
+        ok &= require(!loader->property("item").value<QObject*>(),
+                      "background application unloads decorative blur");
+        backdrop->setProperty("applicationActive", true);
+        backdrop->setVisible(false);
+        QCoreApplication::processEvents();
+        ok &= require(!loader->property("item").value<QObject*>(),
+                      "hidden sidebar unloads decorative blur");
+        backdrop->setVisible(true);
+        backdrop->setProperty("requested", false);
+        QCoreApplication::processEvents();
+        ok &= require(!loader->property("item").value<QObject*>(),
+                      "collapsed sidebar unloads decorative blur immediately");
+        backdrop->setProperty("graphicsAvailable", false);
+    }
+
+    if (performanceWindow.rendererInterface()->graphicsApi()
+        != QSGRendererInterface::Software) {
+        QQmlComponent blurProbeComponent(&engine);
+        blurProbeComponent.setData(R"(
+            import QtQuick
+            import DJSoftware
+            Item {
+                width: 256; height: 128
+                Item {
+                    id: pattern
+                    anchors.fill: parent
+                    Repeater {
+                        model: 32
+                        Rectangle {
+                            required property int index
+                            x: index * 8; width: 8; height: 128
+                            color: index % 2 ? "white" : "black"
+                        }
+                    }
+                }
+                PerformanceBackdrop {
+                    objectName: "blurProbe"
+                    width: 128; height: 128
+                    sourceItem: pattern
+                    applicationActive: true
+                }
+            }
+        )", QUrl::fromLocalFile(qmlDirectory + QStringLiteral("performance/BlurProbe.qml")));
+        std::unique_ptr<QObject> probe(blurProbeComponent.create(&context));
+        if (!require(probe != nullptr, "RHI blur probe instantiates")) {
+            std::cerr << blurProbeComponent.errorString().toStdString();
+            return false;
+        }
+        QQuickWindow probeWindow;
+        probeWindow.resize(256, 128);
+        qobject_cast<QQuickItem*>(probe.get())->setParentItem(probeWindow.contentItem());
+        probeWindow.show();
+        auto* blur = probe->findChild<QObject*>(QStringLiteral("blurProbe"));
+        ok &= require(blur && QTest::qWaitFor([&] {
+                          return blur->property("blurActive").toBool();
+                      }), "RHI renderer enables the actual two-pass backdrop");
+        QTest::qWait(100);
+        const QImage image = probeWindow.grabWindow();
+        const qreal dpr = image.devicePixelRatio();
+        const auto intensity = [&](int x) {
+            return qGray(image.pixel(QPoint(qRound(x * dpr), qRound(64 * dpr))));
+        };
+        if (!require(!image.isNull(), "RHI blur probe renders a real framebuffer"))
+            return false;
+        const int sharpContrast = std::abs(intensity(164) - intensity(172));
+        const int blurredContrast = std::abs(intensity(36) - intensity(44));
+        ok &= require(sharpContrast > 200 && blurredContrast < 30,
+                      "GPU backdrop reduces stripe contrast while the source stays sharp");
+        std::cout << "RHI backdrop probe: sharp contrast=" << sharpContrast
+                  << ", frosted contrast=" << blurredContrast << '\n';
+    }
+
     QQuickWindow waveformWindow;
     waveformWindow.resize(800, 320);
     QQmlComponent waveformComponent(&engine, QUrl::fromLocalFile(
@@ -1629,6 +2120,32 @@ bool qmlMergeRuntimeTests()
     waveformItem->setSize(QSizeF(800, 320));
     waveformWindow.show();
     QCoreApplication::processEvents();
+    auto* playhead = waveform->findChild<QQuickItem*>(QStringLiteral("waveformPlayhead"));
+    ok &= require(playhead && std::abs(playhead->x() - 400.0) < 1.0
+                      && playhead->property("color").value<QColor>() == QColor(Qt::white),
+                  "scrolling waveform displays a white centered playhead by default");
+    settingsManager->setProperty("waveformPlayheadPosition", 0.25);
+    QCoreApplication::processEvents();
+    ok &= require(playhead && std::abs(playhead->x() - 200.0) < 1.0,
+                  "settings move the playhead left at runtime");
+    const auto renderers = waveform->findChildren<ScrollingWaveformItemStub*>();
+    ok &= require(!renderers.empty()
+                      && std::all_of(renderers.cbegin(), renderers.cend(), [](const auto* item) {
+                          return std::abs(item->playheadPosition() - 0.25) < 1e-6;
+                      }),
+                  "waveform rendering shares the white line's configured anchor");
+    waveformItem->setWidth(1000);
+    QCoreApplication::processEvents();
+    ok &= require(playhead && std::abs(playhead->x() - 250.0) < 1.0,
+                  "playhead position remains proportional after resizing");
+    waveform->setProperty("engine", QVariant::fromValue(slipEngine.get()));
+    QCoreApplication::processEvents();
+    const auto slipRenderers = waveform->findChildren<ScrollingWaveformItemStub*>();
+    ok &= require(slipRenderers.size() == 2
+                      && std::all_of(slipRenderers.cbegin(), slipRenderers.cend(), [](const auto* item) {
+                          return std::abs(item->playheadPosition() - 0.25) < 1e-6;
+                      }),
+                  "lazy-loaded slip preview inherits the configured playhead position");
     QObject* editor = waveform->findChild<QObject*>(
         QStringLiteral("beatgridEditorPanel"));
     ok &= require(editor && std::abs(editor->property("occupiedWidth").toDouble() - 30.0) < 1e-6,
@@ -1717,8 +2234,12 @@ int main(int argc, char** argv)
     QGuiApplication app(argc, argv);
     bool ok = sliderCleanupTests();
     const auto main = read("src/qml/main.qml");
+    ok &= require(main.find("Math.min(window.scaledWaveformHeight, window.adaptiveWaveformHeight)")
+                      != std::string::npos,
+                  "the workspace waveform minimum follows its adaptive preferred height");
     const auto topHeader = read("src/qml/shell/TopHeader.qml");
     const auto appOverlays = read("src/qml/shell/AppOverlays.qml");
+    ok &= headerPublicationTests(topHeader);
     ok &= hamburgerToggleTests(topHeader);
     const auto deckControl = read("src/qml/deck/DeckControl.qml");
     const auto slider = read("src/qml/components/Slider.qml");
@@ -1856,11 +2377,12 @@ int main(int argc, char** argv)
                           != std::string::npos
                       && occurrences(beatgridPanel, "PerformanceActionButton {") == 8
                       && occurrences(beatgridPanel, "rowHeight: root.rowHeight") == 8
-                      && occurrences(beatgridPanel, "accent: \"#E99128\"") == 8
+                      && occurrences(beatgridPanel, "accent: root.accentColor") == 8
                       && occurrences(fxUnit, "accent: root.accentColor") == 2,
                   "merged QML components remain local, independently scoped, and non-nested");
     ok &= require(!qmlManifest.empty()
-                      && occurrences(qmlManifest, "src/qml/") == 21
+                      && occurrences(qmlManifest, "src/qml/") == 22
+                      && qmlManifest.find("src/qml/performance/PerformanceBackdrop.qml") != std::string::npos
                       && qmlManifest.find("src/qml/shell/AppOverlays.qml") != std::string::npos
                       && qmlManifest.find("PerformanceBeatgridPanel.qml") == std::string::npos
                       && qmlManifest.find("PerformanceDeckQuickPanel.qml") == std::string::npos
@@ -1873,7 +2395,7 @@ int main(int argc, char** argv)
                       && qmlManifest.find("UiShortcutManager.qml") == std::string::npos
                       && qmlManifest.find("TurntableIndicator.qml") == std::string::npos
                       && qmlManifest.find("CrossfaderBar.qml") == std::string::npos,
-                  "central manifest packages exactly 21 QML resources and excludes merged components");
+                  "central manifest packages 22 QML resources including the shared backdrop and excludes merged components");
     ok &= require(deckQuickPanel.find("property real beatJumpBeats") == std::string::npos
                       && deckQuickPanel.find("root.engine.beatJumpBeats") != std::string::npos
                       && engineHeader.find("Q_PROPERTY(double beatJumpBeats") != std::string::npos,
@@ -2004,9 +2526,11 @@ int main(int argc, char** argv)
                   "scratch visual activity is a reactive QML property");
     ok &= require(enlargedWaveform.find("root.engine.scratchVisualActive") != std::string::npos,
                   "waveform frame animations react to paused scratch state");
-    ok &= require(enlargedWaveform.find("color: UiTheme.playhead") == std::string::npos
-                     && enlargedWaveform.find("color: \"#24ffffff\"") == std::string::npos,
-                  "scrolling waveforms do not draw fixed white center lines");
+    ok &= require(enlargedWaveform.find("color: UiTheme.playhead") != std::string::npos
+                     && occurrences(enlargedWaveform, "playheadPosition: root.playheadPosition") == 2
+                     && settingsPanel.find("settingsManager.waveformPlayheadPosition = positions[index]")
+                         != std::string::npos,
+                  "audible and slip waveforms share the configurable white playhead");
     ok &= require(engineHeader.find("Q_PROPERTY(bool slipPreviewActive") != std::string::npos
                      && enlargedWaveform.find("id: slipWaveLoader") != std::string::npos
                      && enlargedWaveform.find("slipPreview: true") != std::string::npos

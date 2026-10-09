@@ -17,6 +17,42 @@ bool require(bool condition, const char* message)
 int main()
 {
     bool ok = true;
+    ok &= require(waveform_render::validatedPlayheadPosition(-1.0) == 0.2
+                      && waveform_render::validatedPlayheadPosition(1.0) == 0.5
+                      && waveform_render::validatedPlayheadPosition(
+                          std::numeric_limits<double>::quiet_NaN()) == 0.5,
+                  "invalid playhead preferences are bounded or reset to center");
+    for (const double position : {0.2, 0.25, 0.33, 0.4, 0.5}) {
+        for (const double dpr : {1.0, 1.25, 1.5, 2.0, 3.0}) {
+            for (const double zoom : {0.0056, 0.22, 1.0, 10.0}) {
+                constexpr double width = 1601.25;
+                constexpr double playhead = 42'375.25;
+                const double localX = waveform_render::snappedTimelineX(
+                    playhead, 40'000.0, zoom, dpr);
+                const double translation = waveform_render::smoothTimelineTranslation(
+                    width, playhead, 40'000.0, zoom, dpr, position);
+                const double anchor = waveform_render::viewportPhysicalPixelCenter(
+                    width, dpr, position);
+                ok &= require(std::abs(localX + translation - anchor) < 1e-9,
+                              "configured anchor aligns timeline and playhead across zoom and DPR");
+                const double lineCenter = (std::floor(width * position * dpr) + 0.5) / dpr;
+                ok &= require(std::abs(anchor - lineCenter) < 1e-9,
+                              "QML white line and renderer use the same physical pixel");
+                const double targetSeconds = 30.0;
+                const double pixelsPerSecond = zoom * 1200.0;
+                const double clickX = anchor + 5.0 * pixelsPerSecond;
+                ok &= require(std::abs(targetSeconds
+                              + waveform_render::screenDeltaToTimelineSeconds(
+                                  clickX - anchor, pixelsPerSecond) - 35.0) < 1e-9,
+                              "beatgrid hit testing stays correct with a left-shifted anchor");
+            }
+        }
+        const auto demand = waveform::makeViewportDemand(
+            30.0, 1000.0, 100.0, true, false, false, 0, 1, position);
+        ok &= require(std::abs(demand.visibleBeforeSec - 10.0 * position) < 1e-9
+                          && std::abs(demand.visibleAfterSec - 10.0 * (1.0 - position)) < 1e-9,
+                      "viewport demand covers all upcoming audio at an off-center playhead");
+    }
     // Render textures are fixed physical-pixel tiles. Analysis chunks may map
     // to one or many tiles, but zoom and DPR can never grow a single texture.
     for (const double dpr : {1.0, 1.25, 1.5, 2.0, 3.0}) {

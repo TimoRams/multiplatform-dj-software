@@ -25,6 +25,12 @@ The project is still under active development, so bugs, unfinished features, exp
 * Library browsing, metadata extraction, cover art, and background analysis
 * MIDI mapping, controller integration, and Ableton Link support
 
+The interface uses angular controls and subdued, translucent slate panels.
+In **Settings > DJ / Sync > Playhead position**, the white scrolling-waveform
+playhead can be moved from the center (50%) toward the left (20%) to show more
+upcoming audio. The preference applies to all decks, including slip previews,
+and is restored on restart.
+
 ## Platform status
 
 | Platform | Status                       |
@@ -52,7 +58,7 @@ Install dependencies on Debian/Ubuntu:
 sudo apt update
 sudo apt install -y \
   build-essential cmake ninja-build pkg-config \
-  qt6-base-dev qt6-declarative-dev \
+  qt6-base-dev qt6-declarative-dev qt6-shadertools-dev qt6-shader-baker \
   libasound2-dev libtag1-dev libkeyfinder-dev librubberband-dev libsqlcipher-dev
 ```
 

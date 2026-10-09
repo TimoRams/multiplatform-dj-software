@@ -240,10 +240,10 @@ void ControlClock::dispatch(double monotonicSeconds, double elapsedSeconds)
         }
     }
     if (due(m_linkDeadline, monotonicSeconds)) {
-        if (severelyLate)
-            ++m_stats.skippedLinkTicks;
-        else
-            emit linkTick();
+        // These current-state publications must not starve when every base
+        // tick is late (e.g. a GUI running at 60 Hz instead of 250 Hz).
+        // due() already coalesces missed periods; never replay a backlog.
+        emit linkTick();
     }
     if (due(m_feedbackDeadline, monotonicSeconds)) {
         if (m_backgroundMode) {
@@ -266,7 +266,7 @@ void ControlClock::dispatch(double monotonicSeconds, double elapsedSeconds)
         }
     }
     if (due(m_meterDeadline, monotonicSeconds)) {
-        if (m_backgroundMode || severelyLate)
+        if (m_backgroundMode)
             ++m_stats.skippedMeterTicks;
         else
             run(&Callbacks::meters, m_stats.meters);

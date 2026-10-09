@@ -459,6 +459,7 @@ struct WaveformSceneNode final : QSGClipNode {
     double rasterScale = 0.0;
     waveform_render::RasterScaleTracker rasterScaleTracker;
     double devicePixelRatio = 1.0;
+    double playheadPosition = 0.5;
     QSizeF renderedSize;
     QRectF clipBounds;
     bool loopVisible = false;
@@ -1057,6 +1058,17 @@ void ScrollingWaveformItem::setRenderStyle(int style)
     invalidateGeometry();
 }
 
+void ScrollingWaveformItem::setPlayheadPosition(double position)
+{
+    position = waveform_render::validatedPlayheadPosition(position);
+    if (qFuzzyCompare(playheadPosition(), position))
+        return;
+    m_playheadPosition.store(position, std::memory_order_relaxed);
+    emit playheadPositionChanged();
+    publishViewportDemand();
+    invalidateGeometry();
+}
+
 void ScrollingWaveformItem::setRasterWorkEnabled(bool enabled)
 {
     if (m_rasterWorkEnabled == enabled)
@@ -1112,7 +1124,7 @@ double ScrollingWaveformItem::timelineSecondsAtX(
     const double dpr = window()
         ? std::max(1.0, window()->effectiveDevicePixelRatio()) : 1.0;
     return playheadSeconds + waveform_render::screenDeltaToTimelineSeconds(
-        screenX - waveform_render::viewportPhysicalPixelCenter(width(), dpr),
+        screenX - waveform_render::viewportPhysicalPixelCenter(width(), dpr, playheadPosition()),
         effectivePixelsPerSecond());
 }
 
@@ -1179,7 +1191,7 @@ void ScrollingWaveformItem::publishViewportDemand()
         currentEngine->isReverse(), currentEngine->isScratchVisualActive(),
         WaveformZoomController::lodLevelForPhysicalPixels(
             physicalPixelsPerLine),
-        snapshot->trackGeneration);
+        snapshot->trackGeneration, playheadPosition());
     if (m_lastPublishedDemand) {
         const auto previousDemandChunk = chunkDuration > 0.0
             ? static_cast<std::int64_t>(std::floor(
@@ -1391,6 +1403,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
         || playheadLine < scene->innerStartLine
         || playheadLine > scene->innerEndLine;
     const bool staticConfigurationChanged = !scene->hasWindow
+        || !qFuzzyCompare(scene->playheadPosition, playheadPosition())
         || scene->trackGeneration != snapshot->trackGeneration
         || !qFuzzyCompare(scene->pixelsPerLine, pixelsPerLine)
         // Settling from the ladder back onto the exact scale re-cuts every
@@ -1426,10 +1439,13 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 / std::max(pixelsPerLine * dpr, 1.0e-6);
             const double halfWindow = std::max(visibleLineCount * 0.55,
                 std::min(visibleLineCount * 1.25, maximumHalfWindow));
+            const double windowCenterLine = playheadLine
+                + visibleLineCount * (0.5 - playheadPosition());
             scene->windowStartLine = static_cast<std::int64_t>(
-                std::floor(playheadLine - halfWindow));
+                std::floor(windowCenterLine - halfWindow));
             scene->windowEndLine = static_cast<std::int64_t>(
-                std::ceil(playheadLine + halfWindow));
+                std::ceil(windowCenterLine + halfWindow));
+            scene->playheadPosition = playheadPosition();
             // Keep local scene-graph coordinates small enough for float matrix
             // precision. Choosing an origin on the global physical-pixel grid
             // makes the rebase mathematically invisible to every timeline layer.
@@ -2025,7 +2041,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     // beat ticks shimmer during playback. Feathered line edges provide stable
     // coverage while the shared timeline moves between physical pixels.
     const double timelineTranslation = waveform_render::smoothTimelineTranslation(
-        bounds.width(), playheadLine, scene->renderOriginLine, pixelsPerLine, dpr);
+        bounds.width(), playheadLine, scene->renderOriginLine, pixelsPerLine, dpr,
+        playheadPosition());
     QMatrix4x4 transform;
     transform.translate(static_cast<float>(timelineTranslation), 0.0f);
     scene->timeline->setMatrix(transform);
@@ -2069,14 +2086,14 @@ QVariantList ScrollingWaveformItem::beatLabels() const
     if (width <= 0.0 || pixelsPerSecond <= 0.0)
         return result;
 
-    const double halfVisibleSec = width * 0.5 / pixelsPerSecond;
+    const double position = playheadPosition();
     const auto beats = visibleBeatGrid(*m_engine->getTrackData(),
-                                       playheadSec - halfVisibleSec,
-                                       playheadSec + halfVisibleSec);
+                                       playheadSec - width * position / pixelsPerSecond,
+                                       playheadSec + width * (1.0 - position) / pixelsPerSecond);
     const double dpr = window()
         ? std::max(1.0, window()->effectiveDevicePixelRatio()) : 1.0;
     const double viewportCenter = waveform_render::viewportPhysicalPixelCenter(
-        width, dpr);
+        width, dpr, position);
     double previousX = -std::numeric_limits<double>::infinity();
     for (const auto& beat : beats) {
         const double x = viewportCenter

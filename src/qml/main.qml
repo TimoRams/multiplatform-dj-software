@@ -12,6 +12,13 @@ ApplicationWindow {
     visible: true
     title: "BrockDJ"
     color: UiTheme.bgDeep
+    background: Rectangle {
+        gradient: Gradient {
+            GradientStop { position: 0.0; color: "#263345" }
+            GradientStop { position: 0.6; color: UiTheme.surfaceInset }
+            GradientStop { position: 1.0; color: "#1d2634" }
+        }
+    }
     FontLoader {
         id: interFont
         source: "qrc:/DJSoftware/assets/fonts/InterVariable.ttf"
@@ -576,7 +583,8 @@ ApplicationWindow {
     readonly property bool fxVisible: false
     readonly property int aioDeckControlsHeight:
         window.allInOneMode && window.showAioDeckControls ? 42 : 0
-    readonly property real waveformMinimumHeight: window.scaledWaveformHeight
+    readonly property real waveformMinimumHeight:
+        Math.min(window.scaledWaveformHeight, window.adaptiveWaveformHeight)
     readonly property int libraryReserveHeight: !window.effectiveLibraryVisible ? 0 : Math.round(180 * window.uiScale)
     readonly property int fixedPerformanceHeight:
         (window.primaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)

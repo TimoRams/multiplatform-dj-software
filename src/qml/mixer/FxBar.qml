@@ -19,21 +19,21 @@ Rectangle {
         implicitWidth:  28
         implicitHeight: 18
         radius: 0
-        color: active ? "#1e1e2e" : "#181818"
+        color: active ? UiTheme.panelRaised : UiTheme.panelDeep
 
         Rectangle {
             anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
             height: 1
-            color: db.active ? db.accent : (db.isHeader ? "#333333" : "#222222")
+            color: db.active ? db.accent : (db.isHeader ? UiTheme.separator : UiTheme.borderSubtle)
         }
 
         Text {
             anchors.centerIn: parent
             text:           db.label
-            color:          db.active ? db.accent : (db.isHeader ? "#666666" : "#555555")
+            color:          db.active ? db.accent : (db.isHeader ? UiTheme.textDim : UiTheme.textMuted)
             font.pixelSize: 8
             font.bold:      db.active
-            font.family:    "monospace"
+            font.family:    UiTheme.uiFontFamily
         }
     }
 
@@ -46,25 +46,25 @@ Rectangle {
         implicitWidth:  26
         implicitHeight: 22
         radius: 0
-        color:  active ? "#222222" : "#1e1e1e"
+        color:  active ? UiTheme.panelRaised : UiTheme.panelDeep
 
         Rectangle {
             anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
             height: 1
-            color:  ab.active ? ab.accent : "#333333"
+            color:  ab.active ? ab.accent : UiTheme.borderSubtle
         }
 
         Text {
             anchors.centerIn: parent
             text:           ab.label
-            color:          ab.active ? ab.accent : "#666666"
+            color:          ab.active ? ab.accent : UiTheme.textDim
             font.pixelSize: 10
             font.bold:      ab.active
-            font.family:    "monospace"
+            font.family:    UiTheme.uiFontFamily
         }
 
         HoverHandler { id: abHov }
-        Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: abHov.hovered ? 0.03 : 0 }
+        Rectangle { anchors.fill: parent; color: UiTheme.textPrimary; opacity: abHov.hovered ? 0.03 : 0 }
 
         MouseArea {
             anchors.fill: parent
@@ -81,12 +81,12 @@ Rectangle {
         property bool  deck1Active: btnDeck1.active
         property bool  deck2Active: btnDeck2.active
         property alias wetDry:      mixKnob.value
-        property color accentColor: unitId === 1 ? "#1e90ff" : "#ff6a00"
+        property color accentColor: unitId === 1 ? UiTheme.deckB : UiTheme.deckA
 
         signal deck1Toggled(bool active)
         signal deck2Toggled(bool active)
 
-        color: "#181818"
+        color: UiTheme.panelDeep
 
         // ── Beat divisions ────────────────────────────────────────────────────
         readonly property var kDivValues: [0.0625, 0.125, 0.25, 0.5, 1.0, 2.0, 4.0]
@@ -174,7 +174,7 @@ Rectangle {
                     color:            root.accentColor
                     font.pixelSize:   9
                     font.bold:        true
-                    font.family:      "monospace"
+                    font.family:      UiTheme.uiFontFamily
                     Layout.alignment: Qt.AlignVCenter
                     Layout.preferredWidth: 22
                     opacity: 0.7
@@ -221,11 +221,11 @@ Rectangle {
                             return e.wip ? e.name + " ·WIP" : e.name
                         }
                         color: {
-                            if (effectCombo.currentIndex < 0) return "#666666"
-                            return root.effectsList[effectCombo.currentIndex].wip ? "#555555" : "#e8e8e8"
+                            if (effectCombo.currentIndex < 0) return UiTheme.textDim
+                            return root.effectsList[effectCombo.currentIndex].wip ? UiTheme.textMuted : UiTheme.textPrimary
                         }
                         font.pixelSize:    10
-                        font.family:       "monospace"
+                        font.family:       UiTheme.uiFontFamily
                         verticalAlignment: Text.AlignVCenter
                         elide:             Text.ElideRight
                     }
@@ -239,17 +239,17 @@ Rectangle {
                             context.reset()
                             context.moveTo(0, 0); context.lineTo(width, 0)
                             context.lineTo(width / 2, height); context.closePath()
-                            context.fillStyle = "#666666"; context.fill()
+                            context.fillStyle = UiTheme.textDim; context.fill()
                         }
                     }
 
                     background: Rectangle {
-                        color:  effectCombo.pressed ? "#2d2d2d" : "#1e1e1e"
+                        color:  effectCombo.pressed ? UiTheme.panelRaised : UiTheme.panelDeep
                         radius: 0
                         Rectangle {
                             anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
                             height: 1
-                            color:  effectCombo.visualFocus ? root.accentColor : "#333333"
+                            color:  effectCombo.visualFocus ? root.accentColor : UiTheme.borderSubtle
                         }
                     }
 
@@ -265,42 +265,42 @@ Rectangle {
                             Text {
                                 Layout.fillWidth:  true
                                 text:              entry.name
-                                color: entry.wip ? "#3a3a3a" : (highlighted ? "#e8e8e8" : "#999999")
+                                color: entry.wip ? UiTheme.textMuted : (highlighted ? UiTheme.textPrimary : UiTheme.textSecondary)
                                 font.pixelSize:    10
-                                font.family:       "monospace"
+                                font.family:       UiTheme.uiFontFamily
                                 leftPadding:       8
                                 verticalAlignment: Text.AlignVCenter
                             }
                             // WIP badge
                             Rectangle {
                                 visible:           entry.wip
-                                width: 28; height: 13; radius: 2
-                                color:             "#1a1000"
+                                width: 28; height: 13; radius: 0
+                                color:             UiTheme.panelInset
                                 Layout.rightMargin: 6
                                 Text {
                                     anchors.centerIn: parent
-                                    text: "WIP"; color: "#664400"
-                                    font.pixelSize: 7; font.bold: true; font.family: "monospace"
+                                    text: "WIP"; color: UiTheme.textMuted
+                                    font.pixelSize: 7; font.bold: true; font.family: UiTheme.uiFontFamily
                                 }
                             }
                         }
 
                         background: Rectangle {
-                            color:  (highlighted && !entry.wip) ? "#252525" : "#181818"
+                            color:  (highlighted && !entry.wip) ? UiTheme.panelRaised : UiTheme.panelDeep
                             radius: 0
                             Rectangle {
                                 anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
                                 height: 1
-                                color: (highlighted && !entry.wip) ? root.accentColor : "#1c1c1c"
+                                color: (highlighted && !entry.wip) ? root.accentColor : UiTheme.borderSubtle
                             }
                         }
                     }
 
                     popup.background: Rectangle {
-                        color: "#181818"; radius: 0
+                        color: UiTheme.panelDeep; radius: 0
                         Rectangle {
                             anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
-                            height: 1; color: "#333333"
+                            height: 1; color: UiTheme.separatorSubtle
                         }
                     }
 
@@ -325,16 +325,16 @@ Rectangle {
                         spacing: 0
                         Text {
                             text:           root.knobLabel
-                            color:          "#555555"
+                            color:          UiTheme.textMuted
                             font.pixelSize: 8
-                            font.family:    "monospace"
+                            font.family:    UiTheme.uiFontFamily
                             Layout.fillWidth: true
                         }
                         Text {
                             text:           Math.round(mixKnob.value * 100) + "%"
-                            color:          mixKnob.value > 0.02 ? "#888888" : "#333333"
+                            color:          mixKnob.value > 0.02 ? UiTheme.textSecondary : UiTheme.textMuted
                             font.pixelSize: 8
-                            font.family:    "monospace"
+                            font.family:    UiTheme.numericFontFamily
                         }
                     }
 
@@ -375,21 +375,21 @@ Rectangle {
                     Layout.preferredWidth:  50
                     Layout.preferredHeight: 18
                     visible: root.hasBpmSync
-                    color: "#111111"
+                    color: UiTheme.displayBackground
                     radius: 0
 
                     Rectangle {
                         anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
                         height: 1
-                        color: root.deckBpm > 0 ? "#3a3a3a" : "#1e1e1e"
+                        color: root.deckBpm > 0 ? UiTheme.separator : UiTheme.borderSubtle
                     }
 
                     Text {
                         anchors.centerIn: parent
                         text:           root.deckBpm > 0 ? root.deckBpm.toFixed(1) : "---"
-                        color:          root.deckBpm > 0 ? "#888888" : "#333333"
+                        color:          root.deckBpm > 0 ? UiTheme.textSecondary : UiTheme.textMuted
                         font.pixelSize: 9
-                        font.family:    "monospace"
+                        font.family:    UiTheme.numericFontFamily
                     }
                 }
 
@@ -399,25 +399,25 @@ Rectangle {
                     Layout.preferredHeight: 18
                     visible: root.hasBpmSync
                     radius: 0
-                    color: root.syncOn ? "#152015" : "#1e1e1e"
+                    color: root.syncOn ? UiTheme.greenDim : UiTheme.panelDeep
 
                     Rectangle {
                         anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
                         height: 1
-                        color: root.syncOn ? "#3acc3a" : "#2a2a2a"
+                        color: root.syncOn ? UiTheme.green : UiTheme.borderSubtle
                     }
 
                     Text {
                         anchors.centerIn: parent
                         text:           "SYNC"
-                        color:          root.syncOn ? "#3acc3a" : "#444444"
+                        color:          root.syncOn ? UiTheme.green : UiTheme.textMuted
                         font.pixelSize: 8
                         font.bold:      root.syncOn
-                        font.family:    "monospace"
+                        font.family:    UiTheme.uiFontFamily
                     }
 
                     HoverHandler { id: syncHov }
-                    Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: syncHov.hovered ? 0.04 : 0 }
+                    Rectangle { anchors.fill: parent; color: UiTheme.textPrimary; opacity: syncHov.hovered ? 0.04 : 0 }
 
                     MouseArea {
                         anchors.fill: parent
@@ -449,25 +449,25 @@ Rectangle {
                                 Layout.fillWidth:       true
                                 Layout.preferredHeight: 18
                                 radius: 0
-                                color: isActive ? "#1a1a2a" : "#181818"
+                                color: isActive ? UiTheme.panelRaised : UiTheme.panelDeep
 
                                 Rectangle {
                                     anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
                                     height: 1
-                                    color: isActive ? root.accentColor : "#222222"
+                                    color: isActive ? root.accentColor : UiTheme.borderSubtle
                                 }
 
                                 Text {
                                     anchors.centerIn: parent
                                     text:           modelData
-                                    color:          isActive ? root.accentColor : "#484848"
+                                    color:          isActive ? root.accentColor : UiTheme.textMuted
                                     font.pixelSize: 8
                                     font.bold:      isActive
-                                    font.family:    "monospace"
+                                    font.family:    UiTheme.numericFontFamily
                                 }
 
                                 HoverHandler { id: divHov }
-                                Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: divHov.hovered ? 0.04 : 0 }
+                                Rectangle { anchors.fill: parent; color: UiTheme.textPrimary; opacity: divHov.hovered ? 0.04 : 0 }
 
                                 MouseArea {
                                     anchors.fill: parent
@@ -499,25 +499,25 @@ Rectangle {
                                 Layout.fillWidth:       true
                                 Layout.preferredHeight: 18
                                 radius: 0
-                                color: isActive ? "#1a1a2a" : "#181818"
+                                color: isActive ? UiTheme.panelRaised : UiTheme.panelDeep
 
                                 Rectangle {
                                     anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
                                     height: 1
-                                    color: isActive ? root.accentColor : "#222222"
+                                    color: isActive ? root.accentColor : UiTheme.borderSubtle
                                 }
 
                                 Text {
                                     anchors.centerIn: parent
                                     text:           modelData
-                                    color:          isActive ? root.accentColor : "#484848"
+                                    color:          isActive ? root.accentColor : UiTheme.textMuted
                                     font.pixelSize: 8
                                     font.bold:      isActive
-                                    font.family:    "monospace"
+                                    font.family:    UiTheme.numericFontFamily
                                 }
 
                                 HoverHandler { id: roomHov }
-                                Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: roomHov.hovered ? 0.04 : 0 }
+                                Rectangle { anchors.fill: parent; color: UiTheme.textPrimary; opacity: roomHov.hovered ? 0.04 : 0 }
 
                                 MouseArea {
                                     anchors.fill: parent
@@ -543,9 +543,9 @@ Rectangle {
                             text:    root.currentEffect.name !== "---"
                                 ? root.knobLabel + " controlled by knob"
                                 : ""
-                            color:          "#333333"
+                            color:          UiTheme.textMuted
                             font.pixelSize: 8
-                            font.family:    "monospace"
+                            font.family:    UiTheme.uiFontFamily
                             font.italic:    true
                         }
                     }
@@ -569,7 +569,7 @@ Rectangle {
         FxUnit {
             id: fxUnit1
             unitId:      1
-            accentColor: "#1e90ff"
+            accentColor: UiTheme.deckB
             Layout.fillWidth:  true
             Layout.fillHeight: true
         }
@@ -631,9 +631,9 @@ Rectangle {
                 Text {
                     Layout.fillWidth: true
                     text:           "COLOR FX"
-                    color:          "#444444"
+                    color:          UiTheme.textLabel
                     font.pixelSize: 7
-                    font.family:    "monospace"
+                    font.family:    UiTheme.uiFontFamily
                     font.letterSpacing: 1
                 }
 
@@ -656,7 +656,7 @@ Rectangle {
                             to:           1.0
                             stepSize:     0.01
                             value:        scPanel.fallbackParam
-                            accentColor:  "#999999"
+                            accentColor:  UiTheme.textSecondary
                             defaultValue: 0.5
 
                             onValueChanged: {
@@ -669,9 +669,9 @@ Rectangle {
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text:           scPanel.paramLabels[scPanel.activeMode] ?? "PARAM"
-                            color:          "#555555"
+                            color:          UiTheme.textMuted
                             font.pixelSize: 7
-                            font.family:    "monospace"
+                            font.family:    UiTheme.uiFontFamily
                         }
                     }
 
@@ -689,7 +689,7 @@ Rectangle {
 
                                 width:  Math.floor((scPanel.width - 44 - 5 * 3) / 4)
                                 height: 20
-                                radius: 1
+                                radius: 0
                                 color: isActive ? UiTheme.panelRaised : UiTheme.panelDeep
 
                                 // Active accent bar at top
@@ -698,7 +698,7 @@ Rectangle {
                                     anchors.left:  parent.left
                                     anchors.right: parent.right
                                     height: isActive ? 2 : 1
-                                    color:  isActive ? "#aaaaaa" : "#2e2e2e"
+                                    color:  isActive ? UiTheme.textSecondary : UiTheme.borderSubtle
                                 }
 
                                 Text {
@@ -706,13 +706,13 @@ Rectangle {
                                     text:           modelData
                                     font.pixelSize: 8
                                     font.bold:      isActive
-                                    font.family:    "monospace"
-                                    color:          isActive ? "#e8e8e8" : "#666666"
+                                    font.family:    UiTheme.uiFontFamily
+                                    color:          isActive ? UiTheme.textPrimary : UiTheme.textDim
                                     elide:          Text.ElideRight
                                 }
 
                                 HoverHandler { id: modeHov }
-                                Rectangle { anchors.fill: parent; radius: parent.radius; color: "#ffffff"; opacity: modeHov.hovered ? 0.04 : 0 }
+                                Rectangle { anchors.fill: parent; radius: parent.radius; color: UiTheme.textPrimary; opacity: modeHov.hovered ? 0.04 : 0 }
 
                                 MouseArea {
                                     anchors.fill: parent
@@ -735,7 +735,7 @@ Rectangle {
         FxUnit {
             id: fxUnit2
             unitId:      2
-            accentColor: "#ff6a00"
+            accentColor: UiTheme.deckA
             Layout.fillWidth:  true
             Layout.fillHeight: true
         }
