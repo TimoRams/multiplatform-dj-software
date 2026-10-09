@@ -16,10 +16,18 @@ AudioDeviceService::AudioDeviceService(QObject* parent)
     : QObject(parent)
 {
     clearOutputChannelCountCache();
+    m_manager.addChangeListener(this);
 }
 
 AudioDeviceService::~AudioDeviceService()
 {
+    {
+        std::lock_guard<std::mutex> lock(m_deviceTypeListenerMutex);
+        for (auto* type : m_listenedDeviceTypes)
+            type->removeListener(this);
+        m_listenedDeviceTypes.clear();
+    }
+    m_manager.removeChangeListener(this);
     closeAudioDevice();
 }
 
@@ -78,6 +86,7 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
                                                                           int boothFirstChannel)
 {
     sampleRate = normalizeSampleRate(sampleRate);
+    ensureDeviceTypeListeners();
 
     const auto previousRouting = unpackRouting(m_outputRoutingPacked.load(std::memory_order_relaxed));
     const QString previousDeviceType = currentDeviceType();
@@ -395,6 +404,7 @@ void AudioDeviceService::closeAudioDevice()
 
 QStringList AudioDeviceService::availableDeviceTypes() const
 {
+    ensureDeviceTypeListeners();
     QStringList types;
 
     auto& manager = const_cast<juce::AudioDeviceManager&>(m_manager);
@@ -439,6 +449,7 @@ QStringList AudioDeviceService::availableDeviceTypes() const
 
 QStringList AudioDeviceService::availableOutputDevices(const QString& deviceType) const
 {
+    ensureDeviceTypeListeners();
     const QString cacheKey = deviceType.trimmed().toCaseFolded();
     const auto now = std::chrono::steady_clock::now();
     {
@@ -533,6 +544,25 @@ QStringList AudioDeviceService::availableOutputDevices(const QString& deviceType
     return devices;
 }
 
+bool AudioDeviceService::hasAvailableOutputDevices(const QString& deviceType) const
+{
+    return availableOutputDevices(deviceType).size() > 1;
+}
+
+void AudioDeviceService::refreshDeviceLists()
+{
+    ensureDeviceTypeListeners();
+    invalidateDeviceListCaches();
+
+    for (auto* type : m_manager.getAvailableDeviceTypes()) {
+        if (type != nullptr)
+            type->scanForDevices();
+    }
+
+    invalidateDeviceListCaches();
+    emit deviceListChanged();
+}
+
 QStringList AudioDeviceService::availableOutputChannelPairs(const QString& deviceType,
                                                              const QString& outputDevice) const
 {
@@ -553,6 +583,46 @@ QStringList AudioDeviceService::availableOutputChannelPairs(const QString& devic
     if (channelCount < 2)
         channelCount = readDeviceOutputChannelCount(selectedType, selectedOutput);
     return buildChannelPairList(channelCount);
+}
+
+void AudioDeviceService::changeListenerCallback(juce::ChangeBroadcaster* source)
+{
+    if (source != &m_manager)
+        return;
+
+    invalidateDeviceListCaches();
+    emit deviceListChanged();
+}
+
+void AudioDeviceService::audioDeviceListChanged()
+{
+    invalidateDeviceListCaches();
+    emit deviceListChanged();
+}
+
+void AudioDeviceService::invalidateDeviceListCaches()
+{
+    {
+        std::lock_guard<std::mutex> lock(m_deviceListCacheMutex);
+        m_deviceListCache.clear();
+    }
+    clearOutputChannelCountCache();
+}
+
+void AudioDeviceService::ensureDeviceTypeListeners() const
+{
+    std::lock_guard<std::mutex> lock(m_deviceTypeListenerMutex);
+    if (m_deviceTypeListenersRegistered)
+        return;
+
+    auto& manager = const_cast<juce::AudioDeviceManager&>(m_manager);
+    for (auto* type : manager.getAvailableDeviceTypes()) {
+        if (type == nullptr)
+            continue;
+        type->addListener(const_cast<AudioDeviceService*>(this));
+        m_listenedDeviceTypes.push_back(type);
+    }
+    m_deviceTypeListenersRegistered = true;
 }
 
 QString AudioDeviceService::currentDeviceType() const

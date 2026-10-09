@@ -97,6 +97,8 @@ public:
 
     Q_INVOKABLE QStringList getAvailableAudioDeviceTypes() const;
     Q_INVOKABLE QStringList getAvailableAudioOutputDevices(const QString& deviceType) const;
+    Q_INVOKABLE bool hasAvailableAudioOutputDevices(const QString& deviceType) const;
+    Q_INVOKABLE void refreshAudioDeviceLists();
     Q_INVOKABLE void setAudioConfiguration(const QString& deviceType,
                                            const QString& masterOutputDevice,
                                            int masterFirstChannel,

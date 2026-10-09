@@ -528,6 +528,7 @@ signals:
     void mainCueChanged();
     void audioDeviceErrorChanged();
     void audioDeviceFallbackChanged();
+    void audioDeviceListChanged();
     // Device enumeration (especially external interfaces on macOS/CoreAudio,
     // or backends that become ready shortly after the GUI on Linux) can
     // settle after the settings UI already populated its combo boxes once.

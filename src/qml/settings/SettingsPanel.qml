@@ -9,13 +9,15 @@ Item {
     implicitHeight: 600
     property bool active: visible
 
-    onActiveChanged: {
+    Component.onCompleted: updateAudioSettingsActivity()
+    onActiveChanged: updateAudioSettingsActivity()
+
+    function updateAudioSettingsActivity() {
         if (active) {
             if (!audioSyncPending) {
                 audioSyncPending = true
                 audioSyncTimer.start()
             }
-            audioDeviceListRetryCount = 0
             audioDeviceListTimer.start()
         } else {
             audioSyncTimer.stop()
@@ -24,15 +26,14 @@ Item {
         }
     }
 
-    // Device enumeration can settle after this panel already populated its
-    // combo boxes once (external interfaces on macOS/CoreAudio, or backends
-    // that only become ready shortly after launch). Rather than guessing a
-    // fixed timeout, refresh live whenever the backend actually confirms a
-    // device configuration — this also covers the bootstrap retries that run
-    // a few seconds after a failed startup device restore.
+    // Backend notifications refresh immediately; this periodic scan also
+    // catches device changes from drivers that don't reliably send hotplug events.
     Connections {
         target: deckA
         function onAudioDeviceConfigurationChanged() {
+            settingsWindow.refreshAudioDeviceLists()
+        }
+        function onAudioDeviceListChanged() {
             settingsWindow.refreshAudioDeviceLists()
         }
     }
@@ -44,6 +45,9 @@ Item {
     property string pendingAudioDeviceType: ""
     property bool audioUiSyncing: false
     property bool audioSyncPending: false
+    property bool audioOutputsAvailable: false
+    property bool selectedAudioBackendHasOutputs: false
+    property var audioBackendOutputSummary: []
     property var outputChannelPairsCache: ({})
     property var mappingEditorInstance: null
 
@@ -92,6 +96,8 @@ Item {
         ComboBox {
             id: outputCombo
             Layout.fillWidth: true
+            Layout.minimumWidth: 180
+            placeholderText: "No device selected"
             model: settingsWindow.audioOutputDeviceOptions
             onCurrentIndexChanged: {
                 if (settingsWindow.audioUiSyncing)
@@ -109,6 +115,8 @@ Item {
         ComboBox {
             id: channelCombo
             Layout.fillWidth: true
+            Layout.minimumWidth: 130
+            placeholderText: "No channels"
             model: settingsWindow[audioRoleRow.roleDefinition.channelPairsProperty]
             onCurrentIndexChanged: {
                 if (settingsWindow.audioUiSyncing)
@@ -124,6 +132,8 @@ Item {
             }
         }
 
+        Component.onCompleted:
+            settingsWindow.refreshRoleOutputAndPairs(audioRoleRow.roleDefinition.key)
     }
 
     Component.onDestruction: {
@@ -168,22 +178,14 @@ Item {
         }
     }
 
-    // Backup refresh in case device enumeration (CoreAudio/ALSA/JACK) wasn't
-    // complete yet when the panel opened — some external interfaces take a
-    // moment to enumerate after launch. Retries a bounded number of times
-    // instead of a single fixed 500ms guess, and stops as soon as real
-    // outputs (not just "None") show up.
-    property int audioDeviceListRetryCount: 0
+    // Keep checking while settings are open if a backend has not enumerated any
+    // real outputs yet. Device types may become ready well after the panel opens.
     Timer {
         id: audioDeviceListTimer
-        interval: 700
+        interval: settingsWindow.audioOutputsAvailable ? 5000 : 1500
         repeat: true
         onTriggered: {
-            settingsWindow.refreshAudioDeviceLists()
-            settingsWindow.audioDeviceListRetryCount += 1
-            const hasRealOutputs = settingsWindow.audioOutputDeviceOptions.length > 1
-            if (hasRealOutputs || settingsWindow.audioDeviceListRetryCount >= 6)
-                audioDeviceListTimer.stop()
+            settingsWindow.reloadAudioDeviceLists()
         }
     }
 
@@ -417,6 +419,10 @@ Item {
             masterChannelPairOptions = ["None", "1-2"]
             headphonesChannelPairOptions = ["None", "1-2"]
             boothChannelPairOptions = ["None", "1-2"]
+            audioOutputsAvailable = false
+            selectedAudioBackendHasOutputs = false
+            audioBackendOutputSummary = []
+            updateAudioDeviceListRetry()
             return
         }
 
@@ -437,6 +443,56 @@ Item {
         audioUiSyncing = false
 
         refreshOutputsForPendingType()
+        refreshAudioBackendStatus()
+        updateAudioDeviceListRetry()
+    }
+
+    function refreshAudioBackendStatus() {
+        audioOutputsAvailable = false
+        selectedAudioBackendHasOutputs = false
+        audioBackendOutputSummary = []
+        if (!deckA || !deckA.getAvailableAudioOutputDevices)
+            return
+
+        var summaries = []
+        for (var i = 0; i < audioDeviceTypeOptions.length; ++i) {
+            var backend = audioDeviceTypeOptions[i]
+            if (!backend)
+                continue
+            var discovered = deckA.getAvailableAudioOutputDevices(backend)
+            var outputs = []
+            if (discovered) {
+                for (var j = 0; j < discovered.length; ++j) {
+                    var output = String(discovered[j]).trim()
+                    if (output && output.toLowerCase() !== "none")
+                        outputs.push(output)
+                }
+            }
+            if (outputs.length > 0) {
+                audioOutputsAvailable = true
+                if (backend === pendingAudioDeviceType)
+                    selectedAudioBackendHasOutputs = true
+                summaries.push(backend + ": " + outputs.join(", "))
+            } else {
+                summaries.push(backend + ": no outputs")
+            }
+        }
+        audioBackendOutputSummary = summaries
+    }
+
+    function updateAudioDeviceListRetry() {
+        if (!active)
+            audioDeviceListTimer.stop()
+        else
+            audioDeviceListTimer.start()
+    }
+
+    function reloadAudioDeviceLists() {
+        if (settingsManager && settingsManager.refreshAudioDeviceLists) {
+            settingsManager.refreshAudioDeviceLists()
+        } else {
+            refreshAudioDeviceLists()
+        }
     }
 
     function syncAudioSettings() {
@@ -774,11 +830,42 @@ Item {
                         width: parent.width
                         spacing: 20
 
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Text {
+                                text: "Audio Setup"
+                                color: UiTheme.textPrimary
+                                font.pixelSize: 18
+                                font.bold: true
+                                Layout.fillWidth: true
+                            }
+                            Button {
+                                text: "Reload devices"
+                                onClicked: settingsWindow.reloadAudioDeviceLists()
+                            }
+                        }
                         Text {
-                            text: "Audio Setup"
-                            color: UiTheme.textPrimary
-                            font.pixelSize: 18
-                            font.bold: true
+                            visible: !settingsWindow.audioOutputsAvailable
+                                || !settingsWindow.selectedAudioBackendHasOutputs
+                            text: !settingsWindow.audioOutputsAvailable
+                                ? (settingsWindow.audioDeviceTypeOptions.length > 0
+                                    && settingsWindow.audioDeviceTypeOptions[0] !== ""
+                                    ? "No output devices found on any available audio API. Check the system audio service, then reload."
+                                    : "No audio APIs are available. Check the application build and system audio service.")
+                                : "The selected API (" + settingsWindow.pendingAudioDeviceType
+                                    + ") has no outputs. Available outputs are listed below; choose an API with devices."
+                            color: UiTheme.textDim
+                            font.pixelSize: 12
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                        }
+                        Text {
+                            visible: settingsWindow.audioBackendOutputSummary.length > 0
+                            text: "API outputs: " + settingsWindow.audioBackendOutputSummary.join("  |  ")
+                            color: UiTheme.textDim
+                            font.pixelSize: 11
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
                         }
 
                         Rectangle {
@@ -813,6 +900,8 @@ Item {
                                           bufferSizeCombo.currentIndex = settingsWindow.indexForValue(settingsWindow.bufferSizeOptions, settingsWindow.pendingAudioBufferSize)
                                           settingsWindow.audioUiSyncing = false
                                           settingsWindow.refreshOutputsForPendingType()
+                                          settingsWindow.refreshAudioBackendStatus()
+                                          settingsWindow.updateAudioDeviceListRetry()
                                       }
                                   }
                               }

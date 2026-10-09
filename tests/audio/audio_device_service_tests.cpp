@@ -46,6 +46,8 @@ int main(int argc, char** argv)
         QStringLiteral("Missing backend"), QStringLiteral("None"));
     ok &= require(noDevicePairs == QStringList { QStringLiteral("None") },
                   "an unassigned output must expose only the silent None route");
+    ok &= require(!service.hasAvailableOutputDevices(QStringLiteral("Missing backend")),
+                  "an unavailable backend is not mistaken for an enumerated output");
     const auto missingDevicePairs = service.availableOutputChannelPairs(
         QStringLiteral("Missing backend"), QStringLiteral("Missing device"));
     ok &= require(missingDevicePairs == QStringList { QStringLiteral("None") },
@@ -54,6 +56,15 @@ int main(int argc, char** argv)
                   "querying device choices must not open a default device");
     ok &= require(service.hardwareXRunCount() == 0,
                   "an unopened device reports no hardware XRUNs");
+
+    int deviceListChanges = 0;
+    QObject::connect(&service, &AudioDeviceService::deviceListChanged,
+                     [&deviceListChanges]() { ++deviceListChanges; });
+    service.refreshDeviceLists();
+    ok &= require(deviceListChanges >= 1,
+                  "explicit device refresh rescans backends and notifies settings");
+    ok &= require(service.manager().getCurrentAudioDevice() == nullptr,
+                  "refreshing device lists never opens or switches an audio device");
 
 #if JUCE_LINUX || JUCE_BSD
     ok &= require(clampToStableBufferSize(QStringLiteral("ALSA"), 64) == 512,

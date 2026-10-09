@@ -251,6 +251,12 @@ bool libraryActionTests(const std::string& source)
 
 bool audioRoleTests(const std::string& source)
 {
+    const auto comboBoxSource = read("src/qml/components/ComboBox.qml");
+    if (!require(comboBoxSource.find(
+                     "control.displayText.length > 0 ? control.displayText : control.placeholderText")
+                     != std::string::npos,
+                 "empty audio combo boxes render an explicit placeholder"))
+        return false;
     const auto begin = source.find("    readonly property var audioRoleDefinitions:");
     const auto end = source.find("\n    ]", begin);
     if (!require(begin != std::string::npos && end != std::string::npos,
@@ -262,7 +268,7 @@ bool audioRoleTests(const std::string& source)
             "roleDefinition", "roleRow", "selectedRoleSelections", "parseFirstChannel",
             "pairTextForFirstChannel", "indexForText", "firstRealOutput",
             "getOutputPairOptions", "outputPairCacheKey", "refreshRoleChannelPairs",
-            "refreshRoleOutputAndPairs"}, methods))
+            "refreshRoleOutputAndPairs", "refreshAudioBackendStatus"}, methods))
         return false;
     const auto roleModel = source.find("model: settingsWindow.audioRoleDefinitions");
     const auto roleRepeater = source.rfind("Repeater {", roleModel);
@@ -295,6 +301,15 @@ bool audioRoleTests(const std::string& source)
             property var boothChannelPairOptions: ["None", "7-8"]
             property var outputChannelPairsCache: ({})
             property bool audioUiSyncing: false
+            property var enumeratedOutputDevices: ["None"]
+            property var audioDeviceTypeOptions: ["ALSA", "JACK"]
+            property bool audioOutputsAvailable: false
+            property bool selectedAudioBackendHasOutputs: false
+            property var audioBackendOutputSummary: []
+            property var enumeratedOutputDevicesByType: ({
+                ALSA: ["None"],
+                JACK: ["None", "USB"]
+            })
             property var rows: [
                 {outputCombo: {currentIndex: 0}, channelCombo: {currentIndex: 0}},
                 {outputCombo: {currentIndex: 0}, channelCombo: {currentIndex: 0}},
@@ -302,7 +317,8 @@ bool audioRoleTests(const std::string& source)
             ]
             property var deckA: ({
                 getAvailableAudioOutputDevices: function(type) {
-                    return settingsWindow.audioOutputDeviceOptions
+                    return settingsWindow.enumeratedOutputDevicesByType[type]
+                        || settingsWindow.enumeratedOutputDevices
                 },
                 getAvailableOutputChannelPairs: function(type, device) {
                     if (device === "USB") return ["None", "1-2", "3-4"]
@@ -385,6 +401,28 @@ bool audioRoleTests(const std::string& source)
         "setRoleSelections('master', 'Saved USB', 3); refreshRoleOutputAndPairs('master');"
         "pendingMasterOutputDevice === 'Saved USB' && rows[0].outputCombo.currentIndex === 0"),
         "incomplete device enumeration does not overwrite a saved output name");
+    ok &= require(evaluate(
+        "audioOutputDeviceOptions = ['None', 'Saved USB'];"
+        "enumeratedOutputDevicesByType = ({ALSA: ['None'], JACK: ['None']});"
+        "pendingAudioDeviceType = 'ALSA'; refreshAudioBackendStatus();"
+        "!audioOutputsAvailable && !selectedAudioBackendHasOutputs"),
+        "a remembered name does not count as an enumerated backend device");
+    ok &= require(evaluate(
+        "enumeratedOutputDevicesByType = ({ALSA: ['None'], JACK: ['None', 'USB']});"
+        "pendingAudioDeviceType = 'ALSA'; refreshAudioBackendStatus();"
+        "audioOutputsAvailable && !selectedAudioBackendHasOutputs"
+        " && pendingAudioDeviceType === 'ALSA'"
+        " && audioBackendOutputSummary.join('|').indexOf('JACK: USB') >= 0"),
+        "an empty selected API is distinguished from devices found on another API without switching selection");
+    ok &= require(evaluate(
+        "pendingAudioDeviceType = 'JACK'; refreshAudioBackendStatus();"
+        "audioOutputsAvailable && selectedAudioBackendHasOutputs"),
+        "the selected backend is reported as available when its own output list is populated");
+    ok &= require(evaluate(
+        "audioDeviceTypeOptions = []; refreshAudioBackendStatus();"
+        "!audioOutputsAvailable && !selectedAudioBackendHasOutputs"
+        " && audioBackendOutputSummary.length === 0"),
+        "an empty backend list is distinguished from a backend that has no output devices");
     ok &= require(evaluate(
         "audioOutputDeviceOptions = ['None', 'USB', 'Other'];"
         "setRoleSelections('master', 'Unavailable', 3); refreshRoleOutputAndPairs('master');"
@@ -2510,6 +2548,24 @@ int main(int argc, char** argv)
     ok &= require(settingsPanel.find("audioUiSyncing = true\n        audioOutputDeviceOptions =")
                           != std::string::npos,
                   "ComboBox model changes are guarded before they can select None");
+    ok &= require(settingsPanel.find("interval: settingsWindow.audioOutputsAvailable ? 5000 : 1500")
+                          != std::string::npos
+                      && settingsPanel.find("audioDeviceListRetryCount") == std::string::npos
+                      && settingsPanel.find("updateAudioDeviceListRetry()") != std::string::npos
+                      && settingsPanel.find("Component.onCompleted: updateAudioSettingsActivity()")
+                          != std::string::npos
+                      && settingsPanel.find("text: \"Reload devices\"") != std::string::npos
+                      && settingsPanel.find("settingsManager.refreshAudioDeviceLists()")
+                          != std::string::npos
+                      && settingsPanel.find("deckA.getAvailableAudioOutputDevices(backend)")
+                          != std::string::npos
+                      && settingsPanel.find("Layout.minimumWidth: 180") != std::string::npos
+                      && settingsPanel.find("Layout.minimumWidth: 130") != std::string::npos
+                      && settingsPanel.find("placeholderText: \"No device selected\"")
+                          != std::string::npos
+                      && settingsPanel.find("placeholderText: \"No channels\"")
+                          != std::string::npos,
+                  "audio output discovery is per backend and audio role selectors remain readable when empty");
     const auto audioCallbackRegistration = applicationBootstrap.find(
         "runtime.audioEngine->registerCallback(runtime.audioDeviceService->manager())");
     const auto initialAudioApply = applicationBootstrap.find("const bool audioSettingsApplied");

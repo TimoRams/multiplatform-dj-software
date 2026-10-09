@@ -11,10 +11,13 @@
 #include <chrono>
 #include <expected>
 #include <mutex>
+#include <vector>
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
-class AudioDeviceService final : public QObject
+class AudioDeviceService final : public QObject,
+                                 private juce::ChangeListener,
+                                 private juce::AudioIODeviceType::Listener
 {
     Q_OBJECT
 
@@ -52,6 +55,8 @@ public:
 
     [[nodiscard]] QStringList availableDeviceTypes() const;
     [[nodiscard]] QStringList availableOutputDevices(const QString& deviceType = {}) const;
+    [[nodiscard]] bool hasAvailableOutputDevices(const QString& deviceType = {}) const;
+    void refreshDeviceLists();
     [[nodiscard]] QStringList availableOutputChannelPairs(const QString& deviceType = {},
                                                           const QString& outputDevice = {}) const;
     [[nodiscard]] QString currentDeviceType() const;
@@ -75,6 +80,7 @@ public:
 
 signals:
     void configurationChanged();
+    void deviceListChanged();
     void errorChanged();
     void fallbackChanged();
     void routingChanged(int masterFirstChannel,
@@ -96,8 +102,15 @@ private:
                                                        int boothFirstChannel);
     void setLastError(const QString& error);
     void setFallbackMessage(const QString& message);
+    void changeListenerCallback(juce::ChangeBroadcaster* source) override;
+    void audioDeviceListChanged() override;
+    void invalidateDeviceListCaches();
+    void ensureDeviceTypeListeners() const;
 
     juce::AudioDeviceManager m_manager;
+    mutable std::mutex m_deviceTypeListenerMutex;
+    mutable std::vector<juce::AudioIODeviceType*> m_listenedDeviceTypes;
+    mutable bool m_deviceTypeListenersRegistered = false;
     std::atomic<uint64_t> m_outputRoutingPacked{packRouting(OutputRoutingConfig{})};
     QString m_lastError;
     QString m_fallbackMessage;

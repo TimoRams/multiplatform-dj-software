@@ -10,6 +10,7 @@ Controls.ComboBox {
 
     // Set true inside a `scale: window.uiScale` context
     property bool useViewportScaling: false
+    property string placeholderText: "Select..."
 
     function sp(px) {
         if (!hostWindow) return px
@@ -37,7 +38,7 @@ Controls.ComboBox {
     }
 
     contentItem: Text {
-        text:              control.displayText
+        text:              control.displayText.length > 0 ? control.displayText : control.placeholderText
         color:             control.enabled ? UiTheme.textPrimary : UiTheme.textMuted
         font.family:       UiTheme.uiFontFamily
         font.pixelSize:    control.sp(12)

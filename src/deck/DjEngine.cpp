@@ -292,6 +292,8 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
             this, &DjEngine::audioDeviceErrorChanged);
     connect(&m_audioDeviceService, &AudioDeviceService::fallbackChanged,
             this, &DjEngine::audioDeviceFallbackChanged);
+    connect(&m_audioDeviceService, &AudioDeviceService::deviceListChanged,
+            this, &DjEngine::audioDeviceListChanged);
     m_playHistoryClock.start();
     m_vuNotifyClock.start();
     m_progressNotifyClock.start();

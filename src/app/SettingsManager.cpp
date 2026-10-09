@@ -419,6 +419,18 @@ QStringList SettingsManager::getAvailableAudioOutputDevices(const QString& devic
         m_audioDeviceService->availableOutputDevices(deviceType), preferredDevices);
 }
 
+bool SettingsManager::hasAvailableAudioOutputDevices(const QString& deviceType) const
+{
+    return m_audioDeviceService
+        && m_audioDeviceService->hasAvailableOutputDevices(deviceType);
+}
+
+void SettingsManager::refreshAudioDeviceLists()
+{
+    if (m_audioDeviceService)
+        m_audioDeviceService->refreshDeviceLists();
+}
+
 void SettingsManager::setAudioConfiguration(const QString& deviceType,
                                             const QString& masterOutputDevice,
                                             int masterFirstChannel,
