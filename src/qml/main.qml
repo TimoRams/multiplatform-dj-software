@@ -13,11 +13,7 @@ ApplicationWindow {
     title: "BrockDJ"
     color: UiTheme.bgDeep
     background: Rectangle {
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: "#263345" }
-            GradientStop { position: 0.6; color: UiTheme.surfaceInset }
-            GradientStop { position: 1.0; color: "#1d2634" }
-        }
+        color: UiTheme.surfaceInset
     }
     FontLoader {
         id: interFont

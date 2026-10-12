@@ -8,7 +8,7 @@ Item {
 
     property var engine: null
     property string deckId: "deckA"
-    property string accentColor: "#ff9900"
+    property color accentColor: UiTheme.deckA
     property int activeTab: 0
     property bool hotCueOnly: false
     property bool compact: false
@@ -21,7 +21,7 @@ Item {
 
     readonly property var tabs: hotCueOnly ? ["HOT CUE"] : ["HOT CUE", "PAD FX", "BEATJUMP", "SAMPLER"]
     readonly property real tabBarHeight: 28
-    readonly property real padsContentHeight: Math.max(0, root.height - tabBarHeight - 1)
+    readonly property real padsContentHeight: Math.max(0, root.height - tabBarHeight - 9)
     readonly property var beatJumpPads: [-16, -8, -4, -2, 2, 4, 8, 16]
     readonly property bool usesSharedPadRouter:
         (deckId === "deckA" || deckId === "deckB")
@@ -93,14 +93,14 @@ Item {
     }
 
     readonly property var padFxDefs: [
-        { name: "ECHO",    effect: "Echo",    amount: 1.0, baseColor: "#0d2244", activeColor: "#1a4488" },
-        { name: "FLANGE",  effect: "Flanger", amount: 1.0, baseColor: "#0d2030", activeColor: "#1a5080" },
-        { name: "REVERB",  effect: "Reverb",  amount: 0.6, baseColor: "#0d3030", activeColor: "#1a6666" },
-        { name: "REPEAT",  effect: "Roll",    amount: 1.0, baseColor: "#221440", activeColor: "#4428a0" },
-        { name: "ECHO OUT",effect: "EchoOut",    baseColor: "#1a2820", activeColor: "#2a6640" },
-        { name: "BACKSPIN",effect: "Backspin",   baseColor: "#2a1a30", activeColor: "#6a3080" },
-        { name: "BRAKE",   effect: "VinylBrake", baseColor: "#2a1a08", activeColor: "#886020" },
-        { name: "ROLLOUT", effect: "RollOut",    baseColor: "#1e1440", activeColor: "#4428a0" },
+        { name: "ECHO",    effect: "Echo",    amount: 1.0, accent: UiTheme.sync },
+        { name: "FLANGE",  effect: "Flanger", amount: 1.0, accent: UiTheme.blue },
+        { name: "REVERB",  effect: "Reverb",  amount: 0.6, accent: UiTheme.deckD },
+        { name: "REPEAT",  effect: "Roll",    amount: 1.0, accent: UiTheme.deckC },
+        { name: "ECHO OUT",effect: "EchoOut",    accent: UiTheme.play },
+        { name: "BACKSPIN",effect: "Backspin",   accent: UiTheme.deckC },
+        { name: "BRAKE",   effect: "VinylBrake", accent: UiTheme.cue },
+        { name: "ROLLOUT", effect: "RollOut",    accent: UiTheme.deckC },
     ]
 
     function padFxClearAll() {
@@ -189,7 +189,7 @@ Item {
         var kind = root.padKind(index)
         if (kind === "loop") return root.savedLoopAt(index).color
         if (kind === "hot")  return root.hotCueAt(index).color
-        return "#454545"
+        return UiTheme.padEmpty
     }
 
     function formatLoopLabel(loop) {
@@ -400,17 +400,22 @@ Item {
                 Rectangle {
                     required property int index
                     required property var modelData
+                    objectName: "padTab" + index
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     radius: 0
-                    color: root.activeTab === index ? "#666666" : "#454545"
+                    color: UiTheme.padBackground(root.accentColor, false,
+                                                root.activeTab === index, tabMouse.containsMouse)
                     border.width: 1
-                    border.color: root.activeTab === index ? Qt.lighter(root.accentColor, 1.12) : "#737373"
+                    border.color: root.activeTab === index ? root.accentColor
+                                  : (tabMouse.containsMouse ? UiTheme.borderHover : UiTheme.borderSubtle)
 
                     Rectangle {
                         anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 1
                         anchors.left: parent.left; anchors.right: parent.right
-                        height: root.activeTab === index ? 3 : 0
+                        anchors.leftMargin: 1; anchors.rightMargin: 1
+                        height: 2
                         visible: root.activeTab === index
                         color: root.accentColor
                     }
@@ -418,14 +423,17 @@ Item {
                     Text {
                         anchors.centerIn: parent
                         text: root.keyShiftMode && index === 3 ? "KEY SHIFT" : modelData
-                        color: root.activeTab === index ? "#ffffff" : "#dddddd"
+                        color: root.activeTab === index ? UiTheme.textPrimary : UiTheme.textSecondary
+                        font.family: UiTheme.uiFontFamily
                         font.pixelSize: 9
                         font.bold: root.activeTab === index
                         font.letterSpacing: 0.6
                     }
 
                     MouseArea {
+                        id: tabMouse
                         anchors.fill: parent
+                        hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: root.selectPadPage(index)
                     }
@@ -451,6 +459,7 @@ Item {
         RowLayout {
             id: contentRow
             Layout.fillWidth: true
+            Layout.margins: 4
             Layout.preferredHeight: root.padsContentHeight
             Layout.maximumHeight: root.padsContentHeight
             spacing: 4
@@ -468,6 +477,7 @@ Item {
 
                     Rectangle {
                         id: padRect
+                        objectName: "performancePad" + index
                         Layout.fillWidth:  true
                         Layout.fillHeight: true
                         Layout.row:    Math.floor(index / 4)
@@ -490,37 +500,44 @@ Item {
                                 ? (root.padFxMomentaryHeld === index)
                                 : padFxToggleOn
 
-                        readonly property color activeColor: {
+                        readonly property color padAccent: {
                             if (padSet)        return root.padColor(index)
-                            if (isBeatJumpTab) return "#2a2208"
-                            if (isKeyShiftTab) return root.keyShiftPadSelected(index)
-                                ? Qt.lighter(root.accentColor, 1.15)
-                                : "#20242a"
-                            if (isSamplerTab)  return padSet ? root.padColor(index) : "#202a24"
-                            if (isPadFxTab) {
-                                var def = root.padFxDefs[index]
-                                return padFxLit ? def.activeColor : def.baseColor
-                            }
-                            return "#454545"
+                            if (isBeatJumpTab) return UiTheme.cue
+                            if (isPadFxTab)    return root.padFxDefs[index].accent
+                            return root.accentColor
                         }
+                        readonly property bool padHeld: padMouse.pressed || padTouch.pressed
+                            || (isCuePlaybackTab && root.hotCueHoldPressedIndex === index)
+                        readonly property bool padActive: padHeld || padFxLit
+                            || (isKeyShiftTab && root.keyShiftPadSelected(index))
+                        readonly property bool populated: padSet || isPadFxTab || isBeatJumpTab || isKeyShiftTab
 
                         radius: 0
-                        color: padMouse.pressed || padTouch.pressed
-                               ? Qt.lighter(activeColor, 1.12)
-                               : padMouse.containsMouse
-                                 ? Qt.lighter(activeColor, 1.06)
-                                 : activeColor
-                        border.width: isKeyShiftTab && root.keyShiftPadSelected(index) ? 2 : 0
-                        border.color: "#ffffff"
+                        color: UiTheme.padBackground(padAccent, populated, padActive, padMouse.containsMouse)
+                        border.width: 1
+                        border.color: padActive ? padAccent
+                                      : (padMouse.containsMouse ? UiTheme.borderHover : UiTheme.padBorder)
+
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            anchors.margins: 1
+                            width: 2
+                            visible: padRect.populated || padRect.padActive
+                            color: padRect.padAccent
+                        }
 
                         Text {
+                            objectName: "padIndex" + index
                             anchors.top: parent.top; anchors.left: parent.left
-                            anchors.margins: 4
+                            anchors.topMargin: 3
+                            anchors.leftMargin: 6
                             text: (index + 1).toString()
-                            color: padSet || padFxLit ? "#eeeeee" : "#c8c8c8"
+                            color: padRect.padActive ? UiTheme.textPrimary : UiTheme.textLabel
                             font.pixelSize: 7
                             font.bold: true
-                            font.family: "monospace"
+                            font.family: UiTheme.numericFontFamily
                         }
 
                         // Loop-cue badge
@@ -530,13 +547,21 @@ Item {
                             anchors.right: parent.right
                             anchors.margins: 3
                             text: "L"
-                            color: "#a8ffd0"
-                            font.pixelSize: 6
+                            color: UiTheme.play
+                            font.pixelSize: 8
                             font.bold: true
                         }
 
                         Text {
-                            anchors.centerIn: parent
+                            objectName: "padLabel" + index
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.leftMargin: 6
+                            anchors.rightMargin: 4
+                            anchors.bottom: parent.bottom
+                            anchors.bottomMargin: parent.height < 34 ? 2 : 6
+                            horizontalAlignment: Text.AlignHCenter
+                            elide: Text.ElideRight
                             text: {
                                 if (isHotCueTab)   return root.padLabel(index)
                                 if (isKeyShiftTab) return root.keyShiftLabel(index)
@@ -545,31 +570,23 @@ Item {
                                 if (isPadFxTab)    return root.padFxDefs[index].name
                                 return "—"
                             }
-                            color: {
-                                if (isCuePlaybackTab && padSet) return "#ffffff"
-                                if (isHotCueTab)           return "#f0f0f0"
-                                if (isKeyShiftTab)         return root.keyShiftPadSelected(index) ? "#ffffff" : "#9dc7ff"
-                                if (isSamplerTab)          return "#8fbfa4"
-                                if (isBeatJumpTab)         return "#ffd38a"
-                                if (isPadFxTab)            return padFxLit ? "#ffffff" : (index < 4 ? "#606060" : "#505050")
-                                return "#333"
-                            }
-                            font.pixelSize: (isHotCueTab && !padSet) ? 11 : 8
+                            color: populated || padActive ? UiTheme.textPrimary : UiTheme.textSecondary
+                            font.pixelSize: isPadFxTab || parent.height < 34 ? 9 : 10
                             font.bold: (isCuePlaybackTab && padSet) || isPadFxTab
                                 || (isKeyShiftTab && root.keyShiftPadSelected(index))
                             font.letterSpacing: isPadFxTab ? 0.4 : 0.0
-                            font.family: "monospace"
+                            font.family: UiTheme.numericFontFamily
                         }
 
                         Text {
-                            visible: isPadFxMomentary && !padFxLit && padMouse.containsMouse
-                            anchors.bottom: parent.bottom
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            anchors.bottomMargin: 3
-                            text: "HOLD"
-                            color: "#555"
-                            font.pixelSize: 5
-                            font.family: "monospace"
+                            visible: isPadFxTab && parent.width >= 64
+                            anchors.top: parent.top
+                            anchors.right: parent.right
+                            anchors.margins: 4
+                            text: isPadFxMomentary ? "HOLD" : "LATCH"
+                            color: UiTheme.textLabel
+                            font.pixelSize: 7
+                            font.family: UiTheme.uiFontFamily
                         }
 
                         MouseArea {
@@ -624,8 +641,6 @@ Item {
                             onLongPressed: root.openPadEditor(
                                 index, padRect, point.position.x, point.position.y)
                         }
-
-                        Behavior on color { ColorAnimation { duration: 80 } }
                     }
                 }
             }
@@ -694,14 +709,15 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 26
-                color: "#3b2020"
-                border.color: "#a84a4a"
+                color: UiTheme.padBackground(UiTheme.error, true, false, false)
+                border.color: UiTheme.error
                 border.width: 1
 
                 Text {
                     anchors.centerIn: parent
                     text: "CLEAR"
-                    color: "#ffd4d4"
+                    color: UiTheme.textPrimary
+                    font.family: UiTheme.uiFontFamily
                     font.pixelSize: 9
                     font.bold: true
                 }
@@ -728,8 +744,8 @@ Item {
         id: root
 
         property var   engine: null
-        property color ringColor: "#3a3a3a"
-        property real  ringThickness: 7
+        property color ringColor: UiTheme.borderStrong
+        property real  ringThickness: 3
         property real  cutoutAngleDeg: 16
         property real  baseRpm: 33.0 + 1.0/3.0   // 33⅓ RPM = 200 °/s
         property real  scratchDeadzoneDeg: 0.05
@@ -831,6 +847,8 @@ Item {
 
         onWidthChanged:  ringCanvas.requestPaint()
         onHeightChanged: ringCanvas.requestPaint()
+        onRingColorChanged: ringCanvas.requestPaint()
+        onRingThicknessChanged: ringCanvas.requestPaint()
 
         MouseArea {
             anchors.fill: parent

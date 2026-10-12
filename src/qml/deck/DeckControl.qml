@@ -76,18 +76,18 @@ Item {
     readonly property int wBtnLg:         36
     readonly property int wLoopLen:       56
     readonly property int wReloop:        46
-    readonly property color btnBg:          "#212121"
-    readonly property color btnBgActive:    "#2c2c2c"
+    readonly property color btnBg:          UiTheme.panelInset
+    readonly property color btnBgActive:    UiTheme.panelRaised
     readonly property color btnBgPressed:   UiTheme.bg5
     readonly property color btnLine:        UiTheme.separatorSubtle
-    readonly property color btnLineActive:  "#aaaaaa"
-    readonly property color btnText:        "#808080"
-    readonly property color btnTextActive:  "#f0f0f0"
-    readonly property color btnTextBright:  "#b8b8b8"
-    readonly property color sectionLabel:   "#606060"
-    readonly property color metaLabel:      "#666666"
-    readonly property color metaValue:      "#a8a8a8"
-    readonly property color metaEmpty:      "#484848"
+    readonly property color btnLineActive:  UiTheme.borderActive
+    readonly property color btnText:        UiTheme.textLabel
+    readonly property color btnTextActive:  UiTheme.textPrimary
+    readonly property color btnTextBright:  UiTheme.textSecondary
+    readonly property color sectionLabel:   UiTheme.textLabel
+    readonly property color metaLabel:      UiTheme.textLabel
+    readonly property color metaValue:      UiTheme.textSecondary
+    readonly property color metaEmpty:      UiTheme.textMuted
 
     component SectionLabel: Text {
         required property string label
@@ -169,7 +169,7 @@ Item {
         property color  fbInactiveText:     deck.btnTextBright
         property real   fbPreferredHeight:  deck.btnH
         property real   fbFontPx:           9
-        property string fbFontFamily:       "monospace"
+        property string fbFontFamily:       UiTheme.uiFontFamily
 
         Layout.preferredHeight: fbPreferredHeight
         Layout.minimumHeight:   fbPreferredHeight
@@ -184,7 +184,7 @@ Item {
             anchors.bottom: parent.bottom
             height: fb.fbActive ? 2 : 1
             color: fb.fbActive ? fb.fbAccent
-                 : (fbHov.hovered ? "#454545" : "#333333")
+                 : (fbHov.hovered ? UiTheme.borderHover : deck.btnLine)
         }
 
         HoverHandler { id: fbHov }
@@ -246,14 +246,14 @@ Item {
                 y: parent.height - 1 - Math.max(0, (1.0 - ds.visualPosition) * (parent.height - 2))
                 width:  parent.width  - 2
                 height: Math.max(0, (1.0 - ds.visualPosition) * (parent.height - 2))
-                radius: 1
-                color:  ds.pressed ? "#555555" : "#3a3a3a"
+                radius: 0
+                color:  ds.pressed ? UiTheme.borderActive : UiTheme.faderFill
             }
 
             Rectangle {
                 visible: ds.orientation === Qt.Vertical && ds.centerFill
-                x: 1; width: parent.width - 2; radius: 1
-                color:  ds.pressed ? "#555555" : "#3a3a3a"
+                x: 1; width: parent.width - 2; radius: 0
+                color:  ds.pressed ? UiTheme.borderActive : UiTheme.faderFill
                 readonly property real midPy: parent.height / 2
                 readonly property real posPy: 1 + ds.visualPosition * (parent.height - 2)
                 y:      Math.min(midPy, posPy)
@@ -270,13 +270,13 @@ Item {
             y: ds.orientation === Qt.Horizontal
                ? ds.height / 2 - height / 2
                : ds.topPadding + ds.visualPosition * (ds.availableHeight - height)
-            radius: 1
-            color:  ds.pressed || ds.dragActive ? "#e0e0e0" : "#c8c8c8"
+            radius: 0
+            color:  ds.pressed || ds.dragActive ? UiTheme.textPrimary : UiTheme.faderCap
 
             Rectangle {
                 anchors.centerIn: parent
                 width: 2; height: parent.height * 0.48
-                color: "#888888"
+                color: UiTheme.knobFace
             }
         }
 
@@ -668,7 +668,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 anchors.verticalCenterOffset: -1
                                 text: deck._hasTrack ? deck._trackTitle : "No Track Loaded"
-                                color: deck._hasTrack ? "#ececec" : "#707070"
+                                color: deck._hasTrack ? UiTheme.textPrimary : UiTheme.textMuted
                                 font.pixelSize: 11
                                 font.bold: true
                                 elide: Text.ElideRight
@@ -687,7 +687,7 @@ Item {
                                 text: deck._hasTrack
                                       ? (deck._trackArtist !== "" ? deck._trackArtist : "Unknown Artist")
                                       : ""
-                                color: deck._hasTrack ? "#999999" : "#505050"
+                                color: deck._hasTrack ? UiTheme.textSecondary : UiTheme.textMuted
                                 font.pixelSize: 9
                                 elide: Text.ElideRight
                             }
@@ -825,8 +825,8 @@ Item {
                             fbFontPx: 14
                             fbFontFamily: "sans-serif"
                             fbActive: deck.engine ? deck.engine.isPlaying : false
-                            fbAccent: "#3acc3a"
-                            fbActiveText: "#3acc3a"
+                            fbAccent: UiTheme.play
+                            fbActiveText: UiTheme.play
                             fbInactiveText: deck.btnTextBright
                             onClicked: {
                                 if (!deck.engine) return
@@ -873,8 +873,8 @@ Item {
                             Layout.minimumWidth: deck.wBtnLg
                             Layout.maximumWidth: deck.wBtnLg
                             fbActive: deck.engine ? deck.engine.syncEnabled : false
-                            fbAccent: isMaster ? "#ffb000" : "#3acc3a"
-                            fbActiveText: isMaster ? "#ffb000" : "#3acc3a"
+                            fbAccent: isMaster ? UiTheme.cue : UiTheme.sync
+                            fbActiveText: isMaster ? UiTheme.cue : UiTheme.sync
                             onClicked: {
                                 if (!deck.engine) return
                                 if (deck.engine.syncEnabled) deck.engine.reSync()
@@ -895,9 +895,9 @@ Item {
                             Layout.minimumWidth: deck.wBtn
                             Layout.maximumWidth: deck.wBtn
                             fbActive: deck.linkMode
-                            fbAccent: "#3acc3a"
-                            fbActiveText: "#3acc3a"
-                            fbInactiveText: deck.linkAvailable ? deck.btnText : "#444444"
+                            fbAccent: UiTheme.sync
+                            fbActiveText: UiTheme.sync
+                            fbInactiveText: deck.linkAvailable ? deck.btnText : UiTheme.textMuted
                             onClicked: {
                                 if (!deck.linkAvailable) { deck._setLinkMode(false); return }
                                 deck._setLinkMode(!deck.linkMode)
@@ -985,8 +985,8 @@ Item {
                             Layout.minimumWidth: deck.wLoopLen
                             Layout.maximumWidth: deck.wLoopLen
                             fbActive: deck.engine ? deck.engine.loopActive : false
-                            fbAccent: "#3acc3a"
-                            fbActiveText: "#3acc3a"
+                            fbAccent: UiTheme.play
+                            fbActiveText: UiTheme.play
                             onClicked: { if (deck.engine) deck.engine.toggleLoop4Beats() }
                         }
                         FlatBtn {
@@ -1018,8 +1018,8 @@ Item {
                             opacity: _hasLoop ? 1.0 : 0.35
                             enabled: _hasLoop
                             fbActive: deck.engine ? deck.engine.loopActive : false
-                            fbAccent: "#3acc3a"
-                            fbActiveText: "#3acc3a"
+                            fbAccent: UiTheme.play
+                            fbActiveText: UiTheme.play
                             onClicked: {
                                 if (!deck.engine) return
                                 if (deck.engine.loopActive)
@@ -1172,8 +1172,8 @@ Item {
 
                                 Row {
                                     anchors.centerIn: parent; spacing: 3
-                                    Text { text: "TEMPO"; color: "#666666"; font.pixelSize: 7; font.bold: true; font.letterSpacing: 0.6; font.family: "monospace"; anchors.verticalCenter: parent.verticalCenter }
-                                    Text { text: "▾"; color: "#777777"; font.pixelSize: 8; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "TEMPO"; color: UiTheme.textLabel; font.pixelSize: 7; font.bold: true; font.letterSpacing: 0.6; font.family: UiTheme.uiFontFamily; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "▾"; color: UiTheme.textSecondary; font.pixelSize: 8; anchors.verticalCenter: parent.verticalCenter }
                                 }
                                 MouseArea {
                                     anchors.fill: parent; cursorShape: Qt.PointingHandCursor
@@ -1210,7 +1210,7 @@ Item {
         Rectangle {
             anchors.fill: parent
             z: 5
-            color: "#5599ff"
+            color: UiTheme.sync
             opacity: deck.dropHovered ? 0.08 : 0.0
             Behavior on opacity { NumberAnimation { duration: 80 } }
         }
@@ -1218,7 +1218,7 @@ Item {
             anchors.fill: parent
             z: 5
             color: "transparent"
-            border.color: "#5599ff"
+            border.color: UiTheme.sync
             border.width: 3
             visible: deck.dropHovered
             Behavior on opacity { NumberAnimation { duration: 80 } }
@@ -1271,7 +1271,7 @@ Item {
                         Text {
                             anchors.centerIn: parent
                             text: modelData.label
-                            color: isActive ? deck.btnTextActive : "#484848"
+                            color: isActive ? deck.btnTextActive : UiTheme.textSecondary
                             font.pixelSize: 8
                             font.bold: isActive
                             font.family: "monospace"
@@ -1306,31 +1306,31 @@ Item {
                                     metaBadges.x + bpmBadge.x + bpmBadge.width - width))
             y: metaBadges.y + bpmBadge.height + 6
             width: 160; height: 92; radius: 0
-            color: "#181818"; border.color: "#333333"; border.width: 1
+            color: UiTheme.panelRaised; border.color: UiTheme.borderStrong; border.width: 1
 
             MouseArea { anchors.fill: parent; onClicked: mouse => mouse.accepted = true }
 
             Column {
                 anchors.fill: parent; anchors.margins: 6; spacing: 6
-                Text { text: "MANUAL BPM"; color: "#555555"; font.pixelSize: 8; font.bold: true; font.family: "monospace" }
+                Text { text: "MANUAL BPM"; color: UiTheme.textLabel; font.pixelSize: 8; font.bold: true; font.family: UiTheme.uiFontFamily }
                 Controls.TextField {
                     id: manualBpmField
                     width: parent.width; height: 28
                     placeholderText: "e.g. 124.50"
-                    color: "#e8e8e8"
-                    placeholderTextColor: "#484848"
+                    color: UiTheme.textPrimary
+                    placeholderTextColor: UiTheme.textMuted
                     selectionColor: deck.btnLineActive
                     selectedTextColor: deck.btnBg
                     font.pixelSize: 10; font.bold: true; font.family: "monospace"
                     background: Rectangle {
-                        color: "#1e1e1e"
+                        color: UiTheme.panelInset
                         radius: 0
                         Rectangle {
                             anchors.bottom: parent.bottom
                             anchors.left: parent.left
                             anchors.right: parent.right
                             height: 1
-                            color: manualBpmField.activeFocus ? deck.btnLineActive : "#333333"
+                            color: manualBpmField.activeFocus ? deck.btnLineActive : UiTheme.borderSubtle
                         }
                     }
                     onAccepted: applyManualBpm()
@@ -1341,7 +1341,7 @@ Item {
                         manualBpmPopup.visible = false
                     }
                 }
-                Text { text: "Enter to apply"; color: "#484848"; font.pixelSize: 7; font.family: "monospace" }
+                Text { text: "Enter to apply"; color: UiTheme.textSecondary; font.pixelSize: 7; font.family: UiTheme.uiFontFamily }
             }
         }
 

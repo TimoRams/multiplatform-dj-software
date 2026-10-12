@@ -10,21 +10,21 @@ Item {
     property bool onAir: false
     property bool showRemainingTime: true
 
-    readonly property color panelColor: "#23272C"
-    readonly property color panelRaised: "#292E34"
-    readonly property color outline: "#565D65"
-    readonly property color primaryText: "#F3F1D5"
-    readonly property color secondaryText: "#D7D9CB"
-    readonly property color deckBlue: "#159ED7"
-    readonly property color deckBlueDark: "#0878B5"
-    readonly property color warningRed: "#F04A2E"
-    readonly property color functionOrange: "#F1A12B"
-    readonly property color rulerText: "#E4E3D7"
+    readonly property color panelColor: UiTheme.panel
+    readonly property color panelRaised: UiTheme.panelRaised
+    readonly property color outline: UiTheme.borderSubtle
+    readonly property color primaryText: UiTheme.textPrimary
+    readonly property color secondaryText: UiTheme.textSecondary
+    readonly property color deckAccent: UiTheme.deckColor(deckName)
+    readonly property color warningRed: UiTheme.error
+    readonly property color functionOrange: UiTheme.cue
+    readonly property color playingColor: UiTheme.play
+    readonly property color rulerText: UiTheme.textLabel
     readonly property real scale: Math.max(0.60, Math.min(width / 720, height / 280))
-    readonly property real titleHeight: 60 * scale
-    readonly property real infoHeight: 98 * scale
-    readonly property real overviewHeight: 60 * scale
-    readonly property real rulerHeight: 25 * scale
+    readonly property int titleHeight: Math.round(60 * scale)
+    readonly property int infoHeight: Math.round(98 * scale)
+    readonly property int overviewHeight: Math.round(60 * scale)
+    readonly property int rulerHeight: Math.round(25 * scale)
     readonly property real duration: engine && engine.trackDurationSec > 0 ? engine.trackDurationSec : 0
     readonly property bool hasTrack: engine && engine.hasTrack
     // This is deliberately a concrete UI value, refreshed from the visual
@@ -172,6 +172,7 @@ Item {
 
     ColumnLayout {
         anchors.fill: parent
+        anchors.margins: 1
         spacing: 0
 
         Item {
@@ -185,9 +186,13 @@ Item {
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 width: root.valuePx(68, 42)
-                gradient: Gradient {
-                    GradientStop { position: 0; color: root.deckBlue }
-                    GradientStop { position: 1; color: root.deckBlueDark }
+                color: root.panelRaised
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    width: 3
+                    color: root.deckAccent
                 }
 
                 Text {
@@ -218,14 +223,27 @@ Item {
                 anchors.leftMargin: root.valuePx(88, 55)
                 anchors.right: onAirBadge.visible ? onAirBadge.left : parent.right
                 anchors.rightMargin: root.valuePx(16, 9)
-                anchors.verticalCenter: parent.verticalCenter
-                text: "♪  " + (root.hasTrack ? root.engine.trackTitle : "No Track Loaded")
-                color: root.hasTrack ? root.primaryText : "#9B9E98"
-                font.pixelSize: root.valuePx(27, 16)
+                anchors.top: parent.top
+                anchors.topMargin: root.valuePx(9, 5)
+                text: root.hasTrack ? root.engine.trackTitle : "No Track Loaded"
+                color: root.hasTrack ? root.primaryText : UiTheme.textMuted
+                font.pixelSize: root.valuePx(24, 14)
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 verticalAlignment: Text.AlignVCenter
+            }
+
+            Text {
+                anchors.left: titleText.left
+                anchors.right: titleText.right
+                anchors.top: titleText.bottom
+                anchors.topMargin: root.valuePx(3, 2)
+                text: root.hasTrack ? root.engine.trackArtist : "Load a track to begin"
+                color: root.secondaryText
+                font.pixelSize: root.valuePx(15, 10)
+                elide: Text.ElideRight
+                maximumLineCount: 1
             }
 
             Rectangle {
@@ -235,12 +253,13 @@ Item {
                 anchors.right: parent.right
                 width: root.valuePx(92, 62)
                 height: root.valuePx(30, 20)
-                color: root.warningRed
+                color: Qt.rgba(root.playingColor.r, root.playingColor.g, root.playingColor.b, 0.15)
+                border.color: root.playingColor
                 radius: 0
                 Text {
                     anchors.centerIn: parent
                     text: "ON AIR"
-                    color: root.primaryText
+                    color: root.playingColor
                     font.pixelSize: root.valuePx(14, 9)
                     font.weight: Font.DemiBold
                     font.letterSpacing: 0.4
@@ -259,7 +278,7 @@ Item {
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                width: parent.width * 0.15
+                width: Math.round(parent.width * 0.15) - root.valuePx(12, 7)
                 anchors.leftMargin: root.valuePx(12, 7)
 
                 Text {
@@ -275,7 +294,7 @@ Item {
                     anchors.top: parent.top
                     anchors.topMargin: root.valuePx(29, 18)
                     text: root.formattedTrackNumber()
-                    color: root.hasTrack ? root.primaryText : "#858984"
+                    color: root.hasTrack ? root.primaryText : UiTheme.textMuted
                     font.pixelSize: root.valuePx(42, 24)
                     font.family: "monospace"
                     font.weight: Font.Medium
@@ -298,7 +317,7 @@ Item {
                 anchors.left: trackSection.right
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                width: parent.width * 0.36
+                width: Math.round(parent.width * 0.36)
                 clip: true
 
                 Text {
@@ -400,7 +419,7 @@ Item {
                 anchors.left: timeSection.right
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                width: parent.width * 0.21
+                width: Math.round(parent.width * 0.21)
                 clip: true
 
                 Text {
@@ -418,12 +437,13 @@ Item {
                     anchors.right: parent.right
                     width: root.valuePx(73, 46)
                     height: root.valuePx(35, 22)
-                    color: root.warningRed
+                    color: root.panelRaised
+                    border.color: root.outline
                     radius: 0
                     Text {
                         anchors.centerIn: parent
                         text: root.tempoRangeLabel()
-                        color: "#3C211A"
+                        color: root.secondaryText
                         font.pixelSize: root.valuePx(16, 10)
                         font.weight: Font.DemiBold
                     }
@@ -452,10 +472,11 @@ Item {
                 anchors.topMargin: root.valuePx(4, 2)
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: root.valuePx(5, 3)
-                color: "transparent"
+                color: UiTheme.panelInset
                 border.width: 1
-                border.color: root.engine && root.engine.syncMaster ? root.functionOrange : root.secondaryText
+                border.color: root.engine && root.engine.syncMaster ? root.functionOrange : root.outline
                 radius: 0
+                clip: true
                 Text {
                     anchors.left: parent.left
                     anchors.leftMargin: root.valuePx(8, 4)
@@ -469,14 +490,16 @@ Item {
                 Rectangle {
                     visible: root.engine && root.engine.syncMaster && bpmSection.width >= root.valuePx(86, 56)
                     anchors.right: parent.right
+                    anchors.rightMargin: 1
                     anchors.top: parent.top
+                    anchors.topMargin: 1
                     width: root.valuePx(72, 43)
                     height: root.valuePx(28, 18)
                     color: root.functionOrange
                     Text {
                         anchors.centerIn: parent
                         text: "MASTER"
-                        color: "#382813"
+                        color: UiTheme.displayBackground
                         font.pixelSize: root.valuePx(12, 8)
                         font.weight: Font.DemiBold
                     }
@@ -532,7 +555,7 @@ Item {
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 x: Math.round(root.playheadNormalized * parent.width - width / 2)
-                color: root.warningRed
+                color: UiTheme.playhead
             }
             Rectangle {
                 visible: root.hasTrack && root.engine && root.engine.seekPreviewActive
@@ -599,7 +622,7 @@ Item {
             Layout.maximumHeight: Layout.preferredHeight
             Layout.leftMargin: root.valuePx(18, 9)
             Layout.rightMargin: root.valuePx(18, 9)
-            color: "#24262d"
+            color: UiTheme.panelInset
             Rectangle {
                 anchors.left: parent.left
                 anchors.top: parent.top

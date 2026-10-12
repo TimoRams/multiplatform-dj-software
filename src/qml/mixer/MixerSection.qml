@@ -28,7 +28,7 @@ Rectangle {
 
     readonly property color clrA: UiTheme.deckColor(deckNameA)
     readonly property color clrB: UiTheme.deckColor(deckNameB)
-    readonly property color clrKnob: "#aaaaaa"
+    readonly property color clrKnob: UiTheme.knobHandle
 
     readonly property int labelH:   22
     readonly property int knobColW: 44
@@ -300,7 +300,7 @@ Rectangle {
                 anchors.left: parent.left; anchors.right: parent.right
                 anchors.bottom: parent.bottom; anchors.margins: 1
                 height: Math.max(0, (1.0 - ms.visualPosition) * (parent.height - 2))
-                radius: 1
+                radius: 0
                 color: ms.pressed ? UiTheme.borderHover : UiTheme.faderFill
                 opacity: 0.85
             }
@@ -312,7 +312,7 @@ Rectangle {
             x: ms.width / 2 - width / 2
             y: ms.topPadding + ms.visualPosition * (ms.availableHeight - height)
             radius: 0
-            color: ms.pressed || ms.dragActive ? "#e8e8e8" : UiTheme.faderCap
+            color: ms.pressed || ms.dragActive ? UiTheme.textPrimary : UiTheme.faderCap
 
             Rectangle {
                 anchors.left: parent.left; anchors.right: parent.right
@@ -483,19 +483,19 @@ Rectangle {
                     Layout.preferredHeight: mixer.cueH
                     readonly property var polDeck: mixer.deckForChannel(knobStack.channelId)
                     readonly property bool polActive: polDeck ? polDeck.polarityInverted : false
-                    color: polActive ? "#2a2210" : UiTheme.panelRaised
+                    color: polActive ? UiTheme.orangeDim : UiTheme.panelRaised
 
                     SilkLabel {
                         anchors.centerIn: parent
                         text: "−"
-                        color: polBtn.polActive ? "#ffb000" : UiTheme.textDim
+                        color: polBtn.polActive ? UiTheme.cue : UiTheme.textDim
                         font.pixelSize: 11
                         font.bold: true
                         font.family: "monospace"
                     }
                     Rectangle {
                         anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
-                        height: polBtn.polActive ? 2 : 0; color: "#ffb000"
+                        height: polBtn.polActive ? 2 : 0; color: UiTheme.cue
                     }
                     HoverHandler { id: polHov; cursorShape: Qt.PointingHandCursor }
                     Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: polHov.hovered && !polBtn.polActive ? 0.05 : 0 }

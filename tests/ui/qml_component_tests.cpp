@@ -1114,6 +1114,7 @@ bool turntableInlineRuntimeTests(const std::string& performancePads)
 
     const QString source = QStringLiteral(R"(
         import QtQuick
+        import DJSoftware
         Item {
             width: 160; height: 160
     )") + QString::fromStdString(turntable) + QStringLiteral(R"(
@@ -1142,6 +1143,168 @@ bool turntableInlineRuntimeTests(const std::string& performancePads)
     QCoreApplication::processEvents();
     ok &= require(platter->property("motionActive").toBool(),
                   "the hosted platter starts motion from its bound deck state");
+    return ok;
+}
+
+QQuickItem* findVisualItem(QQuickItem* parent, const QString& name)
+{
+    if (parent->objectName() == name)
+        return parent;
+    for (auto* child : parent->childItems()) {
+        if (auto* match = findVisualItem(child, name))
+            return match;
+    }
+    return nullptr;
+}
+
+bool performancePadsThemeRuntimeTests()
+{
+    QQmlEngine engine;
+    auto deck = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool isPlaying: false
+            property bool scratchVisualActive: false
+            property real currentBpm: 120
+            property real progress: 0
+            property real preRollSeconds: 0
+            property real keySemitoneOffset: 0
+            property var hotCues: [
+                { set: true, color: "#f6e05e", positionSec: 30 },
+                { set: false }
+            ]
+            property var savedLoops: [null, null,
+                { set: true, color: "#48bb78", inSec: 60, lengthBeats: 4 }]
+            property int cueTriggers: 0
+            property int cueStores: 0
+            property int fxReleases: 0
+            property string appliedFx: ""
+            property real seekPosition: -1
+            function getDuration() { return 120 }
+            function getPlayheadPositionAtomic() { return 30 }
+            function getVisualPositionQml() { return 30 }
+            function triggerCuePad(index) { ++cueTriggers }
+            function storeCuePad(index) { ++cueStores }
+            function play() { isPlaying = true }
+            function pause() { isPlaying = false }
+            function setPosition(value) { seekPosition = value }
+            function setPadFx(effect, amount) { appliedFx = effect }
+            function clearPadFx() { ++fxReleases; appliedFx = "" }
+            function startEchoOut() { appliedFx = "EchoOut" }
+            function stopEchoOut() { appliedFx = "" }
+            signal playingChanged()
+            signal tempoChanged()
+            signal reverseChanged()
+            signal trackLoaded()
+        }
+    )"), "performance pad theme engine instantiates");
+    if (!deck)
+        return false;
+    auto router = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property int deckAPadMode: 0
+            property int deckBPadMode: 0
+            property int deckAKeyShiftRange: 1
+            property int deckBKeyShiftRange: 1
+            function performancePadFxMomentary(deckId) { return -1 }
+            function performancePadFxToggle(deckId) { return -1 }
+            signal performancePadStateChanged(string changedDeckId)
+        }
+    )"), "performance pad theme router instantiates");
+    if (!router)
+        return false;
+    engine.rootContext()->setContextProperty(QStringLiteral("midiManager"), router.get());
+    QQmlComponent component(&engine, QUrl::fromLocalFile(QString::fromUtf8(BROCKDJ_SOURCE_DIR)
+        + QStringLiteral("/src/qml/performance/PerformancePads.qml")));
+    std::unique_ptr<QObject> pads(component.create());
+    if (!require(pads != nullptr, "the full themed performance pad component instantiates")) {
+        std::cerr << component.errorString().toStdString() << '\n';
+        return false;
+    }
+    pads->setProperty("deckId", QStringLiteral("deckC"));
+    pads->setProperty("engine", QVariant::fromValue(deck.get()));
+    pads->setProperty("compact", true);
+    auto* item = qobject_cast<QQuickItem*>(pads.get());
+    QQuickWindow window;
+    window.resize(420, 100);
+    item->setParentItem(window.contentItem());
+    item->setSize(QSizeF(420, 100));
+    window.show();
+    QCoreApplication::processEvents();
+    auto* cue = findVisualItem(item, QStringLiteral("performancePad0"));
+    auto* empty = findVisualItem(item, QStringLiteral("performancePad1"));
+    auto* loop = findVisualItem(item, QStringLiteral("performancePad2"));
+    if (!require(cue && empty && loop, "the themed grid exposes individual pads"))
+        return false;
+    bool ok = require(cue->property("padAccent").value<QColor>() == QColor("#f6e05e")
+                          && loop->property("padAccent").value<QColor>() == QColor("#48bb78")
+                          && cue->property("color").value<QColor>() != QColor("#f6e05e")
+                          && cue->property("color").value<QColor>() != empty->property("color").value<QColor>(),
+                      "custom cue and loop colors remain identifiable without full-bright pad fills");
+    const QColor idleColor = cue->property("color").value<QColor>();
+    const QPoint point = cue->mapToScene(QPointF(cue->width() / 2, cue->height() / 2)).toPoint();
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, point);
+    ok &= require(cue->property("padActive").toBool()
+                      && cue->property("color").value<QColor>() != idleColor
+                      && deck->property("cueTriggers").toInt() == 1,
+                  "a pad press immediately changes its themed state and still triggers its cue");
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, point);
+    ok &= require(!cue->property("padActive").toBool() && !deck->property("isPlaying").toBool()
+                      && std::abs(deck->property("seekPosition").toDouble() - 0.25) < 1e-6,
+                  "cue release clears the highlight and preserves stopped-deck preview behavior");
+    ok &= clickItem(window, empty, "the empty themed pad remains clickable");
+    ok &= require(deck->property("cueStores").toInt() == 1,
+                  "an empty themed pad still stores a cue");
+    pads->setProperty("activeTab", 1);
+    QCoreApplication::processEvents();
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, point);
+    ok &= require(cue->property("padFxLit").toBool()
+                      && deck->property("appliedFx").toString() == QStringLiteral("Echo"),
+                  "momentary FX retain their action and active visual state");
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, point);
+    ok &= require(!cue->property("padFxLit").toBool()
+                      && deck->property("fxReleases").toInt() == 1,
+                  "releasing a momentary FX clears the effect and its visual state");
+    auto* toggle = findVisualItem(item, QStringLiteral("performancePad4"));
+    ok &= clickItem(window, toggle, "the themed latched FX pad remains clickable");
+    ok &= require(toggle && toggle->property("padFxLit").toBool(),
+                  "latched FX keep their highlight after release");
+    ok &= clickItem(window, toggle, "the latched FX can be switched off");
+    ok &= require(toggle && !toggle->property("padFxLit").toBool(),
+                  "switching off a latched FX clears its highlight");
+    for (const QSizeF size : {QSizeF(420, 100), QSizeF(720, 160)}) {
+        item->setSize(size);
+        window.resize(size.toSize());
+        for (int page = 0; page < 4; ++page) {
+            pads->setProperty("activeTab", page);
+            QCoreApplication::processEvents();
+            for (int index = 0; index < 8; ++index) {
+                auto* pad = findVisualItem(item, QStringLiteral("performancePad%1").arg(index));
+                auto* label = findVisualItem(item, QStringLiteral("padLabel%1").arg(index));
+                auto* number = findVisualItem(item, QStringLiteral("padIndex%1").arg(index));
+                ok &= require(pad && label && number && pad->height() > 20
+                                  && label->y() >= number->y() + number->height()
+                                  && label->y() + label->height() <= pad->height() - 1
+                                  && label->width() <= pad->width(),
+                              "all pad pages keep labels within their compact and full-size frames");
+                ok &= require(label && label->property("color").value<QColor>().lightnessF() > 0.5,
+                              "inactive pad labels retain readable contrast");
+            }
+        }
+    }
+    pads->setProperty("deckId", QStringLiteral("deckA"));
+    router->setProperty("deckAPadMode", 4);
+    QCoreApplication::processEvents();
+    ok &= require(pads->property("keyShiftMode").toBool()
+                      && cue->property("padActive").toBool()
+                      && !empty->property("padActive").toBool(),
+                  "controller key-shift mode highlights only the current semitone pad");
+    deck->setProperty("keySemitoneOffset", 1);
+    QCoreApplication::processEvents();
+    ok &= require(!cue->property("padActive").toBool()
+                      && empty->property("padActive").toBool(),
+                  "key-shift highlights follow engine changes without changing pad routing");
     return ok;
 }
 
@@ -1808,6 +1971,19 @@ bool qmlMergeRuntimeTests()
     QObject* quickB = performance->findChild<QObject*>(QStringLiteral("deckQuickPanelB"));
     ok &= require(quickA != nullptr && quickB != nullptr,
                   "the screen owns two separate quick-panel instances");
+    deckA->setProperty("currentBpm", 129.99);
+    QCoreApplication::processEvents();
+    QObject* bpmWhole = quickA ? quickA->findChild<QObject*>(QStringLiteral("bpmWhole")) : nullptr;
+    QObject* bpmDecimals = quickA ? quickA->findChild<QObject*>(QStringLiteral("bpmDecimals")) : nullptr;
+    auto* bpmSeparator = quickA ? quickA->findChild<QQuickItem*>(QStringLiteral("bpmSeparator")) : nullptr;
+    ok &= require(bpmWhole && bpmDecimals
+                      && bpmWhole->property("text").toString() == QStringLiteral("130")
+                      && bpmDecimals->property("text").toString() == QStringLiteral(".0"),
+                  "the split BPM display rounds the whole and decimal parts together");
+    ok &= require(bpmSeparator && bpmSeparator->height() == 1
+                      && std::abs(bpmSeparator->mapToScene(QPointF()).y()
+                                  - std::round(bpmSeparator->mapToScene(QPointF()).y())) < 1e-6,
+                  "the BPM bottom separator is one pixel tall and aligned to a whole scene pixel");
     ok &= require(quickB && QMetaObject::invokeMethod(quickB, "selectedRequested")
                       && performance->property("selectedDeck").toString() == QStringLiteral("B"),
                   "deck B quick-panel selection updates the screen's selected deck");
@@ -2291,6 +2467,7 @@ int main(int argc, char** argv)
     ok &= aioDeckControlTests(workspace);
     ok &= crossfaderInlineRuntimeTests(developmentControls);
     ok &= turntableInlineRuntimeTests(performancePads);
+    ok &= performancePadsThemeRuntimeTests();
     ok &= require(main.find("s(\"showAioDeckControls\", window.showAioDeckControls)") != std::string::npos
                       && main.find("b(\"showAioDeckControls\", true)") != std::string::npos
                       && main.find("onShowAioDeckControlsChanged: _scheduleUiPersist()") != std::string::npos
@@ -2370,6 +2547,14 @@ int main(int argc, char** argv)
         ? productionCmake.substr(qmlManifestStart, qmlManifestEnd - qmlManifestStart)
         : std::string{};
     const auto deckTrackInfoPanel = read("src/qml/deck/DeckTrackInfoPanel.qml");
+    ok &= require(main.find("gradient:") == std::string::npos
+                      && deckTrackInfoPanel.find("gradient:") == std::string::npos
+                      && deckTrackInfoPanel.find("panelColor: UiTheme.panel") != std::string::npos
+                      && deckTrackInfoPanel.find("root.engine.trackArtist") != std::string::npos
+                      && deckTrackInfoPanel.find("infoHeight: Math.round(98 * scale)") != std::string::npos
+                      && deckTrackInfoPanel.find("width: Math.round(parent.width * 0.21)") != std::string::npos
+                      && deckTrackInfoPanel.find("anchors.margins: 1") != std::string::npos,
+                  "deck information uses flat shared surfaces, artist hierarchy and integer-aligned BPM geometry");
     const auto flx10Mapping = read("src/controllers/mappings/DDJ-FLX10.brockdj.xml");
     const auto flx10MidiBridge = read("src/controllers/flx10/Flx10MidiBridge.cpp");
     const auto engineHeader = read("src/deck/DjEngine.h");

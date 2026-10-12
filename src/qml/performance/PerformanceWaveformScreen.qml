@@ -208,7 +208,9 @@ Item {
         signal selectedRequested()
         signal gridRequested()
 
-        readonly property int rowSpacing: 1
+        readonly property int rowSpacing: 0
+        readonly property int bpmTenths: engine && engine.currentBpm > 0
+                                        ? Math.round(engine.currentBpm * 10) : 0
         readonly property color panelText: UiTheme.textPrimary
         readonly property color mutedText: UiTheme.textSecondary
         readonly property color lineColor: UiTheme.borderSubtle
@@ -414,24 +416,31 @@ Item {
                 // Split so the decimal stays small, the way a player prints a tempo.
                 PerformanceText {
                     id: bpmDecimals
+                    objectName: "bpmDecimals"
                     anchors.right: parent.right; anchors.rightMargin: 9
                     anchors.baseline: bpmWhole.baseline
-                    text: root.engine && root.engine.currentBpm > 0
-                          ? "." + (Math.round(root.engine.currentBpm * 10) % 10) : ".-"
+                    text: root.bpmTenths > 0 ? "." + (root.bpmTenths % 10) : ".-"
                     color: root.panelText; font.pixelSize: 12
                 }
                 PerformanceText {
                     id: bpmWhole
+                    objectName: "bpmWhole"
                     anchors.right: bpmDecimals.left
                     anchors.verticalCenter: parent.verticalCenter
-                    text: root.engine && root.engine.currentBpm > 0
-                          ? Math.floor(root.engine.currentBpm).toString() : "---"
+                    text: root.bpmTenths > 0 ? Math.floor(root.bpmTenths / 10).toString() : "---"
                     color: root.panelText; font.pixelSize: 19; font.weight: Font.Medium
                 }
                 MouseArea { anchors.fill: parent; onClicked: root.selectedRequested() }
             }
 
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.lineColor }
+            Rectangle {
+                objectName: "bpmSeparator"
+                Layout.fillWidth: true
+                Layout.minimumHeight: 1
+                Layout.preferredHeight: 1
+                Layout.maximumHeight: 1
+                color: root.lineColor
+            }
 
             // ── BEAT JUMP ───────────────────────────────────────────────────────
             Rectangle {

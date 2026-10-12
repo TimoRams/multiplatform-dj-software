@@ -142,6 +142,13 @@ QtObject {
     readonly property color padBorder:   separatorSubtle
     readonly property color padBorderHi: separator
 
+    function padBackground(accent, populated, active, hovered) {
+        if (!populated && !active)
+            return hovered ? surfaceRaised : padEmpty
+        var opacity = active ? 0.28 : (hovered ? 0.16 : 0.09)
+        return Qt.tint(padEmpty, Qt.rgba(accent.r, accent.g, accent.b, opacity))
+    }
+
     function deckColor(name) {
         switch (name) {
         case "A": return deckA
