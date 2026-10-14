@@ -147,7 +147,8 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             height: 1
-            color: metaHighlight ? deck.btnLineActive : deck.btnLine
+            visible: metaHighlight
+            color: deck.btnLineActive
         }
     }
 
@@ -185,9 +186,9 @@ Item {
             anchors.left:   parent.left
             anchors.right:  parent.right
             anchors.bottom: parent.bottom
-            height: fb.fbActive ? 2 : 1
-            color: fb.fbActive ? fb.fbAccent
-                 : (fbHov.hovered ? UiTheme.borderHover : deck.btnLine)
+            height: 2
+            visible: fb.fbActive
+            color: fb.fbAccent
         }
 
         HoverHandler { id: fbHov }
@@ -1223,7 +1224,7 @@ Item {
             z: 5
             color: "transparent"
             border.color: UiTheme.sync
-            border.width: 3
+            border.width: 2
             visible: deck.dropHovered
             Behavior on opacity { NumberAnimation { duration: 80 } }
         }
@@ -1263,14 +1264,6 @@ Item {
                         height: 18
                         radius: 0
                         color: isActive ? UiTheme.panelRaised : UiTheme.panel
-
-                        Rectangle {
-                            anchors.bottom: parent.bottom
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            height: 1
-                            color: isActive ? deck.btnLineActive : deck.btnLine
-                        }
 
                         Text {
                             anchors.centerIn: parent

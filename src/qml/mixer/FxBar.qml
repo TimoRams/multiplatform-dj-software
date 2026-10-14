@@ -24,14 +24,15 @@ Rectangle {
         Rectangle {
             anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
             height: 1
-            color: db.active ? db.accent : (db.isHeader ? UiTheme.separator : UiTheme.borderSubtle)
+            visible: db.active
+            color: db.accent
         }
 
         Text {
             anchors.centerIn: parent
             text:           db.label
             color:          db.active ? db.accent : (db.isHeader ? UiTheme.textDim : UiTheme.textMuted)
-            font.pixelSize: 8
+            font.pixelSize: 9
             font.bold:      db.active
             font.family:    UiTheme.uiFontFamily
         }
@@ -51,7 +52,8 @@ Rectangle {
         Rectangle {
             anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
             height: 1
-            color:  ab.active ? ab.accent : UiTheme.borderSubtle
+            visible: ab.active
+            color: ab.accent
         }
 
         Text {
@@ -280,7 +282,7 @@ Rectangle {
                                 Text {
                                     anchors.centerIn: parent
                                     text: "WIP"; color: UiTheme.textMuted
-                                    font.pixelSize: 7; font.bold: true; font.family: UiTheme.uiFontFamily
+                                    font.pixelSize: 9; font.bold: true; font.family: UiTheme.uiFontFamily
                                 }
                             }
                         }
@@ -291,17 +293,17 @@ Rectangle {
                             Rectangle {
                                 anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
                                 height: 1
-                                color: (highlighted && !entry.wip) ? root.accentColor : UiTheme.borderSubtle
+                                visible: highlighted && !entry.wip
+                                color: root.accentColor
                             }
                         }
                     }
 
+                    popup.padding: 1
                     popup.background: Rectangle {
                         color: UiTheme.panelDeep; radius: 0
-                        Rectangle {
-                            anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
-                            height: 1; color: UiTheme.separatorSubtle
-                        }
+                        border.width: 1
+                        border.color: UiTheme.borderSubtle
                     }
 
                     onCurrentIndexChanged: {
@@ -378,12 +380,6 @@ Rectangle {
                     color: UiTheme.displayBackground
                     radius: 0
 
-                    Rectangle {
-                        anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
-                        height: 1
-                        color: root.deckBpm > 0 ? UiTheme.separator : UiTheme.borderSubtle
-                    }
-
                     Text {
                         anchors.centerIn: parent
                         text:           root.deckBpm > 0 ? root.deckBpm.toFixed(1) : "---"
@@ -404,14 +400,15 @@ Rectangle {
                     Rectangle {
                         anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
                         height: 1
-                        color: root.syncOn ? UiTheme.green : UiTheme.borderSubtle
+                        visible: root.syncOn
+                        color: UiTheme.green
                     }
 
                     Text {
                         anchors.centerIn: parent
                         text:           "SYNC"
                         color:          root.syncOn ? UiTheme.green : UiTheme.textMuted
-                        font.pixelSize: 8
+                        font.pixelSize: 9
                         font.bold:      root.syncOn
                         font.family:    UiTheme.uiFontFamily
                     }
@@ -454,7 +451,8 @@ Rectangle {
                                 Rectangle {
                                     anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
                                     height: 1
-                                    color: isActive ? root.accentColor : UiTheme.borderSubtle
+                                    visible: isActive
+                                    color: root.accentColor
                                 }
 
                                 Text {
@@ -504,7 +502,8 @@ Rectangle {
                                 Rectangle {
                                     anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
                                     height: 1
-                                    color: isActive ? root.accentColor : UiTheme.borderSubtle
+                                    visible: isActive
+                                    color: root.accentColor
                                 }
 
                                 Text {
@@ -540,6 +539,7 @@ Rectangle {
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.left: parent.left
+                            anchors.right: parent.right
                             text:    root.currentEffect.name !== "---"
                                 ? root.knobLabel + " controlled by knob"
                                 : ""
@@ -547,6 +547,7 @@ Rectangle {
                             font.pixelSize: 8
                             font.family:    UiTheme.uiFontFamily
                             font.italic:    true
+                            elide: Text.ElideRight
                         }
                     }
                 }
@@ -564,6 +565,7 @@ Rectangle {
 
     RowLayout {
         anchors.fill: parent
+        anchors.topMargin: 1
         spacing: 0
 
         FxUnit {
@@ -632,7 +634,7 @@ Rectangle {
                     Layout.fillWidth: true
                     text:           "COLOR FX"
                     color:          UiTheme.textLabel
-                    font.pixelSize: 7
+                    font.pixelSize: 9
                     font.family:    UiTheme.uiFontFamily
                     font.letterSpacing: 1
                 }
@@ -670,7 +672,7 @@ Rectangle {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text:           scPanel.paramLabels[scPanel.activeMode] ?? "PARAM"
                             color:          UiTheme.textMuted
-                            font.pixelSize: 7
+                            font.pixelSize: 9
                             font.family:    UiTheme.uiFontFamily
                         }
                     }
@@ -692,13 +694,14 @@ Rectangle {
                                 radius: 0
                                 color: isActive ? UiTheme.panelRaised : UiTheme.panelDeep
 
-                                // Active accent bar at top
+                                // One accent line identifies the selected mode.
                                 Rectangle {
                                     anchors.top:   parent.top
                                     anchors.left:  parent.left
                                     anchors.right: parent.right
-                                    height: isActive ? 2 : 1
-                                    color:  isActive ? UiTheme.textSecondary : UiTheme.borderSubtle
+                                    height: 1
+                                    visible: isActive
+                                    color: UiTheme.textSecondary
                                 }
 
                                 Text {

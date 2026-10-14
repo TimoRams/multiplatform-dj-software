@@ -466,6 +466,7 @@ Item {
             Rectangle {
                 id: bpmSection
                 anchors.left: tempoSection.right
+                anchors.leftMargin: root.valuePx(6, 3)
                 anchors.right: parent.right
                 anchors.rightMargin: root.valuePx(8, 4)
                 anchors.top: parent.top

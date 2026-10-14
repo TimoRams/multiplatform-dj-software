@@ -101,6 +101,7 @@ Item {
             id: gridScroll
             objectName: "gridScroll"
             anchors.fill: parent
+            anchors.margins: 1
             contentHeight: gridContent.height
         }
         ColumnLayout {
@@ -626,7 +627,7 @@ Item {
             parent: fxScroll.contentItem
             width: fxScroll.width
             height: Math.max(fxScroll.height, implicitHeight)
-            spacing: 1
+            spacing: 0
 
             // ── Section header ──────────────────────────────────────────────────
             Rectangle {
@@ -726,7 +727,11 @@ Item {
             RowLayout {
                 Layout.fillWidth: true; Layout.preferredHeight: 34
                 Layout.minimumHeight: 34
-                spacing: 1
+                spacing: 4
+                Layout.leftMargin: 6
+                Layout.rightMargin: 6
+                Layout.topMargin: 4
+                Layout.bottomMargin: 4
                 Repeater {
                     model: 3
                     Rectangle {
@@ -807,15 +812,19 @@ Item {
 
             Rectangle {
                 id: mixBar
+                objectName: "fxMixBar"
                 Layout.fillWidth: true; Layout.preferredHeight: 40
                 Layout.minimumHeight: 40
+                Layout.leftMargin: 6
+                Layout.rightMargin: 6
                 color: UiTheme.surfaceInset
                 border.color: root.lineColor
                 border.width: 1
 
                 Rectangle {
                     anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                    width: Math.max(0, parent.width * (root.fx ? root.fx.wetDry1 : 0))
+                    anchors.margins: 1
+                    width: Math.max(0, (parent.width - 2) * (root.fx ? root.fx.wetDry1 : 0))
                     color: root.effectOn ? Qt.rgba(root.activeColor.r, root.activeColor.g, root.activeColor.b, 0.32) : UiTheme.surfaceRaised
                 }
                 PerformanceText {
@@ -837,7 +846,11 @@ Item {
             RowLayout {
                 Layout.fillWidth: true; Layout.preferredHeight: 30
                 Layout.minimumHeight: 30
-                spacing: 1
+                spacing: 4
+                Layout.leftMargin: 6
+                Layout.rightMargin: 6
+                Layout.topMargin: 4
+                Layout.bottomMargin: 4
                 Rectangle {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     color: root.routedA ? Qt.rgba(UiTheme.deckA.r, UiTheme.deckA.g, UiTheme.deckA.b, 0.16) : root.rowColor
@@ -868,6 +881,9 @@ Item {
                 objectName: "fxEngageRow"
                 Layout.fillWidth: true; Layout.preferredHeight: 42
                 Layout.minimumHeight: 42
+                Layout.leftMargin: 6
+                Layout.rightMargin: 6
+                Layout.bottomMargin: 6
                 color: root.effectOn ? Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.16) : root.rowColor
                 border.color: root.effectOn ? root.accentColor : root.lineColor
                 border.width: 1
@@ -1015,6 +1031,7 @@ Item {
 
         PerformanceBackdrop {
             objectName: "leftBackdrop"
+            frameVisible: false
             anchors.fill: parent
             sourceItem: waveformBacking
             sourceOrigin: Qt.point(leftHost.x, leftHost.y)
@@ -1029,11 +1046,9 @@ Item {
             onCloseRequested: root.closeLeftPanel()
         }
 
-        Rectangle {
+        Item {
             anchors.fill: parent
             visible: root.leftPanel === "deck"
-            color: "transparent"
-            border.color: UiTheme.borderSubtle; border.width: 1
             Item {
                 anchors.fill: parent
                 PerformanceDeckQuickPanel {
@@ -1077,6 +1092,7 @@ Item {
         z: 30
         PerformanceBackdrop {
             objectName: "rightBackdrop"
+            frameVisible: false
             anchors.fill: parent
             sourceItem: waveformBacking
             sourceOrigin: Qt.point(rightHost.x, rightHost.y)

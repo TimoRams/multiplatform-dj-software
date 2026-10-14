@@ -12,7 +12,7 @@ Rectangle {
     signal usbLibraryRequested()
     signal sourceBackRequested()
 
-    color: "#1b1c23"
+    color: UiTheme.panelDeep
     focus: visible
     property string sourcePane: "sources"
     property int sourceCursorIndex: 0
@@ -195,7 +195,7 @@ Rectangle {
 
     Item {
         anchors.fill: parent
-        readonly property int dividerWidth: 2
+        readonly property int dividerWidth: UiTheme.dividerWidth
 
         Rectangle {
             id: sourcePanel
@@ -203,7 +203,7 @@ Rectangle {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             width: (parent.width - parent.dividerWidth) / 2
-            color: "#1a1b21"
+            color: UiTheme.panel
 
             ColumnLayout {
                 anchors.fill: parent
@@ -212,13 +212,13 @@ Rectangle {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
-                    color: "#23242c"
+                    color: UiTheme.panelRaised
                     Text {
                         anchors.left: parent.left
                         anchors.leftMargin: 22
                         anchors.verticalCenter: parent.verticalCenter
                         text: "MEDIA"
-                        color: "#a8abb4"
+                        color: UiTheme.textLabel
                         font.pixelSize: 11
                         font.bold: true
                         font.letterSpacing: 1.4
@@ -231,28 +231,29 @@ Rectangle {
                     readonly property bool focused: root.sourcePane === "sources"
                                                     && root.sourceCursorIndex === 0
                     readonly property bool active: root.activeSourceType === "local"
-                    color: focused || active ? "#292a33"
-                          : (localMouse.containsMouse ? "#202129" : "#1b1c23")
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.top: parent.top
-                        anchors.bottom: parent.bottom
-                        width: 3
-                        color: "#40d84b"
-                        visible: parent.focused || parent.active
-                    }
+                    color: focused || active ? UiTheme.blueDim
+                          : (localMouse.containsMouse ? UiTheme.panelRaised : UiTheme.panelInset)
 
                     Rectangle {
                         anchors.left: parent.left
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         width: 80
-                        color: "#1d3971"
+                        color: UiTheme.panelInset
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            width: 3
+                            color: UiTheme.green
+                            visible: root.sourcePane === "sources" && root.sourceCursorIndex === 0
+                                     || root.activeSourceType === "local"
+                        }
                         Text {
                             anchors.centerIn: parent
                             text: "▣\nLOCAL"
                             horizontalAlignment: Text.AlignHCenter
-                            color: "#f0f2f6"
+                            color: UiTheme.textPrimary
                             font.pixelSize: 10
                             font.bold: true
                             lineHeight: 0.9
@@ -263,7 +264,7 @@ Rectangle {
                         anchors.leftMargin: 102
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Internal Collection"
-                        color: parent.active ? "#40d84b" : "#d6d8df"
+                        color: parent.active ? UiTheme.green : UiTheme.textPrimary
                         font.pixelSize: 18
                         font.weight: Font.DemiBold
                     }
@@ -294,7 +295,7 @@ Rectangle {
                         readonly property bool active: root.activeSourceType === "usb"
                                                        && String(root.activeDeviceId) === String(modelData.id)
                         readonly property color deviceAccent: modelData.color
-                                                             ? modelData.color : "#2d7dd2"
+                                                             ? modelData.color : UiTheme.blue
                         width: ListView.view.width
                         height: 63
 
@@ -305,14 +306,14 @@ Rectangle {
                             Rectangle {
                                 width: 80
                                 height: parent.height
-                                color: focused || active ? "#1d3971" : "#182b52"
+                                color: UiTheme.panelInset
                                 Rectangle {
                                     anchors.left: parent.left
                                     anchors.top: parent.top
                                     anchors.bottom: parent.bottom
                                     width: 3
                                     color: deviceAccent
-                                    visible: Boolean(modelData.color)
+                                    visible: Boolean(modelData.color) || focused || active
                                 }
                                 Column {
                                     anchors.centerIn: parent
@@ -320,13 +321,13 @@ Rectangle {
                                     Text {
                                         anchors.horizontalCenter: parent.horizontalCenter
                                         text: "▣"
-                                        color: "#f0f2f6"
+                                        color: UiTheme.textPrimary
                                         font.pixelSize: 18
                                     }
                                     Text {
                                         anchors.horizontalCenter: parent.horizontalCenter
                                         text: "USB " + (index + 1)
-                                        color: "#f0f2f6"
+                                        color: UiTheme.textPrimary
                                         font.pixelSize: 10
                                         font.bold: true
                                     }
@@ -336,16 +337,8 @@ Rectangle {
                             Rectangle {
                                 width: parent.width - 80
                                 height: parent.height
-                                color: focused || active ? "#383944"
-                                               : (deviceMouse.containsMouse ? "#383944" : "#24252d")
-                                Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.top: parent.top
-                                    anchors.bottom: parent.bottom
-                                    width: 3
-                                    color: deviceAccent
-                                    visible: focused || active
-                                }
+                                color: focused || active ? UiTheme.blueDim
+                                               : (deviceMouse.containsMouse ? UiTheme.panelRaised : UiTheme.panelInset)
                                 Text {
                                     anchors.left: parent.left
                                     anchors.leftMargin: 20
@@ -354,7 +347,7 @@ Rectangle {
                                     anchors.right: deviceAction.left
                                     anchors.rightMargin: 12
                                     text: modelData.name || ("USB " + (index + 1))
-                                    color: active ? "#40d84b" : "#d6d8df"
+                                    color: active ? UiTheme.green : UiTheme.textPrimary
                                     font.pixelSize: 17
                                     font.weight: Font.DemiBold
                                     elide: Text.ElideRight
@@ -371,7 +364,7 @@ Rectangle {
                                           : modelData.ready
                                             ? modelData.badge + "  ·  " + modelData.trackCount + " tracks"
                                             : (modelData.status || "Not mounted")
-                                    color: focused ? "#e3e5e9" : "#989ba5"
+                                    color: focused ? UiTheme.textPrimary : UiTheme.textSecondary
                                     font.pixelSize: 10
                                     elide: Text.ElideRight
                                 }
@@ -385,11 +378,14 @@ Rectangle {
                                     visible: modelData.canMount || modelData.canEject
                                              || modelData.operationPending
                                     color: deviceActionMouse.containsMouse
-                                           && !modelData.operationPending ? "#f0f1f3" : "#d6d8dc"
+                                           && !modelData.operationPending ? UiTheme.panelRaised : UiTheme.panelInset
+                                    border.width: UiTheme.dividerWidth
+                                    border.color: deviceActionMouse.containsMouse
+                                                  ? UiTheme.borderHover : UiTheme.border
                                     Text {
                                         anchors.centerIn: parent
                                         text: modelData.operationPending ? "…" : modelData.actionLabel
-                                        color: "#15161b"
+                                        color: modelData.operationPending ? UiTheme.textDim : UiTheme.textPrimary
                                         font.pixelSize: 10
                                         font.bold: true
                                     }
@@ -430,7 +426,7 @@ Rectangle {
                         anchors.centerIn: parent
                         visible: deviceList.count === 0
                         text: "No USB devices connected"
-                        color: "#555863"
+                        color: UiTheme.textDim
                         font.pixelSize: 13
                     }
                 }
@@ -443,7 +439,7 @@ Rectangle {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             width: parent.dividerWidth
-            color: "#111218"
+            color: UiTheme.borderSubtle
         }
 
         Rectangle {
@@ -452,7 +448,7 @@ Rectangle {
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.bottom: parent.bottom
-            color: "#1b1c23"
+            color: UiTheme.panel
 
             ColumnLayout {
                 anchors.fill: parent
@@ -461,13 +457,13 @@ Rectangle {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
-                    color: "#24252e"
+                    color: UiTheme.panelRaised
                     Text {
                         anchors.left: parent.left
                         anchors.leftMargin: 30
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Available:"
-                        color: "#b9bbc1"
+                        color: UiTheme.textSecondary
                         font.pixelSize: 14
                     }
                     Text {
@@ -475,7 +471,7 @@ Rectangle {
                         anchors.leftMargin: 108
                         anchors.verticalCenter: parent.verticalCenter
                         text: root.selectedSourceLabel()
-                        color: "#ffffff"
+                        color: UiTheme.textPrimary
                         font.pixelSize: 20
                         font.weight: Font.DemiBold
                     }
@@ -484,7 +480,7 @@ Rectangle {
                         anchors.rightMargin: 24
                         anchors.verticalCenter: parent.verticalCenter
                         text: "ⓘ"
-                        color: "#d5d7dc"
+                        color: UiTheme.textSecondary
                         font.pixelSize: 19
                     }
                     Text {
@@ -493,7 +489,7 @@ Rectangle {
                         anchors.rightMargin: 26
                         anchors.verticalCenter: parent.verticalCenter
                         text: "⚙"
-                        color: "#d5d7dc"
+                        color: UiTheme.textSecondary
                         font.pixelSize: 20
                     }
                 }
@@ -517,14 +513,14 @@ Rectangle {
                         readonly property bool active: modelData.key === "library"
                         Layout.fillWidth: true
                         Layout.preferredHeight: 94
-                        color: focused ? "#1987f0" : (active ? "#32333d" : "#292a33")
+                        color: focused ? UiTheme.blueDim : (active ? UiTheme.panelRaised : UiTheme.panelInset)
 
                         Rectangle {
                             anchors.bottom: parent.bottom
                             anchors.left: parent.left
                             anchors.right: parent.right
                             height: 1
-                            color: "#22232a"
+                            color: UiTheme.borderSubtle
                         }
 
                         Text {
@@ -532,8 +528,8 @@ Rectangle {
                             anchors.leftMargin: 31
                             anchors.verticalCenter: parent.verticalCenter
                             text: parent.focused || parent.active ? "◉" : "○"
-                            color: parent.focused ? "#f3f4f6"
-                                  : (parent.active ? "#40d84b" : "#f3f4f6")
+                            color: parent.focused ? UiTheme.blue
+                                  : (parent.active ? UiTheme.green : UiTheme.textDim)
                             font.pixelSize: 20
                         }
 
@@ -545,14 +541,14 @@ Rectangle {
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: modelData.icon
-                                color: "#ffffff"
+                                color: modelData.enabled ? UiTheme.textPrimary : UiTheme.textDim
                                 font.pixelSize: 22
                             }
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: modelData.label
                                 horizontalAlignment: Text.AlignHCenter
-                                color: "#ffffff"
+                                color: modelData.enabled ? UiTheme.textPrimary : UiTheme.textDim
                                 font.pixelSize: 15
                                 font.weight: Font.DemiBold
                                 lineHeight: 0.9
@@ -565,7 +561,7 @@ Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
                             visible: !modelData.enabled
                             text: "SERVICE NOT CONFIGURED"
-                            color: parent.focused ? "#eff7ff" : "#b9bbc1"
+                            color: parent.focused ? UiTheme.textPrimary : UiTheme.textDim
                             font.pixelSize: 13
                             font.weight: Font.DemiBold
                         }

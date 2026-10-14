@@ -248,14 +248,14 @@ Rectangle {
         parent: Overlay.overlay
         modal: false; focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        padding: 0
-        background: Rectangle { color: UiTheme.surface; border.color: UiTheme.border; border.width: 1 }
+        padding: 1
+        background: Rectangle { color: UiTheme.surface; border.color: UiTheme.borderSubtle; border.width: 1 }
 
         contentItem: Column {
             spacing: 0
 
             Rectangle {
-                width: latencyPopup.width; height: 28
+                width: latencyPopup.availableWidth; height: 28
                 color: UiTheme.panelInset
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
@@ -276,7 +276,7 @@ Rectangle {
                 Rectangle {
                     required property var modelData
                     required property int index
-                    width: latencyPopup.width; height: 26
+                    width: latencyPopup.availableWidth; height: 26
                     color: index % 2 === 0 ? UiTheme.surfaceInset : UiTheme.panelInset
                     Row {
                         anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
@@ -303,7 +303,7 @@ Rectangle {
             }
 
             Rectangle {
-                width: latencyPopup.width; height: 28
+                width: latencyPopup.availableWidth; height: 28
                 color: UiTheme.panelInset
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
@@ -314,7 +314,7 @@ Rectangle {
             }
 
             Rectangle {
-                width: latencyPopup.width; height: 28
+                width: latencyPopup.availableWidth; height: 28
                 color: UiTheme.surfaceInset
                 Row {
                     anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
@@ -344,7 +344,7 @@ Rectangle {
             }
 
             Rectangle {
-                width: latencyPopup.width; height: 28
+                width: latencyPopup.availableWidth; height: 28
                 color: UiTheme.panelInset
                 Row {
                     anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
@@ -375,7 +375,7 @@ Rectangle {
             }
 
             Rectangle {
-                width: latencyPopup.width; height: 24
+                width: latencyPopup.availableWidth; height: 24
                 color: UiTheme.surfaceInset
                 Row {
                     anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
@@ -395,7 +395,7 @@ Rectangle {
             }
 
             Rectangle {
-                width: latencyPopup.width; height: 24
+                width: latencyPopup.availableWidth; height: 24
                 color: UiTheme.panelInset
                 Row {
                     anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
@@ -419,7 +419,7 @@ Rectangle {
             }
 
             Rectangle {
-                width: latencyPopup.width; height: 24
+                width: latencyPopup.availableWidth; height: 24
                 color: UiTheme.surfaceInset
                 Row {
                     anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
@@ -459,7 +459,7 @@ Rectangle {
                 model: root.audioPerfStats.fxProfiles ? root.audioPerfStats.fxProfiles : []
                 Rectangle {
                     required property var modelData
-                    width: latencyPopup.width; height: 24
+                    width: latencyPopup.availableWidth; height: 24
                     color: UiTheme.surfaceInset
                     Row {
                         anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
@@ -497,15 +497,15 @@ Rectangle {
         parent: viewMenuBtn
         modal: false; focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
-        padding: 0
+        padding: 1
         width: 210
-        background: Rectangle { color: UiTheme.surface; border.color: UiTheme.border; border.width: 1 }
+        background: Rectangle { color: UiTheme.surface; border.color: UiTheme.borderSubtle; border.width: 1 }
 
         contentItem: Column {
             spacing: 0
 
             Rectangle {
-                width: viewMenuPopup.width; height: 28
+                width: viewMenuPopup.availableWidth; height: 28
                 color: UiTheme.panelInset
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
@@ -520,7 +520,7 @@ Rectangle {
                 delegate: ViewToggleCard {
                     label: modelData.label
                     propertyName: modelData.propertyName
-                    cardWidth: viewMenuPopup.width
+                    cardWidth: viewMenuPopup.availableWidth
                     defaultOn: modelData.defaultOn
                     hidden: modelData.hidden === true
                     onToggleRequested: root.toggleViewProperty(propertyName)
@@ -529,7 +529,7 @@ Rectangle {
 
             Rectangle {
                 id: vt_deckMode
-                width: viewMenuPopup.width
+                width: viewMenuPopup.availableWidth
                 height: 30
                 color: vt_deckModeMouse.containsMouse ? UiTheme.surfaceRaised : UiTheme.panel
                 readonly property bool fourDeck: root.Window.window ? root.Window.window.fourDeckMode : false
@@ -553,7 +553,7 @@ Rectangle {
                         width: 26
                         height: 16
                         radius: 0
-                        color: !vt_deckMode.fourDeck ? UiTheme.blue : UiTheme.surfaceInset
+                        color: !vt_deckMode.fourDeck ? UiTheme.surfaceRaised : UiTheme.surfaceInset
                         Text {
                             anchors.centerIn: parent
                             text: "2"
@@ -568,7 +568,7 @@ Rectangle {
                         width: 26
                         height: 16
                         radius: 0
-                        color: vt_deckMode.fourDeck ? UiTheme.blue : UiTheme.surfaceInset
+                        color: vt_deckMode.fourDeck ? UiTheme.surfaceRaised : UiTheme.surfaceInset
                         Text {
                             anchors.centerIn: parent
                             text: "4"
@@ -594,7 +594,7 @@ Rectangle {
                 delegate: ViewToggleCard {
                     label: modelData.label
                     propertyName: modelData.propertyName
-                    cardWidth: viewMenuPopup.width
+                    cardWidth: viewMenuPopup.availableWidth
                     defaultOn: modelData.defaultOn
                     hidden: modelData.hidden === true
                     onToggleRequested: root.toggleViewProperty(propertyName)
@@ -623,14 +623,6 @@ Rectangle {
                 id: brandRow
                 anchors.centerIn: parent
                 spacing: 6
-
-                // Engine-DJ-style left color strip
-                Rectangle {
-                    width: 2
-                    height: parent.height * 0.6
-                    anchors.verticalCenter: parent.verticalCenter
-                    color: root.accentBlue
-                }
 
                 Column {
                     anchors.verticalCenter: parent.verticalCenter
@@ -662,8 +654,8 @@ Rectangle {
             readonly property bool active: root.Window.window
                                            ? root.Window.window.sourcePanelActive
                                            : false
-            color: sourceMouse.pressed ? UiTheme.blueDim
-                 : active ? UiTheme.blueDim
+            color: sourceMouse.pressed ? UiTheme.buttonBg(false, false, true)
+                 : active ? UiTheme.surfaceRaised
                  : (sourceMouse.containsMouse ? UiTheme.surfaceRaised : UiTheme.panel)
             Row {
                 anchors.centerIn: parent
@@ -694,8 +686,8 @@ Rectangle {
                                               ? root.Window.window.libraryPanelActive
                                               : root.Window.window.showLibrary)
                                            : false
-            color: libraryMouse.pressed ? UiTheme.blueDim
-                 : active ? UiTheme.blueDim
+            color: libraryMouse.pressed ? UiTheme.buttonBg(false, false, true)
+                 : active ? UiTheme.surfaceRaised
                  : (libraryMouse.containsMouse ? UiTheme.surfaceRaised : UiTheme.panel)
             Row {
                 anchors.centerIn: parent
@@ -734,11 +726,12 @@ Rectangle {
             Layout.fillHeight: true
             property bool on: false
             property real gr: deckA ? deckA.gainReduction : 1.0
-            color: !on       ? UiTheme.panel
-                 : gr < 0.5  ? "#3d0000"
-                 : gr < 0.7  ? "#6b1010"
-                 : gr < 0.99 ? "#8a4a00"
-                 : "#0a2e0a"
+            color: !on ? UiTheme.panel
+                 : gr < 0.7 ? Qt.tint(UiTheme.panelInset,
+                                     Qt.rgba(UiTheme.error.r, UiTheme.error.g, UiTheme.error.b,
+                                             gr < 0.5 ? 0.24 : 0.14))
+                 : gr < 0.99 ? UiTheme.orangeDim
+                 : UiTheme.greenDim
 
             Column {
                 anchors.centerIn: parent
@@ -756,10 +749,10 @@ Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: 16; height: 2
                     color: !antiClipBlock.on ? UiTheme.separatorSubtle
-                         : antiClipBlock.gr < 0.5  ? "#ff3333"
-                         : antiClipBlock.gr < 0.7  ? "#ff7733"
-                         : antiClipBlock.gr < 0.99 ? "#ffaa00"
-                         : "#44aa44"
+                         : antiClipBlock.gr < 0.5  ? UiTheme.error
+                         : antiClipBlock.gr < 0.7  ? UiTheme.orange
+                         : antiClipBlock.gr < 0.99 ? UiTheme.warning
+                         : UiTheme.play
                 }
             }
 
@@ -899,8 +892,10 @@ Rectangle {
                     width: 32
                     height: Math.max(16, root.btnH * 0.48)
                     radius: 0
-                    color: headphoneCueBlock.masterCueOn ? UiTheme.blueDim : UiTheme.surfaceInset
-                    border.color: headphoneCueBlock.masterCueOn ? UiTheme.blue : UiTheme.border
+                    color: headphoneCueBlock.masterCueOn ? UiTheme.surfaceRaised
+                         : masterCueHover.hovered ? UiTheme.panelRaised : UiTheme.panelInset
+                    border.color: headphoneCueBlock.masterCueOn ? UiTheme.borderActive
+                                : masterCueHover.hovered ? UiTheme.borderHover : UiTheme.borderSubtle
 
                     Text {
                         anchors.centerIn: parent
@@ -912,12 +907,6 @@ Rectangle {
                     }
 
                     HoverHandler { id: masterCueHover; cursorShape: Qt.PointingHandCursor }
-                    Rectangle {
-                        anchors.fill: parent
-                        radius: parent.radius
-                        color: UiTheme.textPrimary
-                        opacity: masterCueHover.hovered && !headphoneCueBlock.masterCueOn ? 0.04 : 0.0
-                    }
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
@@ -1037,7 +1026,7 @@ Rectangle {
                 return v > 0.8 ? UiTheme.error : v > 0.5 ? UiTheme.warning : UiTheme.textMuted
             }
             function barColor(v, hue) {
-                return v > 0.8 ? "#cc3333" : v > 0.5 ? "#bb7700" : hue
+                return v > 0.8 ? UiTheme.error : v > 0.5 ? UiTheme.warning : hue
             }
 
             Column {
@@ -1297,7 +1286,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 radius: 0
-                color: quickModeMouse.pressed ? UiTheme.blueDim : UiTheme.surfaceRaised
+                color: UiTheme.buttonBg(false, false, quickModeMouse.pressed)
                 Text {
                     anchors.centerIn: parent
                     text: root.Window.window && root.Window.window.allInOneMode ? "AIO MODE" : "DESKTOP MODE"
@@ -1316,7 +1305,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 radius: 0
-                color: quickLibraryMouse.pressed ? UiTheme.blueDim : UiTheme.surfaceRaised
+                color: UiTheme.buttonBg(false, false, quickLibraryMouse.pressed)
                 Text {
                     anchors.centerIn: parent
                     text: "LIBRARY"
@@ -1335,7 +1324,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 radius: 0
-                color: quickSourceMouse.pressed ? UiTheme.blueDim : UiTheme.surfaceRaised
+                color: UiTheme.buttonBg(false, false, quickSourceMouse.pressed)
                 Text {
                     anchors.centerIn: parent
                     text: "SOURCE"
@@ -1354,7 +1343,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 radius: 0
-                color: quickPerformanceMouse.pressed ? UiTheme.blueDim : UiTheme.surfaceRaised
+                color: UiTheme.buttonBg(false, false, quickPerformanceMouse.pressed)
                 Text {
                     anchors.centerIn: parent
                     text: "PERFORMANCE"
@@ -1375,7 +1364,7 @@ Rectangle {
                 Layout.fillHeight: true
                 radius: 0
                 readonly property bool active: root.Window.window ? root.Window.window.settingsPanelActive : false
-                color: quickSettingsMouse.pressed ? UiTheme.blueDim : (active ? UiTheme.blueDim : UiTheme.surfaceRaised)
+                color: UiTheme.buttonBg(quickSettingsBlock.active, false, quickSettingsMouse.pressed)
                 Text {
                     anchors.centerIn: parent
                     text: "SETTINGS"
@@ -1402,11 +1391,11 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 radius: 0
-                color: quickRecMouse.pressed ? "#3a1717" : UiTheme.surfaceRaised
+                color: UiTheme.buttonBg(false, false, quickRecMouse.pressed)
                 Row {
                     anchors.centerIn: parent
                     spacing: 5
-                    Rectangle { width: 7; height: 7; radius: 4; color: "#c84848"; anchors.verticalCenter: parent.verticalCenter }
+                    Rectangle { width: 7; height: 7; radius: 4; color: UiTheme.error; anchors.verticalCenter: parent.verticalCenter }
                     Text { text: "REC"; color: UiTheme.textSecondary; font.pixelSize: root.sp(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                 }
                 MouseArea {
@@ -1421,7 +1410,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 radius: 0
-                color: quickFullscreenMouse.pressed ? UiTheme.blueDim : UiTheme.surfaceRaised
+                color: UiTheme.buttonBg(false, false, quickFullscreenMouse.pressed)
                 Row {
                     anchors.centerIn: parent
                     spacing: 5
@@ -1517,7 +1506,7 @@ Rectangle {
         radius: 0
         color: UiTheme.displayBackground
         border.width: 1
-        border.color: clipNow ? UiTheme.error : UiTheme.border
+        border.color: clipNow ? UiTheme.error : UiTheme.borderSubtle
 
         // Final MASTER 1/2 peak: after summed deck mix, master gain and limiter.
         // Never reconstruct this from one or more channel meters.
@@ -1543,7 +1532,7 @@ Rectangle {
             spacing: 2
 
             Row {
-                spacing: 2
+                spacing: 1
                 Repeater {
                     model: centerMeter.segs
                     Rectangle {
@@ -1558,7 +1547,7 @@ Rectangle {
             }
 
             Row {
-                spacing: 2
+                spacing: 1
                 Repeater {
                     model: centerMeter.segs
                     Rectangle {

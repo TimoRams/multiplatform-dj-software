@@ -132,6 +132,7 @@ Rectangle {
     readonly property color textPrimary: Design.UiTheme.textPrimary
     readonly property color textSecond:  Design.UiTheme.textSecondary
     readonly property color textDim:     Design.UiTheme.textDim
+    readonly property color textMuted:   Design.UiTheme.textMuted
     readonly property color accentBlue:  Design.UiTheme.blue
     readonly property color accentBlueLt:Design.UiTheme.blue
     readonly property color accentGreen: Design.UiTheme.green
@@ -2104,7 +2105,7 @@ Rectangle {
         visible: libraryRoot.touchMode && fullTrackView
                  && libraryRoot.activeTrackFilePath.length > 0
         height: visible ? 44 : 0
-        color: "#121820"
+        color: Design.UiTheme.panelInset
         clip: true
 
         Rectangle {
@@ -2131,18 +2132,18 @@ Rectangle {
                 width: 44
                 height: 32
                 anchors.verticalCenter: parent.verticalCenter
-                radius: 4
-                color: previewBtnMa.containsMouse ? "#253018" : "#1a2510"
+                radius: 0
+                color: previewBtnMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.greenDim
                 border.color: libraryRoot.activeTrackFilePath.length > 0
                               && typeof libraryPreview !== "undefined" && libraryPreview
                               && libraryPreview.playing
                               && libraryPreview.currentPath === libraryRoot.activeTrackFilePath
-                              ? libraryRoot.accentKeyMatch : "#2a4020"
+                              ? libraryRoot.accentKeyMatch : libraryRoot.borderSub
                 border.width: 1
                 Text {
                     anchors.centerIn: parent
                     text: "♪"
-                    color: "#9bdc6a"
+                    color: libraryRoot.accentKeyMatch
                     font.pixelSize: window.sp(14)
                     font.bold: true
                 }
@@ -2162,14 +2163,14 @@ Rectangle {
                     width: 52
                     height: 32
                     anchors.verticalCenter: parent.verticalCenter
-                    radius: 4
-                    color: deckLoadMa.containsMouse ? "#1a3a52" : "#132840"
-                    border.color: "#1e4070"
+                    radius: 0
+                    color: deckLoadMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.blueDim
+                    border.color: libraryRoot.borderMain
                     border.width: 1
                     Text {
                         anchors.centerIn: parent
                         text: "▶ " + modelData
-                        color: "#4a99e0"
+                        color: libraryRoot.accentBlueLt
                         font.pixelSize: window.sp(11)
                         font.bold: true
                     }
@@ -2211,7 +2212,7 @@ Rectangle {
             typeof libraryPreview !== "undefined" ? libraryPreview : null
         visible: previewPlayer && previewPlayer.playing
         height: visible ? (libraryRoot.touchMode ? 58 : 50) : 0
-        color: "#0e1418"
+        color: Design.UiTheme.panelInset
         clip: true
 
         Rectangle {
@@ -2238,9 +2239,9 @@ Rectangle {
             Rectangle {
                 Layout.preferredWidth: libraryRoot.touchMode ? 44 : 36
                 Layout.preferredHeight: libraryRoot.touchMode ? 40 : 32
-                radius: 4
-                color: stopMa.containsMouse ? "#3a1818" : "#251010"
-                border.color: libraryRoot.accentRed
+                radius: 0
+                color: stopMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+                border.color: stopMa.containsMouse ? libraryRoot.accentRed : libraryRoot.borderMain
                 border.width: 1
 
                 Text {
@@ -2339,12 +2340,12 @@ Rectangle {
         height: libraryRoot.aioNavTileH
         clip: true
         radius: 0
-        color: tileMa.pressed ? "#1a2838"
-              : tileCursor ? "#1a3048"
-              : "#0e141c"
+        color: tileMa.pressed ? Design.UiTheme.panelRaised
+              : tileCursor || tileActive ? Design.UiTheme.blueDim
+              : Design.UiTheme.panelInset
         border.color: tileCursor ? libraryRoot.accentGreen
-                    : tileActive ? aioTile.tileAccent : "#2a3848"
-        border.width: tileCursor ? 2 : 1
+                    : tileActive ? aioTile.tileAccent : libraryRoot.borderSub
+        border.width: 1
 
         Column {
             anchors.centerIn: parent
@@ -2354,7 +2355,7 @@ Rectangle {
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: aioTile.tileIcon
-                color: tileActive ? aioTile.tileAccent : "#7a9ab8"
+                color: tileActive ? aioTile.tileAccent : libraryRoot.textSecond
                 font.pixelSize: window.sp(compact ? 14 : 20)
             }
             Text {
@@ -2378,9 +2379,7 @@ Rectangle {
             width: Math.max(16, badgeLbl.implicitWidth + 4)
             height: 12
             radius: 0
-            color: "#1a3050"
-            border.color: aioTile.tileAccent
-            border.width: 1
+            color: Design.UiTheme.panelRaised
             Text {
                 id: badgeLbl
                 anchors.centerIn: parent
@@ -2448,6 +2447,7 @@ Rectangle {
             anchors.topMargin: 4
             anchors.left: parent.left
             anchors.right: parent.right
+            anchors.rightMargin: 1
             anchors.bottom: parent.bottom
             clip: true
             model: browsePicker.entries
@@ -2593,7 +2593,7 @@ Rectangle {
 
         readonly property color artBgColor: {
             var s = rowTitle || rowArtist || ""
-            if (s.length === 0) return "#1a2535"
+            if (s.length === 0) return Design.UiTheme.panelInset
             var h = 0
             for (var i = 0; i < s.length && i < 20; i++) h = (h * 31 + s.charCodeAt(i)) & 0xFFFF
             return Qt.hsla((h % 360) / 360.0, 0.42, 0.20, 1.0)
@@ -2605,7 +2605,7 @@ Rectangle {
 
         Rectangle {
             anchors.fill: parent
-            color: "#141414"
+            color: Design.UiTheme.panelInset
         }
 
         Connections {
@@ -2657,12 +2657,12 @@ Rectangle {
                     Rectangle {
                         required property string modelData
                         width: 46; height: parent.height
-                        color: loadDeckMa.containsMouse ? "#1a3a52" : "#132840"
-                        border.color: "#1e4070"; border.width: 1
+                        color: loadDeckMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.blueDim
+                        border.color: libraryRoot.borderMain; border.width: 1
                         Text {
                             anchors.centerIn: parent
                             text: "▶ " + modelData
-                            color: "#4a99e0"; font.pixelSize: window.sp(11); font.bold: true
+                            color: libraryRoot.accentBlueLt; font.pixelSize: window.sp(11); font.bold: true
                         }
                         MouseArea {
                             id: loadDeckMa; anchors.fill: parent
@@ -2685,10 +2685,10 @@ Rectangle {
                 height: parent.height
                 color: trMouse.containsMouse
                        ? libraryRoot.bgRowHover
-                     : (tr.keyMatch === 2 ? "#142218"
-                     : (tr.keyMatch === 1 ? "#121820"
+                     : (tr.keyMatch === 2 ? Design.UiTheme.greenDim
+                     : (tr.keyMatch === 1 ? Design.UiTheme.panelInset
                      : (isCursorRow
-                        ? "#163328"
+                        ? Design.UiTheme.greenDim
                         : (rowIndex % 2 === 0 ? libraryRoot.bgRowEven : libraryRoot.bgRowOdd))))
                 opacity: trDragPayload.dragging ? 0.4 : 1.0
 
@@ -2728,7 +2728,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 Rectangle {
                     anchors.centerIn: parent
-                    width: 18; height: 18; radius: 3
+                    width: 18; height: 18; radius: 0
                     color: tr.artBgColor; clip: true
                     Image {
                         id: trCoverCompact
@@ -2815,9 +2815,7 @@ Rectangle {
                     Rectangle {
                         width: 5; height: 5; radius: 2.5
                         anchors.verticalCenter: parent.verticalCenter
-                        color: (index < tr.rowRating) ? "#e8b84b" : "#1e1e1e"
-                        border.color: (index < tr.rowRating) ? "#c89a30" : "#2a2a2a"
-                        border.width: 1
+                        color: (index < tr.rowRating) ? Design.UiTheme.cue : Design.UiTheme.knobTrack
                     }
                 }
             }
@@ -2835,7 +2833,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 width: tr.touchMode ? 52 : 44
                 height: tr.touchMode ? 52 : 44
-                radius: 5
+                radius: 0
                 color: tr.artBgColor
                 clip: true
 
@@ -2853,8 +2851,7 @@ Rectangle {
                     anchors.top: parent.top; anchors.right: parent.right
                     anchors.topMargin: 3; anchors.rightMargin: 3
                     width: 8; height: 8; radius: 4
-                    color: tr.rowIsAnalyzed ? libraryRoot.accentGreen : "#252525"
-                    border.color: Qt.rgba(0, 0, 0, 0.4); border.width: 1
+                    color: tr.rowIsAnalyzed ? libraryRoot.accentGreen : Design.UiTheme.knobTrack
                     z: 2
                 }
 
@@ -2987,9 +2984,7 @@ Rectangle {
                         model: 5
                         Rectangle {
                             width: 6; height: 6; radius: 3
-                            color: (index < tr.rowRating) ? "#e8b84b" : "#1e1e1e"
-                            border.color: (index < tr.rowRating) ? "#c89a30" : "#2a2a2a"
-                            border.width: 1
+                            color: (index < tr.rowRating) ? Design.UiTheme.cue : Design.UiTheme.knobTrack
                         }
                     }
                 }
@@ -3196,8 +3191,8 @@ Rectangle {
 
                 Rectangle {
                     width: 50; height: parent.height
-                    color: favoriteMa.containsMouse ? "#2a2510" : "#1a1810"
-                    Text { anchors.centerIn: parent; text: "★"; color: "#e8b84b"; font.pixelSize: window.sp(16) }
+                    color: favoriteMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.orangeDim
+                    Text { anchors.centerIn: parent; text: "★"; color: Design.UiTheme.cue; font.pixelSize: window.sp(16) }
                     MouseArea {
                         id: favoriteMa; anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                         onClicked: {
@@ -3214,7 +3209,7 @@ Rectangle {
                 }
                 Rectangle {
                     width: 50; height: parent.height
-                    color: crateMa.containsMouse ? "#1a2a1a" : "#121a12"
+                    color: crateMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.greenDim
                     Text { anchors.centerIn: parent; text: "⊞"; color: libraryRoot.accentGreen; font.pixelSize: window.sp(14) }
                     MouseArea {
                         id: crateMa; anchors.fill: parent; cursorShape: Qt.PointingHandCursor
@@ -3228,7 +3223,7 @@ Rectangle {
                 }
                 Rectangle {
                     width: 48; height: parent.height
-                    color: queueMa.containsMouse ? "#1a2a3a" : "#121820"
+                    color: queueMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.blueDim
                     Text { anchors.centerIn: parent; text: "►"; color: libraryRoot.accentBlueLt; font.pixelSize: window.sp(14) }
                     MouseArea {
                         id: queueMa; anchors.fill: parent; cursorShape: Qt.PointingHandCursor
@@ -3267,7 +3262,7 @@ Rectangle {
         width: parent ? parent.width : 0; height: 42
          color: libraryRoot.activeTab === tabKey
              ? libraryRoot.sidebarSel
-             : (isCursor ? "#0f2816" : (navMa.containsMouse ? libraryRoot.bgSidebarHv : "transparent"))
+             : (isCursor ? Design.UiTheme.greenDim : (navMa.containsMouse ? libraryRoot.bgSidebarHv : "transparent"))
         Behavior on color { ColorAnimation { duration: 120 } }
 
         Rectangle {
@@ -3288,10 +3283,8 @@ Rectangle {
             spacing: 10
 
             Rectangle {
-                width: 26; height: 26; radius: 5
-                color: libraryRoot.activeTab === navBtn.tabKey ? "#132840" : "#181818"
-                border.color: libraryRoot.activeTab === navBtn.tabKey ? "#1e4070" : "#222222"
-                border.width: 1
+                width: 26; height: 26; radius: 0
+                color: libraryRoot.activeTab === navBtn.tabKey ? Design.UiTheme.blueDim : Design.UiTheme.panelInset
                 anchors.verticalCenter: parent.verticalCenter
 
                 Text {
@@ -3317,17 +3310,15 @@ Rectangle {
             visible: navBtn.badgeCount > 0
             anchors.verticalCenter: parent.verticalCenter
             anchors.right: parent.right; anchors.rightMargin: 10
-            width: Math.max(24, navBadgeLabel.implicitWidth + 10); height: 16; radius: 8
-            color: libraryRoot.activeTab === navBtn.tabKey ? "#1a3a52" : "#202020"
-            border.color: libraryRoot.activeTab === navBtn.tabKey ? "#2a5070" : "#282828"
-            border.width: 1
+            width: Math.max(24, navBadgeLabel.implicitWidth + 10); height: 16; radius: 0
+            color: libraryRoot.activeTab === navBtn.tabKey ? Design.UiTheme.blueDim : Design.UiTheme.panelInset
 
             Text {
                 id: navBadgeLabel
                 anchors.centerIn: parent
                 text: navBtn.badgeCount > 0 ? navBtn.badgeCount : ""
                 color: libraryRoot.activeTab === navBtn.tabKey
-                       ? libraryRoot.accentBlueLt : "#666666"
+                       ? libraryRoot.accentBlueLt : libraryRoot.textDim
                 font.pixelSize: window.sp(9)
             }
         }
@@ -3362,10 +3353,10 @@ Rectangle {
         required property bool   ascending
         signal tapped()
 
-        height: 20; radius: 10
+        height: 20; radius: 0
         width: pillLabel.implicitWidth + (isActive ? pillArrow.implicitWidth + 28 : 20)
-        color: isActive ? "#1a3a52" : "#181818"
-        border.color: isActive ? libraryRoot.accentBlue : "#262626"; border.width: 1
+        color: isActive ? Design.UiTheme.blueDim : Design.UiTheme.panelInset
+        border.color: isActive ? libraryRoot.accentBlue : libraryRoot.borderSub; border.width: 1
         Behavior on color        { ColorAnimation { duration: 110 } }
         Behavior on border.color { ColorAnimation { duration: 110 } }
         Behavior on width        { NumberAnimation { duration: 120; easing.type: Easing.OutQuad } }
@@ -3415,6 +3406,7 @@ Rectangle {
             // Focus indicator — top accent line when sidebar is focused
             Rectangle {
                 anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+                anchors.rightMargin: 1
                 height: 2; color: libraryRoot.accentGreen
                 visible: libraryRoot.focusedPanel === "sidebar"
                 z: 10
@@ -3423,6 +3415,7 @@ Rectangle {
             Flickable {
                 id: sidebarFlickable
                 anchors.fill: parent
+                anchors.rightMargin: 1
                 contentHeight: sidebarColumn.implicitHeight
                 clip: true
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
@@ -3445,7 +3438,7 @@ Rectangle {
                             anchors.left: parent.left; anchors.leftMargin: 14
                             anchors.bottom: parent.bottom; anchors.bottomMargin: 4
                             text: "SAMMLUNG"
-                            color: "#484848"
+                            color: libraryRoot.textDim
                             font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.3
                         }
                     }
@@ -3473,7 +3466,7 @@ Rectangle {
                             anchors.left: parent.left; anchors.leftMargin: 14
                             anchors.bottom: parent.bottom; anchors.bottomMargin: 4
                             text: "TOOLS"
-                            color: "#484848"
+                            color: libraryRoot.textDim
                             font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.3
                         }
                     }
@@ -3524,17 +3517,17 @@ Rectangle {
                             anchors.left: parent.left; anchors.leftMargin: 14
                             anchors.bottom: parent.bottom; anchors.bottomMargin: 4
                             text: "SMART"
-                            color: "#484848"
+                            color: libraryRoot.textDim
                             font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.3
                         }
                         Rectangle {
                             anchors.right: parent.right; anchors.rightMargin: 10
                             anchors.bottom: parent.bottom; anchors.bottomMargin: 4
-                            width: 18; height: 18; radius: 3
-                            color: newScMa.containsMouse ? "#2a3a4a" : "transparent"
-                            border.color: newScMa.containsMouse ? "#2d7dd2" : "#2a2a2a"
+                            width: 18; height: 18; radius: 0
+                            color: newScMa.containsMouse ? Design.UiTheme.panelRaised : "transparent"
+                            border.color: newScMa.containsMouse ? libraryRoot.accentBlue : libraryRoot.borderSub
                             border.width: 1
-                            Text { anchors.centerIn: parent; text: "+"; color: "#aaa"; font.pixelSize: window.sp(12) }
+                            Text { anchors.centerIn: parent; text: "+"; color: libraryRoot.textSecond; font.pixelSize: window.sp(12) }
                             MouseArea {
                                 id: newScMa; anchors.fill: parent
                                 hoverEnabled: true; cursorShape: Qt.PointingHandCursor
@@ -3585,16 +3578,16 @@ Rectangle {
                             anchors.left: parent.left; anchors.leftMargin: 14
                             anchors.bottom: parent.bottom; anchors.bottomMargin: 5
                             text: "PLAYLISTS"
-                            color: "#484848"
+                            color: libraryRoot.textDim
                             font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.3
                         }
 
                         Rectangle {
                             anchors.right: parent.right; anchors.rightMargin: 10
                             anchors.bottom: parent.bottom; anchors.bottomMargin: 4
-                            width: 22; height: 22; radius: 4
-                            color: addPlaylistHover.containsMouse ? "#2a2a2a" : "#1c1c1c"
-                            border.color: addPlaylistHover.containsMouse ? "#3a3a3a" : "#272727"
+                            width: 22; height: 22; radius: 0
+                            color: addPlaylistHover.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+                            border.color: addPlaylistHover.containsMouse ? Design.UiTheme.borderHover : libraryRoot.borderSub
                             border.width: 1
 
                             Text {
@@ -3638,8 +3631,8 @@ Rectangle {
 
                             width: parent.width; height: 36
                             color: isSelected          ? libraryRoot.sidebarSel
-                                 : dropZone === "into" ? "#0d2a18"
-                                 : isSidebarCursor     ? "#0f2816"
+                                 : dropZone === "into" ? Design.UiTheme.greenDim
+                                 : isSidebarCursor     ? Design.UiTheme.greenDim
                                  : plMouse.containsMouse ? libraryRoot.bgSidebarHv
                                  : "transparent"
 
@@ -3702,13 +3695,12 @@ Rectangle {
                                 visible: modelData.trackCount > 0
                                 anchors.verticalCenter: parent.verticalCenter
                                 anchors.right: parent.right; anchors.rightMargin: 10
-                                width: Math.max(22, plBadge.implicitWidth + 10); height: 16; radius: 8
-                                color: "#1a1a1a"
-                                border.color: "#252525"; border.width: 1
+                                width: Math.max(22, plBadge.implicitWidth + 10); height: 16; radius: 0
+                                color: Design.UiTheme.panelInset
                                 Text {
                                     id: plBadge; anchors.centerIn: parent
                                     text: modelData.trackCount
-                                    color: "#666666"; font.pixelSize: window.sp(8)
+                                    color: libraryRoot.textDim; font.pixelSize: window.sp(8)
                                 }
                             }
 
@@ -3853,7 +3845,7 @@ Rectangle {
                             anchors.left: parent.left; anchors.leftMargin: 14
                             anchors.bottom: parent.bottom; anchors.bottomMargin: 4
                             text: "QUELLEN"
-                            color: "#484848"
+                            color: libraryRoot.textDim
                             font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.3
                         }
                     }
@@ -4076,9 +4068,9 @@ Rectangle {
                                      ? libraryRoot.usbFocusArea !== "source"
                                      : (libraryRoot.aioBrowseDrilled
                                         || libraryRoot.aioFocusZone !== "nav"))
-                        radius: 4
-                        color: aioBackMa.pressed ? "#1a3048" : "#132840"
-                        border.color: "#1e4070"
+                        radius: 0
+                        color: aioBackMa.pressed ? Design.UiTheme.panelRaised : Design.UiTheme.blueDim
+                        border.color: libraryRoot.borderMain
                         border.width: 1
                         Text {
                             anchors.centerIn: parent
@@ -4107,9 +4099,8 @@ Rectangle {
                         Rectangle {
                             width: libraryRoot.touchMode ? 28 : 22
                             height: libraryRoot.touchMode ? 28 : 22
-                            radius: 4
-                            color: "#132840"
-                            border.color: "#1e4070"; border.width: 1
+                            radius: 0
+                            color: Design.UiTheme.blueDim
                             anchors.verticalCenter: parent.verticalCenter
 
                             Text {
@@ -4162,10 +4153,10 @@ Rectangle {
                         Layout.preferredWidth: libraryRoot.touchMode ? 148 : 176
                         Layout.preferredHeight: libraryRoot.touchMode ? 40 : 26
                         Layout.alignment: Qt.AlignVCenter
-                        radius: 4; clip: true
-                        color: analyzeHover.containsMouse ? "#1a1a1a" : "#111111"
+                        radius: 0; clip: true
+                        color: analyzeHover.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
                         border.color: libraryAnalyzer && libraryAnalyzer.running
-                                      ? libraryRoot.accentBlue : "#2a2a2a"
+                                      ? libraryRoot.accentBlue : libraryRoot.borderSub
                         border.width: 1
                         visible: libraryRoot.activeTab === "library" || libraryRoot.activeTab === "playlist"
 
@@ -4175,8 +4166,10 @@ Rectangle {
                         // including the live percentage of the current track.
                         Rectangle {
                             anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                            width: parent.width * (libraryAnalyzer ? libraryAnalyzer.progress : 0)
-                            color: "#0d2840"
+                            anchors.margins: analyzeBtn.border.width
+                            width: Math.max(0, parent.width - 2 * analyzeBtn.border.width)
+                                   * (libraryAnalyzer ? libraryAnalyzer.progress : 0)
+                            color: Design.UiTheme.blueDim
                             visible: libraryAnalyzer && libraryAnalyzer.running
                             Behavior on width { NumberAnimation { duration: 180; easing.type: Easing.OutQuad } }
                         }
@@ -4185,8 +4178,9 @@ Rectangle {
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.bottom: parent.bottom
-                            height: 3
-                            color: "#263442"
+                            anchors.margins: analyzeBtn.border.width
+                            height: 2
+                            color: Design.UiTheme.knobTrack
                             visible: libraryAnalyzer && libraryAnalyzer.running
 
                             Rectangle {
@@ -4246,23 +4240,24 @@ Rectangle {
                         Layout.preferredWidth: libraryRoot.touchMode ? 72 : 54
                         Layout.preferredHeight: libraryRoot.touchMode ? 40 : 26
                         Layout.alignment: Qt.AlignVCenter
-                        radius: 4
-                        color: "#111111"
-                        border.color: "#2a2a2a"; border.width: 1
+                        radius: 0
+                        color: Design.UiTheme.panelInset
+                        border.color: libraryRoot.borderSub; border.width: 1
                         clip: true
                         visible: !libraryRoot.touchMode
 
                         Row {
                             anchors.fill: parent
+                            anchors.margins: parent.border.width
 
                             Rectangle {
                                 width: parent.width / 2; height: parent.height
-                                color: libraryRoot.viewMode === "compact" ? libraryRoot.accentBlue : "transparent"
+                                color: libraryRoot.viewMode === "compact" ? Design.UiTheme.blueDim : "transparent"
                                 Behavior on color { ColorAnimation { duration: 120 } }
 
                                 Text {
                                     anchors.centerIn: parent; text: "≡"
-                                    color: libraryRoot.viewMode === "compact" ? "#ffffff" : libraryRoot.textSecond
+                                    color: libraryRoot.viewMode === "compact" ? libraryRoot.accentBlueLt : libraryRoot.textSecond
                                     font.pixelSize: window.sp(12)
                                 }
                                 MouseArea {
@@ -4273,12 +4268,12 @@ Rectangle {
 
                             Rectangle {
                                 width: parent.width / 2; height: parent.height
-                                color: libraryRoot.viewMode === "normal" ? libraryRoot.accentBlue : "transparent"
+                                color: libraryRoot.viewMode === "normal" ? Design.UiTheme.blueDim : "transparent"
                                 Behavior on color { ColorAnimation { duration: 120 } }
 
                                 Text {
                                     anchors.centerIn: parent; text: "▤"
-                                    color: libraryRoot.viewMode === "normal" ? "#ffffff" : libraryRoot.textSecond
+                                    color: libraryRoot.viewMode === "normal" ? libraryRoot.accentBlueLt : libraryRoot.textSecond
                                     font.pixelSize: window.sp(11)
                                 }
                                 MouseArea {
@@ -4296,8 +4291,8 @@ Rectangle {
                                                    : Math.min(260, Math.max(150, parent.width * 0.28))
                         Layout.preferredHeight: libraryRoot.touchMode ? 40 : 26
                         Layout.alignment: Qt.AlignVCenter
-                        color: "#0e0e0e"; radius: 4
-                        border.color: searchField.activeFocus ? libraryRoot.accentBlue : "#2a2a2a"
+                        color: Design.UiTheme.panelInset; radius: 0
+                        border.color: searchField.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub
                         border.width: 1
                         Behavior on border.color { ColorAnimation { duration: 150 } }
 
@@ -4328,7 +4323,7 @@ Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.left: parent.left; anchors.leftMargin: 27
                             text: "Suchen…"
-                            color: "#3a3a3a"
+                            color: libraryRoot.textDim
                             font.pixelSize: window.sp(11)
                             visible: !searchField.activeFocus && searchField.text.length === 0
                         }
@@ -4337,8 +4332,8 @@ Rectangle {
                         Rectangle {
                             anchors.right: parent.right; anchors.rightMargin: 6
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 16; height: 16; radius: 8
-                            color: clearHover.containsMouse ? "#303030" : "#1e1e1e"
+                            width: 16; height: 16; radius: 0
+                            color: clearHover.containsMouse ? Design.UiTheme.panelRaised : "transparent"
                             visible: searchField.text.length > 0
                             Behavior on color { ColorAnimation { duration: 100 } }
 
@@ -4393,9 +4388,9 @@ Rectangle {
                         Layout.preferredWidth: 30
                         Layout.preferredHeight: 26
                         Layout.alignment: Qt.AlignVCenter
-                        radius: 4
-                        color: filterBtnMa.containsMouse || libraryRoot.filterPanelOpen ? "#1a2a3a" : "#111111"
-                        border.color: libraryRoot.filtersActive ? libraryRoot.accentBlue : "#2a2a2a"
+                        radius: 0
+                        color: filterBtnMa.containsMouse || libraryRoot.filterPanelOpen ? Design.UiTheme.blueDim : Design.UiTheme.panelInset
+                        border.color: libraryRoot.filtersActive ? libraryRoot.accentBlue : libraryRoot.borderSub
                         border.width: 1
                         visible: libraryRoot.activeTab === "library"
 
@@ -4419,9 +4414,9 @@ Rectangle {
                         Layout.preferredWidth: 30
                         Layout.preferredHeight: 26
                         Layout.alignment: Qt.AlignVCenter
-                        radius: 4
-                        color: scEditMa.containsMouse ? "#1a2a3a" : "#111111"
-                        border.color: "#2a2a2a"; border.width: 1
+                        radius: 0
+                        color: scEditMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+                        border.color: libraryRoot.borderSub; border.width: 1
                         visible: libraryRoot.activeTab === "smartcoll"
                                  && libraryRoot.currentSmartCollectionId !== ""
 
@@ -4445,9 +4440,9 @@ Rectangle {
                         Layout.preferredWidth: 30
                         Layout.preferredHeight: 26
                         Layout.alignment: Qt.AlignVCenter
-                        radius: 4
-                        color: scRefreshMa.containsMouse ? "#1a2a3a" : "#111111"
-                        border.color: "#2a2a2a"; border.width: 1
+                        radius: 0
+                        color: scRefreshMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+                        border.color: libraryRoot.borderSub; border.width: 1
                         visible: libraryRoot.activeTab === "smartcoll"
                                  && libraryRoot.currentSmartCollectionId !== ""
 
@@ -4469,7 +4464,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: libraryRoot.filterPanelOpen && libraryRoot.activeTab === "library" ? 34 : 0
                 visible: libraryRoot.filterPanelOpen && libraryRoot.activeTab === "library"
-                color: "#161616"
+                color: Design.UiTheme.panel
                 clip: true
 
                 Rectangle {
@@ -4490,8 +4485,8 @@ Rectangle {
 
                     Rectangle {
                         Layout.preferredWidth: 52; Layout.preferredHeight: 24
-                        radius: 3; color: "#0e0e0e"
-                        border.color: filterBpmMinField.activeFocus ? libraryRoot.accentBlue : "#2a2a2a"
+                        radius: 0; color: Design.UiTheme.panelInset
+                        border.color: filterBpmMinField.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub
                         border.width: 1
                         TextField {
                             id: filterBpmMinField
@@ -4514,8 +4509,8 @@ Rectangle {
 
                     Rectangle {
                         Layout.preferredWidth: 52; Layout.preferredHeight: 24
-                        radius: 3; color: "#0e0e0e"
-                        border.color: filterBpmMaxField.activeFocus ? libraryRoot.accentBlue : "#2a2a2a"
+                        radius: 0; color: Design.UiTheme.panelInset
+                        border.color: filterBpmMaxField.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub
                         border.width: 1
                         TextField {
                             id: filterBpmMaxField
@@ -4543,8 +4538,8 @@ Rectangle {
 
                     Rectangle {
                         Layout.preferredWidth: 56; Layout.preferredHeight: 24
-                        radius: 3; color: "#0e0e0e"
-                        border.color: filterKeyField.activeFocus ? libraryRoot.accentBlue : "#2a2a2a"
+                        radius: 0; color: Design.UiTheme.panelInset
+                        border.color: filterKeyField.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub
                         border.width: 1
                         TextField {
                             id: filterKeyField
@@ -4569,8 +4564,8 @@ Rectangle {
 
                     Rectangle {
                         Layout.preferredWidth: 90; Layout.preferredHeight: 24
-                        radius: 3; color: "#0e0e0e"
-                        border.color: filterGenreField.activeFocus ? libraryRoot.accentBlue : "#2a2a2a"
+                        radius: 0; color: Design.UiTheme.panelInset
+                        border.color: filterGenreField.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub
                         border.width: 1
                         TextField {
                             id: filterGenreField
@@ -4595,13 +4590,13 @@ Rectangle {
 
                     Rectangle {
                         Layout.preferredWidth: 36; Layout.preferredHeight: 24
-                        radius: 3; color: "#0e0e0e"
-                        border.color: filterRatingField.activeFocus ? libraryRoot.accentBlue : "#2a2a2a"
+                        radius: 0; color: Design.UiTheme.panelInset
+                        border.color: filterRatingField.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub
                         border.width: 1
                         TextField {
                             id: filterRatingField
                             anchors.fill: parent
-                            color: "#e8b84b"
+                            color: Design.UiTheme.cue
                             font.pixelSize: window.sp(10)
                             placeholderText: "0"
                             horizontalAlignment: Text.AlignHCenter
@@ -4619,9 +4614,9 @@ Rectangle {
 
                     Rectangle {
                         Layout.preferredWidth: 64; Layout.preferredHeight: 24
-                        radius: 3
-                        color: clearFiltersMa.containsMouse ? "#2a2a2a" : "#1c1c1c"
-                        border.color: "#333"; border.width: 1
+                        radius: 0
+                        color: clearFiltersMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+                        border.color: libraryRoot.borderSub; border.width: 1
                         visible: libraryRoot.filtersActive
 
                         Text {
@@ -4744,7 +4739,7 @@ Rectangle {
                                     Rectangle {
                                         anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
                                         width: 1
-                                        color: resizeMa.containsMouse || resizeMa.pressed ? "#44ffffff" : "#1a1a1a"
+                                        color: resizeMa.containsMouse || resizeMa.pressed ? Design.UiTheme.borderHover : libraryRoot.borderSub
                                     }
 
                                     MouseArea {
@@ -4894,7 +4889,7 @@ Rectangle {
                             anchors.centerIn: parent
                             visible: libTrackList.count === 0
                             spacing: 10
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "♫"; color: "#252525"; font.pixelSize: window.sp(42) }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "♫"; color: libraryRoot.textMuted; font.pixelSize: window.sp(42) }
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: libraryRoot.aioLibSplitBrowse && !libraryRoot.aioBrowseDrilled
@@ -4903,14 +4898,14 @@ Rectangle {
                                       : (libraryRoot.aioLibSplitBrowse && !libraryRoot.aioBrowseDrilled
                                          ? "Keine Treffer"
                                          : "Library is empty")
-                                color: "#333333"; font.pixelSize: window.sp(12)
+                                color: libraryRoot.textDim; font.pixelSize: window.sp(12)
                             }
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 visible: !(libraryRoot.aioLibSplitBrowse && !libraryRoot.aioBrowseDrilled
                                            && libraryRoot.aioBrowseFocusKey.length === 0)
                                 text: "Lade einen Track auf ein Deck, um ihn hinzuzufügen"
-                                color: "#282828"; font.pixelSize: window.sp(10)
+                                color: libraryRoot.textDim; font.pixelSize: window.sp(10)
                             }
                         }
                     }
@@ -4980,7 +4975,7 @@ Rectangle {
                                     Rectangle {
                                         anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
                                         width: 1
-                                        color: plResizeMa.containsMouse || plResizeMa.pressed ? "#44ffffff" : "#1a1a1a"
+                                        color: plResizeMa.containsMouse || plResizeMa.pressed ? Design.UiTheme.borderHover : libraryRoot.borderSub
                                     }
                                     MouseArea {
                                         id: plResizeMa; anchors.fill: parent
@@ -5125,16 +5120,16 @@ Rectangle {
                             anchors.centerIn: parent
                             visible: plTrackList.count === 0
                             spacing: 10
-                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "☰"; color: "#252525"; font.pixelSize: window.sp(42) }
+                            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "☰"; color: libraryRoot.textMuted; font.pixelSize: window.sp(42) }
                             Text { anchors.horizontalCenter: parent.horizontalCenter
                                 text: libraryRoot.aioPlaylistSplitBrowse && libraryRoot.currentPlaylistId === ""
                                       ? "Links Playlist wählen"
                                       : "Playlist ist leer"
-                                color: "#333333"; font.pixelSize: window.sp(12) }
+                                color: libraryRoot.textDim; font.pixelSize: window.sp(12) }
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 text: 'Rechtsklick auf einen Track → "Zu Playlist hinzufügen"'
-                                color: "#282828"; font.pixelSize: window.sp(10)
+                                color: libraryRoot.textDim; font.pixelSize: window.sp(10)
                             }
                         }
                     }
@@ -5193,7 +5188,7 @@ Rectangle {
                         anchors.top: varlistHeader.visible ? varlistHeader.bottom : parent.top
                         anchors.left: parent.left; anchors.right: parent.right
                         height: 30
-                        color: "#121212"
+                        color: Design.UiTheme.panelInset
                         visible: libraryRoot.activeTab === "history" ||
                                  libraryRoot.activeTab === "crate"   ||
                                  libraryRoot.activeTab === "queue"   ||
@@ -5219,16 +5214,16 @@ Rectangle {
                                 ]
                                 Rectangle {
                                     required property var modelData
-                                    width: periodLbl.implicitWidth + 16; height: 20; radius: 3
-                                    color: libraryRoot.historyPeriod === modelData.key ? libraryRoot.accentBlue : "#1a1a1a"
-                                    border.color: libraryRoot.historyPeriod === modelData.key ? libraryRoot.accentBlue : "#2a2a2a"
+                                    width: periodLbl.implicitWidth + 16; height: 20; radius: 0
+                                    color: libraryRoot.historyPeriod === modelData.key ? Design.UiTheme.blueDim : Design.UiTheme.panelInset
+                                    border.color: libraryRoot.historyPeriod === modelData.key ? libraryRoot.accentBlue : libraryRoot.borderSub
                                     border.width: 1
                                     Behavior on color { ColorAnimation { duration: 100 } }
                                     Text {
                                         id: periodLbl
                                         anchors.centerIn: parent
                                         text: modelData.label
-                                        color: libraryRoot.historyPeriod === modelData.key ? "#fff" : libraryRoot.textDim
+                                        color: libraryRoot.historyPeriod === modelData.key ? libraryRoot.accentBlueLt : libraryRoot.textDim
                                         font.pixelSize: window.sp(10)
                                     }
                                     MouseArea {
@@ -5247,7 +5242,7 @@ Rectangle {
                                   + (libraryRoot.activeTab === "history"
                                      ? (libraryRoot.currentListTracks.length === 1 ? " play" : " plays")
                                      : (libraryRoot.currentListTracks.length === 1 ? " track" : " tracks"))
-                            color: "#383838"; font.pixelSize: window.sp(9)
+                            color: libraryRoot.textDim; font.pixelSize: window.sp(9)
                         }
 
                         // ── Right-side action buttons ───────────────────────
@@ -5259,10 +5254,10 @@ Rectangle {
 
                             // Save Crate as Playlist
                             Rectangle {
-                                width: implicitWidth + 16; height: 20; radius: 3
+                                width: implicitWidth + 16; height: 20; radius: 0
                                 implicitWidth: saveCrateLbl.implicitWidth
-                                color: saveCrateMa.containsMouse ? "#1a3050" : "transparent"
-                                border.color: saveCrateMa.containsMouse ? libraryRoot.accentBlue : "#2a2a2a"; border.width: 1
+                                color: saveCrateMa.containsMouse ? Design.UiTheme.blueDim : "transparent"
+                                border.color: saveCrateMa.containsMouse ? libraryRoot.accentBlue : libraryRoot.borderSub; border.width: 1
                                 visible: libraryRoot.activeTab === "crate" && libraryRoot.prepareCrateTracks.length > 0
                                 Text { id: saveCrateLbl; anchors.centerIn: parent
                                     text: "→ Playlist"; color: libraryRoot.accentBlue; font.pixelSize: window.sp(9) }
@@ -5272,26 +5267,26 @@ Rectangle {
 
                             // Clear Crate
                             Rectangle {
-                                width: implicitWidth + 16; height: 20; radius: 3
+                                width: implicitWidth + 16; height: 20; radius: 0
                                 implicitWidth: clearCrateLbl.implicitWidth
-                                color: clearCrateMa.containsMouse ? "#3a1a1a" : "transparent"
-                                border.color: clearCrateMa.containsMouse ? "#e06060" : "#2a2a2a"; border.width: 1
+                                color: clearCrateMa.containsMouse ? Design.UiTheme.panelRaised : "transparent"
+                                border.color: clearCrateMa.containsMouse ? libraryRoot.accentRed : libraryRoot.borderSub; border.width: 1
                                 visible: libraryRoot.activeTab === "crate" && libraryRoot.prepareCrateTracks.length > 0
                                 Text { id: clearCrateLbl; anchors.centerIn: parent
-                                    text: "✕ Leeren"; color: "#e06060"; font.pixelSize: window.sp(9) }
+                                    text: "✕ Leeren"; color: libraryRoot.accentRed; font.pixelSize: window.sp(9) }
                                 MouseArea { id: clearCrateMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                     onClicked: { if (libraryDb) { libraryDb.clearPrepareCrate(); libraryRoot.loadCrate() } } }
                             }
 
                             // Clear Queue
                             Rectangle {
-                                width: implicitWidth + 16; height: 20; radius: 3
+                                width: implicitWidth + 16; height: 20; radius: 0
                                 implicitWidth: clearQueueLbl.implicitWidth
-                                color: clearQueueMa.containsMouse ? "#3a1a1a" : "transparent"
-                                border.color: clearQueueMa.containsMouse ? "#e06060" : "#2a2a2a"; border.width: 1
+                                color: clearQueueMa.containsMouse ? Design.UiTheme.panelRaised : "transparent"
+                                border.color: clearQueueMa.containsMouse ? libraryRoot.accentRed : libraryRoot.borderSub; border.width: 1
                                 visible: libraryRoot.activeTab === "queue" && libraryRoot.queueTracks.length > 0
                                 Text { id: clearQueueLbl; anchors.centerIn: parent
-                                    text: "✕ Leeren"; color: "#e06060"; font.pixelSize: window.sp(9) }
+                                    text: "✕ Leeren"; color: libraryRoot.accentRed; font.pixelSize: window.sp(9) }
                                 MouseArea { id: clearQueueMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                     onClicked: { if (libraryDb) { libraryDb.clearQueue(); libraryRoot.loadQueue() } } }
                             }
@@ -5350,14 +5345,14 @@ Rectangle {
                                     : libraryRoot.activeTab === "history"   ? "⏱"
                                     : libraryRoot.activeTab === "crate"     ? "⊞"
                                     : libraryRoot.activeTab === "queue"     ? "►" : "◈"
-                                color: "#252525"; font.pixelSize: window.sp(42) }
+                                color: libraryRoot.textMuted; font.pixelSize: window.sp(42) }
                             Text { anchors.horizontalCenter: parent.horizontalCenter
                                 text: libraryRoot.activeTab === "favorites" ? "No favorites yet"
                                     : libraryRoot.activeTab === "history"   ? "No play history"
                                     : libraryRoot.activeTab === "crate"     ? "Prepare crate is empty"
                                     : libraryRoot.activeTab === "queue"     ? "Queue is empty"
                                     : "No tracks match"
-                                color: "#333333"; font.pixelSize: window.sp(12) }
+                                color: libraryRoot.textDim; font.pixelSize: window.sp(12) }
                         }
                     }
                 }
@@ -5398,10 +5393,10 @@ Rectangle {
 
                                     Rectangle {
                                         visible: libraryManager ? libraryManager.canNavigateUp : false
-                                        width: 20; height: 16; radius: 2
-                                        color: upMouse.containsMouse ? "#222222" : "transparent"
+                                        width: 20; height: 16; radius: 0
+                                        color: upMouse.containsMouse ? Design.UiTheme.panelRaised : "transparent"
                                         anchors.verticalCenter: parent.verticalCenter
-                                        Text { anchors.centerIn: parent; text: "↑"; color: "#888"; font.pixelSize: window.sp(11) }
+                                        Text { anchors.centerIn: parent; text: "↑"; color: libraryRoot.textSecond; font.pixelSize: window.sp(11) }
                                         MouseArea {
                                             id: upMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                             onClicked: if (libraryManager) libraryManager.navigateUp()
@@ -5409,7 +5404,7 @@ Rectangle {
                                     }
                                     Text {
                                         text: libraryManager ? (libraryManager.currentFolder.split("/").pop() || "/") : ""
-                                        color: "#4a4a4a"; font.pixelSize: window.sp(9)
+                                        color: libraryRoot.textDim; font.pixelSize: window.sp(9)
                                         elide: Text.ElideLeft; width: 110; anchors.verticalCenter: parent.verticalCenter
                                     }
                                 }
@@ -5430,7 +5425,7 @@ Rectangle {
                                         anchors.verticalCenter: parent.verticalCenter
                                         anchors.left: parent.left; anchors.leftMargin: 10; spacing: 7
                                         Text { text: "📁"; font.pixelSize: window.sp(11); anchors.verticalCenter: parent.verticalCenter }
-                                        Text { text: modelData; color: "#c0c0c0"; font.pixelSize: window.sp(11); elide: Text.ElideRight; width: 155; anchors.verticalCenter: parent.verticalCenter }
+                                        Text { text: modelData; color: libraryRoot.textSecond; font.pixelSize: window.sp(11); elide: Text.ElideRight; width: 155; anchors.verticalCenter: parent.verticalCenter }
                                     }
                                     Rectangle { anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right; height: 1; color: libraryRoot.borderSub }
                                     MouseArea {
@@ -5494,7 +5489,7 @@ Rectangle {
 
                                 Text {
                                     anchors.centerIn: parent; visible: trackList.count === 0
-                                    text: "No audio files in the selected folder"; color: "#2e2e2e"; font.pixelSize: window.sp(12)
+                                    text: "No audio files in the selected folder"; color: libraryRoot.textDim; font.pixelSize: window.sp(12)
                                 }
                             }
                         }
@@ -5537,6 +5532,7 @@ Rectangle {
 
                             ColumnLayout {
                                 anchors.fill: parent
+                                anchors.margins: parent.border.width
                                 spacing: 0
 
                                 Rectangle {
@@ -5622,7 +5618,7 @@ Rectangle {
                                                     width: visible ? Math.min(implicitWidth, 80) : 0
                                                 }
                                                 Rectangle {
-                                                    width: usbBadge.implicitWidth + 10; height: 15; radius: 3
+                                                    width: usbBadge.implicitWidth + 10; height: 15; radius: 0
                                                     color: modelData.badge === "REKORDBOX" ? libraryRoot.bgRowActive : libraryRoot.bgRowEven
                                                     border.color: modelData.badge === "REKORDBOX" ? libraryRoot.accentBlue : libraryRoot.borderHigh
                                                     Text { id: usbBadge; anchors.centerIn: parent; text: modelData.badge; color: modelData.badge === "REKORDBOX" ? libraryRoot.accentBlueLt : libraryRoot.textMeta; font.pixelSize: window.sp(8); font.bold: true }
@@ -5634,7 +5630,7 @@ Rectangle {
                                             id: usbDeviceAction
                                             anchors.right: parent.right; anchors.rightMargin: 8
                                             anchors.verticalCenter: parent.verticalCenter
-                                            width: 54; height: 24; radius: 4
+                                            width: 54; height: 24; radius: 0
                                             visible: modelData.canMount || modelData.canEject || modelData.operationPending
                                             color: usbDeviceActionMouse.containsMouse
                                                    && !modelData.operationPending
@@ -5854,14 +5850,14 @@ Rectangle {
                             Rectangle {
                                 Layout.fillWidth: true; Layout.fillHeight: true
                                 visible: libraryRoot.usbBrowseMode === "source"
-                                color: "#1b1c23"
+                                color: Design.UiTheme.panelInset
                                 Column {
                                     anchors.centerIn: parent
                                     spacing: 10
                                     Text {
                                         anchors.horizontalCenter: parent.horizontalCenter
                                         text: "USB"
-                                        color: "#555863"
+                                        color: libraryRoot.textDim
                                         font.pixelSize: window.sp(12)
                                         font.bold: true
                                         font.letterSpacing: 1.6
@@ -5869,14 +5865,14 @@ Rectangle {
                                     Text {
                                         anchors.horizontalCenter: parent.horizontalCenter
                                         text: "NONE SELECTED"
-                                        color: "#f0f2f6"
+                                        color: libraryRoot.textPrimary
                                         font.pixelSize: window.sp(17); font.bold: true
                                         font.letterSpacing: 1.2
                                     }
                                     Text {
                                         anchors.horizontalCenter: parent.horizontalCenter
                                         text: "Select ALL TRACKS or PLAYLIST"
-                                        color: "#8f929d"
+                                        color: libraryRoot.textSecond
                                         font.pixelSize: window.sp(10)
                                     }
                                 }
@@ -5895,6 +5891,7 @@ Rectangle {
 
                                     ColumnLayout {
                                         anchors.fill: parent
+                                        anchors.margins: parent.border.width
                                         spacing: 0
                                         Rectangle {
                                             Layout.fillWidth: true; Layout.preferredHeight: libraryRoot.hdrH
@@ -6120,11 +6117,11 @@ Rectangle {
 
                     Column {
                         anchors.centerIn: parent; spacing: 12
-                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: libraryRoot.activeTab === "streaming" ? "◉" : "⎘"; color: "#252525"; font.pixelSize: window.sp(44) }
+                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: libraryRoot.activeTab === "streaming" ? "◉" : "⎘"; color: libraryRoot.textMuted; font.pixelSize: window.sp(44) }
                         Text {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: (libraryRoot.activeTab.charAt(0).toUpperCase() + libraryRoot.activeTab.slice(1)) + " — Coming soon"
-                            color: "#333333"; font.pixelSize: window.sp(12)
+                            color: libraryRoot.textDim; font.pixelSize: window.sp(12)
                         }
                     }
                 }
@@ -6137,52 +6134,56 @@ Rectangle {
     // ════════════════════════════════════════════════════════════════════════
 
     // Track right-click menu
-    Menu {
+    component LibraryMenu: Menu {
+        padding: 1
+    }
+
+    LibraryMenu {
         id: trackContextMenu
         readonly property bool externalTrack: libraryRoot.ctxTrackId.indexOf("rekordbox:") === 0
-        background: Rectangle { implicitWidth: 260; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
+        background: Rectangle { implicitWidth: 260; color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
 
         MenuItem {
             text: "Preview track"
-            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
             onTriggered: { libraryRoot.togglePreview(libraryRoot.ctxFilePath) }
         }
         MenuSeparator {
-            contentItem: Rectangle { height: 1; color: "#2a2a2a" }
+            contentItem: Rectangle { height: 1; color: libraryRoot.borderSub }
         }
         MenuItem {
             text: "Load to Deck A"
-            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
             onTriggered: { libraryRoot.loadTrackToDeck("A", libraryRoot.ctxFilePath, libraryRoot.ctxTrackId) }
         }
         MenuItem {
             text: "Load to Deck B"
-            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
             onTriggered: { libraryRoot.loadTrackToDeck("B", libraryRoot.ctxFilePath, libraryRoot.ctxTrackId) }
         }
         MenuItem {
             text: "Load to Deck C"
-            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
             onTriggered: { libraryRoot.loadTrackToDeck("C", libraryRoot.ctxFilePath, libraryRoot.ctxTrackId) }
         }
         MenuItem {
             text: "Load to Deck D"
-            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
             onTriggered: { libraryRoot.loadTrackToDeck("D", libraryRoot.ctxFilePath, libraryRoot.ctxTrackId) }
         }
         MenuSeparator {
-            contentItem: Rectangle { height: 1; color: "#2a2a2a" }
+            contentItem: Rectangle { height: 1; color: libraryRoot.borderSub }
         }
         MenuItem {
             text: "Track analysieren / erneut analysieren"
             visible: !trackContextMenu.externalTrack
-            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
             onTriggered: {
                 if (libraryAnalyzer && libraryRoot.ctxTrackId && libraryRoot.ctxFilePath)
                     libraryAnalyzer.analyzeTrack(libraryRoot.ctxTrackId,
@@ -6191,13 +6192,13 @@ Rectangle {
             }
         }
         MenuSeparator {
-            contentItem: Rectangle { height: 1; color: "#2a2a2a" }
+            contentItem: Rectangle { height: 1; color: libraryRoot.borderSub }
         }
-        Menu {
+        LibraryMenu {
             id: addToPlaylistMenu
             title: "Zu Playlist hinzufügen"
             visible: !trackContextMenu.externalTrack
-            background: Rectangle { implicitWidth: 220; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
+            background: Rectangle { implicitWidth: 220; color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
 
             // Show ALL playlists (top-level and sub-crates) with depth indent.
             Repeater {
@@ -6205,8 +6206,8 @@ Rectangle {
                 MenuItem {
                     required property var modelData
                     text: (modelData.depth > 0 ? "  └ " : "") + modelData.name
-                    contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
-                    background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+                    contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+                    background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
                     onTriggered: {
                         if (libraryDb)
                             libraryDb.addTrackToPlaylist(modelData.id, libraryRoot.ctxTrackId)
@@ -6215,14 +6216,14 @@ Rectangle {
             }
 
             MenuSeparator {
-                contentItem: Rectangle { height: 1; color: "#2a2a2a" }
+                contentItem: Rectangle { height: 1; color: libraryRoot.borderSub }
                 visible: libraryRoot.allPlaylists.length > 0
             }
 
             MenuItem {
                 text: "Neue Playlist…"
                 contentItem: Text { text: parent.text; color: libraryRoot.accentBlue; font.pixelSize: window.sp(11); leftPadding: 12 }
-                background: Rectangle { color: parent.highlighted ? "#1a3a5c" : "transparent" }
+                background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
                 onTriggered: {
                     createPlaylistDialog.parentId = ""
                     createPlaylistDialog.pendingTrackId = libraryRoot.ctxTrackId
@@ -6233,8 +6234,8 @@ Rectangle {
         MenuItem {
             text: "Aus Playlist entfernen"
             visible: libraryRoot.activeTab === "playlist" && libraryRoot.currentPlaylistId !== ""
-            contentItem: Text { text: parent.text; color: "#e06060"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#3a1a1a" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.accentRed; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.panelInset : "transparent" }
             onTriggered: {
                 if (libraryDb && libraryRoot.ctxTrackId)
                     libraryDb.removeTrackFromPlaylist(libraryRoot.currentPlaylistId, libraryRoot.ctxTrackId)
@@ -6243,22 +6244,22 @@ Rectangle {
         MenuItem {
             text: "Notes bearbeiten…"
             visible: !trackContextMenu.externalTrack
-            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
             onTriggered: {
                 libraryRoot.notesPanelTrackId = libraryRoot.ctxTrackId
                 libraryRoot.notesPanelTitle   = libraryRoot.ctxTitle
                 libraryRoot.notesPanelOpen    = true
             }
         }
-        MenuSeparator { contentItem: Rectangle { height: 1; color: "#2a2a2a" } }
+        MenuSeparator { contentItem: Rectangle { height: 1; color: libraryRoot.borderSub } }
 
         // ── Rating submenu ──────────────────────────────────────────────
-        Menu {
+        LibraryMenu {
             title: "Bewertung setzen"
             visible: !trackContextMenu.externalTrack
-            background: Rectangle { implicitWidth: 160; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
-            contentItem: Text { leftPadding: 12; text: "Bewertung setzen ★"; color: "#dcdcdc"; font.pixelSize: window.sp(11) }
+            background: Rectangle { implicitWidth: 160; color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
+            contentItem: Text { leftPadding: 12; text: "Bewertung setzen ★"; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11) }
 
             Repeater {
                 model: [
@@ -6272,8 +6273,8 @@ Rectangle {
                 MenuItem {
                     required property var modelData
                     text: modelData.label
-                    contentItem: Text { text: parent.text; color: "#e8b84b"; font.pixelSize: window.sp(11); leftPadding: 12 }
-                    background: Rectangle { color: parent.highlighted ? "#2a2a10" : "transparent" }
+                    contentItem: Text { text: parent.text; color: Design.UiTheme.cue; font.pixelSize: window.sp(11); leftPadding: 12 }
+                    background: Rectangle { color: parent.highlighted ? Design.UiTheme.panelInset : "transparent" }
                     onTriggered: {
                         if (libraryDb && libraryRoot.ctxTrackId)
                             libraryDb.setTrackRating(libraryRoot.ctxTrackId, modelData.stars)
@@ -6283,11 +6284,11 @@ Rectangle {
         }
 
         // ── Color picker submenu ────────────────────────────────────────
-        Menu {
+        LibraryMenu {
             title: "Farbe setzen"
             visible: !trackContextMenu.externalTrack
-            background: Rectangle { implicitWidth: 160; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
-            contentItem: Text { leftPadding: 12; text: "Farbe setzen ●"; color: "#dcdcdc"; font.pixelSize: window.sp(11) }
+            background: Rectangle { implicitWidth: 160; color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
+            contentItem: Text { leftPadding: 12; text: "Farbe setzen ●"; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11) }
 
             Repeater {
                 model: [
@@ -6303,8 +6304,8 @@ Rectangle {
                 MenuItem {
                     required property var modelData
                     text: modelData.label
-                    contentItem: Text { text: parent.text; color: modelData.hex || "#888"; font.pixelSize: window.sp(11); leftPadding: 12 }
-                    background: Rectangle { color: parent.highlighted ? "#1a1a2a" : "transparent" }
+                    contentItem: Text { text: parent.text; color: modelData.hex || libraryRoot.textSecond; font.pixelSize: window.sp(11); leftPadding: 12 }
+                    background: Rectangle { color: parent.highlighted ? Design.UiTheme.panelInset : "transparent" }
                     onTriggered: {
                         if (libraryDb && libraryRoot.ctxTrackId)
                             libraryDb.setTrackColor(libraryRoot.ctxTrackId, modelData.hex)
@@ -6313,7 +6314,7 @@ Rectangle {
             }
         }
 
-        MenuSeparator { contentItem: Rectangle { height: 1; color: "#2a2a2a" } }
+        MenuSeparator { contentItem: Rectangle { height: 1; color: libraryRoot.borderSub } }
 
         // ── Favorites / Crate / Queue (tab-sensitive) ───────────────────
         MenuItem {
@@ -6321,8 +6322,8 @@ Rectangle {
             visible: !trackContextMenu.externalTrack
             readonly property bool isFav: libraryDb ? libraryDb.isFavorite(libraryRoot.ctxTrackId) : false
             text: isFav ? "★ Aus Favoriten entfernen" : "★ Zu Favoriten"
-            contentItem: Text { text: parent.text; color: "#e8b84b"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#2a2a10" : "transparent" }
+            contentItem: Text { text: parent.text; color: Design.UiTheme.cue; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.panelInset : "transparent" }
             onTriggered: {
                 if (!libraryDb || !libraryRoot.ctxTrackId) return
                 if (ctxFavoriteItem.isFav)
@@ -6335,8 +6336,8 @@ Rectangle {
         MenuItem {
             visible: !trackContextMenu.externalTrack
             text: libraryRoot.activeTab === "crate" ? "⊞ Aus Crate entfernen" : "⊞ Zu Prepare Crate"
-            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
             onTriggered: {
                 if (!libraryDb || !libraryRoot.ctxTrackId) return
                 if (libraryRoot.activeTab === "crate")
@@ -6349,8 +6350,8 @@ Rectangle {
         MenuItem {
             visible: !trackContextMenu.externalTrack
             text: libraryRoot.activeTab === "queue" ? "► Aus Queue entfernen" : "► In Queue"
-            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
             onTriggered: {
                 if (!libraryDb || !libraryRoot.ctxTrackId) return
                 if (libraryRoot.activeTab === "queue")
@@ -6360,12 +6361,12 @@ Rectangle {
                 libraryRoot.loadQueue()
             }
         }
-        MenuSeparator { contentItem: Rectangle { height: 1; color: "#2a2a2a" } }
+        MenuSeparator { contentItem: Rectangle { height: 1; color: libraryRoot.borderSub } }
         MenuItem {
             text: "Remove from Library"
             visible: !trackContextMenu.externalTrack
-            contentItem: Text { text: parent.text; color: "#e06060"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#3a1a1a" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.accentRed; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.panelInset : "transparent" }
             onTriggered: {
                 removeFromLibraryPopup.trackId    = libraryRoot.ctxTrackId
                 removeFromLibraryPopup.trackTitle = libraryRoot.ctxTitle
@@ -6375,35 +6376,35 @@ Rectangle {
     }
 
     // Smart collection context menu
-    Menu {
+    LibraryMenu {
         id: smartCollContextMenu
         property string targetId: ""
         property string targetName: ""
         property var targetData: null
 
-        background: Rectangle { implicitWidth: 220; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
+        background: Rectangle { implicitWidth: 220; color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
 
         MenuItem {
             text: "Bearbeiten…"
-            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
             onTriggered: libraryRoot.openSmartCollEditor(smartCollContextMenu.targetData)
         }
         MenuItem {
             text: "Aktualisieren"
-            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
             onTriggered: {
                 if (libraryRoot.activeTab === "smartcoll"
                         && libraryRoot.currentSmartCollectionId === smartCollContextMenu.targetId)
                     libraryRoot.loadSmartCollectionTracks(smartCollContextMenu.targetId)
             }
         }
-        MenuSeparator { contentItem: Rectangle { height: 1; color: "#2a2a2a" } }
+        MenuSeparator { contentItem: Rectangle { height: 1; color: libraryRoot.borderSub } }
         MenuItem {
             text: "Löschen"
-            contentItem: Text { text: parent.text; color: "#e06060"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#3a1a1a" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.accentRed; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.panelInset : "transparent" }
             onTriggered: {
                 if (libraryDb && smartCollContextMenu.targetId) {
                     libraryDb.deleteSmartCollection(smartCollContextMenu.targetId)
@@ -6420,18 +6421,18 @@ Rectangle {
     }
 
     // Playlist sidebar right-click menu
-    Menu {
+    LibraryMenu {
         id: playlistContextMenu
         property string targetId:       ""
         property string targetName:     ""
         property string targetParentId: ""
 
-        background: Rectangle { implicitWidth: 200; color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
+        background: Rectangle { implicitWidth: 200; color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
 
         MenuItem {
             text: "Umbenennen"
-            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
             onTriggered: {
                 renamePlaylistDialog.playlistId = playlistContextMenu.targetId
                 renamePlaylistDialog.currentName = playlistContextMenu.targetName
@@ -6440,8 +6441,8 @@ Rectangle {
         }
         MenuItem {
             text: "Sub-Crate erstellen"
-            contentItem: Text { text: parent.text; color: "#dcdcdc"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#2d7dd2" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
             onTriggered: {
                 createPlaylistDialog.parentId = playlistContextMenu.targetId
                 createPlaylistDialog.pendingTrackId = ""
@@ -6450,11 +6451,11 @@ Rectangle {
                     { [playlistContextMenu.targetId]: true })
             }
         }
-        MenuSeparator { contentItem: Rectangle { height: 1; color: "#2a2a2a" } }
+        MenuSeparator { contentItem: Rectangle { height: 1; color: libraryRoot.borderSub } }
         MenuItem {
             text: "Löschen"
-            contentItem: Text { text: parent.text; color: "#e06060"; font.pixelSize: window.sp(11); leftPadding: 12 }
-            background: Rectangle { color: parent.highlighted ? "#3a1a1a" : "transparent" }
+            contentItem: Text { text: parent.text; color: libraryRoot.accentRed; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.panelInset : "transparent" }
             onTriggered: {
                 deleteConfirmPopup.playlistId   = playlistContextMenu.targetId
                 deleteConfirmPopup.playlistName = playlistContextMenu.targetName
@@ -6479,7 +6480,7 @@ Rectangle {
         x: (parent.width  - width)  / 2
         y: (parent.height - height) / 2
 
-        background: Rectangle { color: "#1e1e1e"; border.color: "#383838"; border.width: 1; radius: 3 }
+        background: Rectangle { color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
 
         Column {
             anchors.fill: parent; anchors.margins: 14; spacing: 8
@@ -6490,8 +6491,8 @@ Rectangle {
             }
 
             Rectangle {
-                width: parent.width; height: 26; radius: 2
-                color: "#141414"; border.color: newPlaylistField.activeFocus ? libraryRoot.accentBlue : "#2c2c2c"; border.width: 1
+                width: parent.width; height: 26; radius: 0
+                color: Design.UiTheme.panelInset; border.color: newPlaylistField.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub; border.width: 1
 
                 TextField {
                     id: newPlaylistField
@@ -6511,19 +6512,19 @@ Rectangle {
                 anchors.right: parent.right; spacing: 6
 
                 Rectangle {
-                    width: 64; height: 24; radius: 2
-                    color: cancelCreate.containsMouse ? "#2e2e2e" : "#242424"
-                    border.color: "#333"; border.width: 1
-                    Text { anchors.centerIn: parent; text: "Cancel"; color: "#888"; font.pixelSize: window.sp(10) }
+                    width: 64; height: 24; radius: 0
+                    color: cancelCreate.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+                    border.color: libraryRoot.borderSub; border.width: 1
+                    Text { anchors.centerIn: parent; text: "Cancel"; color: libraryRoot.textSecond; font.pixelSize: window.sp(10) }
                     MouseArea {
                         id: cancelCreate; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: createPlaylistDialog.close()
                     }
                 }
                 Rectangle {
-                    width: 64; height: 24; radius: 2
-                    color: okCreate.containsMouse ? libraryRoot.accentBlue : "#1d5d9e"
-                    Text { anchors.centerIn: parent; text: "Erstellen"; color: "#fff"; font.pixelSize: window.sp(10) }
+                    width: 64; height: 24; radius: 0
+                    color: okCreate.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.blueDim
+                    Text { anchors.centerIn: parent; text: "Erstellen"; color: libraryRoot.accentBlueLt; font.pixelSize: window.sp(10) }
                     MouseArea {
                         id: okCreate; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: { createPlaylistDialog.doCreatePlaylist(); createPlaylistDialog.close() }
@@ -6555,7 +6556,7 @@ Rectangle {
         x: (parent.width  - width)  / 2
         y: (parent.height - height) / 2
 
-        background: Rectangle { color: "#1e1e1e"; border.color: "#383838"; border.width: 1; radius: 3 }
+        background: Rectangle { color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
 
         Column {
             anchors.fill: parent; anchors.margins: 14; spacing: 8
@@ -6563,8 +6564,8 @@ Rectangle {
             Text { text: "Playlist umbenennen"; color: libraryRoot.textPrimary; font.pixelSize: window.sp(12); font.bold: true }
 
             Rectangle {
-                width: parent.width; height: 26; radius: 2
-                color: "#141414"; border.color: renameField.activeFocus ? libraryRoot.accentBlue : "#2c2c2c"; border.width: 1
+                width: parent.width; height: 26; radius: 0
+                color: Design.UiTheme.panelInset; border.color: renameField.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub; border.width: 1
 
                 TextField {
                     id: renameField
@@ -6584,19 +6585,19 @@ Rectangle {
                 anchors.right: parent.right; spacing: 6
 
                 Rectangle {
-                    width: 64; height: 24; radius: 2
-                    color: cancelRename.containsMouse ? "#2e2e2e" : "#242424"
-                    border.color: "#333"; border.width: 1
-                    Text { anchors.centerIn: parent; text: "Cancel"; color: "#888"; font.pixelSize: window.sp(10) }
+                    width: 64; height: 24; radius: 0
+                    color: cancelRename.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+                    border.color: libraryRoot.borderSub; border.width: 1
+                    Text { anchors.centerIn: parent; text: "Cancel"; color: libraryRoot.textSecond; font.pixelSize: window.sp(10) }
                     MouseArea {
                         id: cancelRename; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: renamePlaylistDialog.close()
                     }
                 }
                 Rectangle {
-                    width: 64; height: 24; radius: 2
-                    color: okRename.containsMouse ? libraryRoot.accentBlue : "#1d5d9e"
-                    Text { anchors.centerIn: parent; text: "Speichern"; color: "#fff"; font.pixelSize: window.sp(10) }
+                    width: 64; height: 24; radius: 0
+                    color: okRename.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.blueDim
+                    Text { anchors.centerIn: parent; text: "Speichern"; color: libraryRoot.accentBlueLt; font.pixelSize: window.sp(10) }
                     MouseArea {
                         id: okRename; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: { doRename(); renamePlaylistDialog.close() }
@@ -6628,7 +6629,7 @@ Rectangle {
         x: (parent.width  - width)  / 2
         y: (parent.height - height) / 2
 
-        background: Rectangle { color: "#1e1e1e"; border.color: "#383838"; border.width: 1; radius: 3 }
+        background: Rectangle { color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
 
         Column {
             anchors.fill: parent; anchors.margins: 14; spacing: 10
@@ -6644,19 +6645,19 @@ Rectangle {
                 anchors.right: parent.right; spacing: 6
 
                 Rectangle {
-                    width: 64; height: 24; radius: 2
-                    color: cancelRmLib.containsMouse ? "#2e2e2e" : "#242424"
-                    border.color: "#333"; border.width: 1
-                    Text { anchors.centerIn: parent; text: "Cancel"; color: "#888"; font.pixelSize: window.sp(10) }
+                    width: 64; height: 24; radius: 0
+                    color: cancelRmLib.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+                    border.color: libraryRoot.borderSub; border.width: 1
+                    Text { anchors.centerIn: parent; text: "Cancel"; color: libraryRoot.textSecond; font.pixelSize: window.sp(10) }
                     MouseArea {
                         id: cancelRmLib; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: removeFromLibraryPopup.close()
                     }
                 }
                 Rectangle {
-                    width: 64; height: 24; radius: 2
-                    color: okRmLib.containsMouse ? "#c0392b" : "#8b2020"
-                    Text { anchors.centerIn: parent; text: "Entfernen"; color: "#fff"; font.pixelSize: window.sp(10) }
+                    width: 64; height: 24; radius: 0
+                    color: okRmLib.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+                    Text { anchors.centerIn: parent; text: "Entfernen"; color: libraryRoot.accentRed; font.pixelSize: window.sp(10) }
                     MouseArea {
                         id: okRmLib; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: {
@@ -6684,7 +6685,7 @@ Rectangle {
         x: (parent.width  - width)  / 2
         y: (parent.height - height) / 2
 
-        background: Rectangle { color: "#1a1a1a"; border.color: "#383838"; border.width: 1; radius: 4 }
+        background: Rectangle { color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
 
         property var ruleModels: []
 
@@ -6749,9 +6750,9 @@ Rectangle {
 
             // Name field
             Rectangle {
-                width: parent.width; height: 26; radius: 2
-                color: "#0e0e0e"
-                border.color: scNameField.activeFocus ? libraryRoot.accentBlue : "#2c2c2c"; border.width: 1
+                width: parent.width; height: 26; radius: 0
+                color: Design.UiTheme.panelInset
+                border.color: scNameField.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub; border.width: 1
 
                 TextField {
                     id: scNameField
@@ -6766,7 +6767,7 @@ Rectangle {
             // Rules
             Text {
                 text: "REGELN"
-                color: "#484848"; font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.2
+                color: libraryRoot.textDim; font.pixelSize: window.sp(9); font.bold: true; font.letterSpacing: 1.2
             }
 
             Column {
@@ -6795,20 +6796,20 @@ Rectangle {
                                 model: ["bpm","key","genre","rating","energy","playCount","dateAdded","title","artist","album","isAnalyzed"]
                                 currentIndex: model.indexOf(ruleRow.modelData.field) >= 0
                                              ? model.indexOf(ruleRow.modelData.field) : 0
-                                background: Rectangle { radius: 2; color: "#0e0e0e"; border.color: "#2c2c2c"; border.width: 1 }
+                                background: Rectangle { color: Design.UiTheme.panelInset; border.color: fieldBox.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub; border.width: 1 }
                                 contentItem: Text { leftPadding: 6; text: fieldBox.currentText
                                     color: libraryRoot.textPrimary; font.pixelSize: window.sp(10)
                                     verticalAlignment: Text.AlignVCenter }
                                 delegate: ItemDelegate {
-                                    width: fieldBox.width
+                                    width: ListView.view ? ListView.view.width : fieldBox.width
                                     contentItem: Text { text: modelData; color: libraryRoot.textPrimary
                                         font.pixelSize: window.sp(10); leftPadding: 6 }
-                                    background: Rectangle { color: highlighted ? "#1d5d9e" : "#1e1e1e" }
+                                    background: Rectangle { color: highlighted ? Design.UiTheme.blueDim : "transparent" }
                                 }
                                 popup: Popup {
                                     y: fieldBox.height + 2; width: fieldBox.width
-                                    padding: 0
-                                    background: Rectangle { color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
+                                    padding: 1
+                                    background: Rectangle { color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
                                     contentItem: ListView { implicitHeight: contentHeight; model: fieldBox.delegateModel; clip: true }
                                 }
                             }
@@ -6819,28 +6820,28 @@ Rectangle {
                                 model: ["gte","lte","gt","lt","eq","ne","contains","not_contains","is_empty","is_not_empty"]
                                 currentIndex: model.indexOf(ruleRow.modelData.op) >= 0
                                              ? model.indexOf(ruleRow.modelData.op) : 0
-                                background: Rectangle { radius: 2; color: "#0e0e0e"; border.color: "#2c2c2c"; border.width: 1 }
+                                background: Rectangle { color: Design.UiTheme.panelInset; border.color: opBox.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub; border.width: 1 }
                                 contentItem: Text { leftPadding: 6; text: opBox.currentText
                                     color: libraryRoot.textPrimary; font.pixelSize: window.sp(10)
                                     verticalAlignment: Text.AlignVCenter }
                                 delegate: ItemDelegate {
-                                    width: opBox.width
+                                    width: ListView.view ? ListView.view.width : opBox.width
                                     contentItem: Text { text: modelData; color: libraryRoot.textPrimary
                                         font.pixelSize: window.sp(10); leftPadding: 6 }
-                                    background: Rectangle { color: highlighted ? "#1d5d9e" : "#1e1e1e" }
+                                    background: Rectangle { color: highlighted ? Design.UiTheme.blueDim : "transparent" }
                                 }
                                 popup: Popup {
                                     y: opBox.height + 2; width: opBox.width
-                                    padding: 0
-                                    background: Rectangle { color: "#1e1e1e"; border.color: "#333"; border.width: 1; radius: 2 }
+                                    padding: 1
+                                    background: Rectangle { color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
                                     contentItem: ListView { implicitHeight: contentHeight; model: opBox.delegateModel; clip: true }
                                 }
                             }
 
                             Rectangle {
                                 width: parent.width - fieldBox.width - opBox.width - 28 - 12; height: parent.height
-                                radius: 2; color: "#0e0e0e"
-                                border.color: ruleValField.activeFocus ? libraryRoot.accentBlue : "#2c2c2c"; border.width: 1
+                                radius: 0; color: Design.UiTheme.panelInset
+                                border.color: ruleValField.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub; border.width: 1
                                 visible: opBox.currentText !== "is_empty" && opBox.currentText !== "is_not_empty"
 
                                 TextField {
@@ -6854,10 +6855,10 @@ Rectangle {
                             }
 
                             Rectangle {
-                                width: 24; height: parent.height; radius: 2
-                                color: rmRuleMa.containsMouse ? "#3a1a1a" : "transparent"
-                                border.color: rmRuleMa.containsMouse ? "#e06060" : "#2a2a2a"; border.width: 1
-                                Text { anchors.centerIn: parent; text: "×"; color: "#e06060"; font.pixelSize: window.sp(12) }
+                                width: 24; height: parent.height; radius: 0
+                                color: rmRuleMa.containsMouse ? Design.UiTheme.panelInset : "transparent"
+                                border.color: rmRuleMa.containsMouse ? libraryRoot.accentRed : libraryRoot.borderSub; border.width: 1
+                                Text { anchors.centerIn: parent; text: "×"; color: libraryRoot.accentRed; font.pixelSize: window.sp(12) }
                                 MouseArea {
                                     id: rmRuleMa; anchors.fill: parent
                                     hoverEnabled: true; cursorShape: Qt.PointingHandCursor
@@ -6870,9 +6871,9 @@ Rectangle {
 
                 // Add rule button
                 Rectangle {
-                    width: 90; height: 22; radius: 2
-                    color: addRuleMa.containsMouse ? "#1a2a3a" : "transparent"
-                    border.color: addRuleMa.containsMouse ? libraryRoot.accentBlue : "#2a2a2a"; border.width: 1
+                    width: 90; height: 22; radius: 0
+                    color: addRuleMa.containsMouse ? Design.UiTheme.blueDim : "transparent"
+                    border.color: addRuleMa.containsMouse ? libraryRoot.accentBlue : libraryRoot.borderSub; border.width: 1
 
                     Text { anchors.centerIn: parent; text: "+ Regel"; color: libraryRoot.accentBlue; font.pixelSize: window.sp(10) }
                     MouseArea {
@@ -6888,17 +6889,17 @@ Rectangle {
                 anchors.right: parent.right; spacing: 6; bottomPadding: 0
 
                 Rectangle {
-                    width: 64; height: 24; radius: 2
-                    color: cancelScMa.containsMouse ? "#2e2e2e" : "#242424"
-                    border.color: "#333"; border.width: 1
-                    Text { anchors.centerIn: parent; text: "Cancel"; color: "#888"; font.pixelSize: window.sp(10) }
+                    width: 64; height: 24; radius: 0
+                    color: cancelScMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+                    border.color: libraryRoot.borderSub; border.width: 1
+                    Text { anchors.centerIn: parent; text: "Cancel"; color: libraryRoot.textSecond; font.pixelSize: window.sp(10) }
                     MouseArea { id: cancelScMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: createSmartCollDialog.close() }
                 }
                 Rectangle {
-                    width: 64; height: 24; radius: 2
-                    color: saveScMa.containsMouse ? libraryRoot.accentBlue : "#1d5d9e"
-                    Text { anchors.centerIn: parent; text: "Speichern"; color: "#fff"; font.pixelSize: window.sp(10) }
+                    width: 64; height: 24; radius: 0
+                    color: saveScMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.blueDim
+                    Text { anchors.centerIn: parent; text: "Speichern"; color: libraryRoot.accentBlueLt; font.pixelSize: window.sp(10) }
                     MouseArea { id: saveScMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: { createSmartCollDialog.doSave(); createSmartCollDialog.close() } }
                 }
@@ -6914,7 +6915,7 @@ Rectangle {
         width: 270; height: 104
         x: (parent.width  - width)  / 2
         y: (parent.height - height) / 2
-        background: Rectangle { color: "#1e1e1e"; border.color: "#383838"; border.width: 1; radius: 3 }
+        background: Rectangle { color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
 
         Column {
             anchors.fill: parent; anchors.margins: 14; spacing: 8
@@ -6923,9 +6924,9 @@ Rectangle {
                 color: libraryRoot.textPrimary; font.pixelSize: window.sp(12); font.bold: true }
 
             Rectangle {
-                width: parent.width; height: 26; radius: 2
-                color: "#141414"
-                border.color: saveCrateNameField.activeFocus ? libraryRoot.accentBlue : "#2c2c2c"; border.width: 1
+                width: parent.width; height: 26; radius: 0
+                color: Design.UiTheme.panelInset
+                border.color: saveCrateNameField.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub; border.width: 1
 
                 TextField {
                     id: saveCrateNameField
@@ -6943,17 +6944,17 @@ Rectangle {
                 anchors.right: parent.right; spacing: 6
 
                 Rectangle {
-                    width: 64; height: 24; radius: 2
-                    color: cancelSaveCrateMa.containsMouse ? "#2e2e2e" : "#242424"
-                    border.color: "#333"; border.width: 1
-                    Text { anchors.centerIn: parent; text: "Cancel"; color: "#888"; font.pixelSize: window.sp(10) }
+                    width: 64; height: 24; radius: 0
+                    color: cancelSaveCrateMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+                    border.color: libraryRoot.borderSub; border.width: 1
+                    Text { anchors.centerIn: parent; text: "Cancel"; color: libraryRoot.textSecond; font.pixelSize: window.sp(10) }
                     MouseArea { id: cancelSaveCrateMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: saveCrateDialog.close() }
                 }
                 Rectangle {
-                    width: 64; height: 24; radius: 2
-                    color: okSaveCrateMa.containsMouse ? libraryRoot.accentBlue : "#1d5d9e"
-                    Text { anchors.centerIn: parent; text: "Speichern"; color: "#fff"; font.pixelSize: window.sp(10) }
+                    width: 64; height: 24; radius: 0
+                    color: okSaveCrateMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.blueDim
+                    Text { anchors.centerIn: parent; text: "Speichern"; color: libraryRoot.accentBlueLt; font.pixelSize: window.sp(10) }
                     MouseArea { id: okSaveCrateMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: { doSaveCrate(); saveCrateDialog.close() } }
                 }
@@ -6981,7 +6982,7 @@ Rectangle {
         x: (parent.width  - width)  / 2
         y: (parent.height - height) / 2
 
-        background: Rectangle { color: "#1e1e1e"; border.color: "#383838"; border.width: 1; radius: 3 }
+        background: Rectangle { color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
 
         Column {
             anchors.fill: parent; anchors.margins: 14; spacing: 10
@@ -6997,19 +6998,19 @@ Rectangle {
                 anchors.right: parent.right; spacing: 6
 
                 Rectangle {
-                    width: 64; height: 24; radius: 2
-                    color: cancelDel.containsMouse ? "#2e2e2e" : "#242424"
-                    border.color: "#333"; border.width: 1
-                    Text { anchors.centerIn: parent; text: "Cancel"; color: "#888"; font.pixelSize: window.sp(10) }
+                    width: 64; height: 24; radius: 0
+                    color: cancelDel.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+                    border.color: libraryRoot.borderSub; border.width: 1
+                    Text { anchors.centerIn: parent; text: "Cancel"; color: libraryRoot.textSecond; font.pixelSize: window.sp(10) }
                     MouseArea {
                         id: cancelDel; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: deleteConfirmPopup.close()
                     }
                 }
                 Rectangle {
-                    width: 64; height: 24; radius: 2
-                    color: okDel.containsMouse ? "#c0392b" : "#8b2020"
-                    Text { anchors.centerIn: parent; text: "Löschen"; color: "#fff"; font.pixelSize: window.sp(10) }
+                    width: 64; height: 24; radius: 0
+                    color: okDel.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+                    Text { anchors.centerIn: parent; text: "Löschen"; color: libraryRoot.accentRed; font.pixelSize: window.sp(10) }
                     MouseArea {
                         id: okDel; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                         onClicked: {
@@ -7044,8 +7045,8 @@ Rectangle {
         anchors.bottomMargin: libraryRoot.previewBarReserve
         height: libraryRoot.notesPanelOpen ? 160 : 0
         clip: true
-        color: "#161616"
-        border.color: "#2a2a2a"; border.width: notesPanel.height > 0 ? 1 : 0
+        color: Design.UiTheme.panel
+        border.color: libraryRoot.borderSub; border.width: notesPanel.height > 0 ? 1 : 0
         z: 300
 
         Behavior on height { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
@@ -7094,9 +7095,9 @@ Rectangle {
                     spacing: 6
 
                     Rectangle {
-                        width: 52; height: 20; radius: 2
-                        color: saveNotesMa.containsMouse ? "#1a3a1a" : "transparent"
-                        border.color: saveNotesMa.containsMouse ? libraryRoot.accentGreen : "#2a2a2a"; border.width: 1
+                        width: 52; height: 20; radius: 0
+                        color: saveNotesMa.containsMouse ? Design.UiTheme.greenDim : "transparent"
+                        border.color: saveNotesMa.containsMouse ? libraryRoot.accentGreen : libraryRoot.borderSub; border.width: 1
                         Text { anchors.centerIn: parent; text: "Speichern"; color: libraryRoot.accentGreen; font.pixelSize: window.sp(9) }
                         MouseArea {
                             id: saveNotesMa; anchors.fill: parent
@@ -7110,10 +7111,10 @@ Rectangle {
                     }
 
                     Rectangle {
-                        width: 20; height: 20; radius: 2
-                        color: closeNotesMa.containsMouse ? "#2d2d2d" : "transparent"
-                        border.color: "#2a2a2a"; border.width: 1
-                        Text { anchors.centerIn: parent; text: "×"; color: "#888"; font.pixelSize: window.sp(12) }
+                        width: 20; height: 20; radius: 0
+                        color: closeNotesMa.containsMouse ? Design.UiTheme.panelRaised : "transparent"
+                        border.color: libraryRoot.borderSub; border.width: 1
+                        Text { anchors.centerIn: parent; text: "×"; color: libraryRoot.textSecond; font.pixelSize: window.sp(12) }
                         MouseArea {
                             id: closeNotesMa; anchors.fill: parent
                             hoverEnabled: true; cursorShape: Qt.PointingHandCursor
@@ -7127,8 +7128,8 @@ Rectangle {
             Rectangle {
                 width: parent.width
                 height: parent.height - 30
-                color: "#0e0e0e"; radius: 2
-                border.color: notesEdit.activeFocus ? libraryRoot.accentBlue : "#222"; border.width: 1
+                color: Design.UiTheme.panelInset; radius: 0
+                border.color: notesEdit.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub; border.width: 1
 
                 TextEdit {
                     id: notesEdit

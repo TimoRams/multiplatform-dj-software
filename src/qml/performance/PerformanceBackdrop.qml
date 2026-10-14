@@ -12,6 +12,7 @@ Item {
     property size maximumCaptureSize: Qt.size(128, 256)
     property real downsampleFactor: 4
     property bool live: true
+    property bool frameVisible: true
     property color tint: Qt.rgba(UiTheme.panel.r, UiTheme.panel.g, UiTheme.panel.b, 0.72)
     readonly property bool pressureAllowsBlur: typeof renderPressurePolicy === "undefined"
                                                || !renderPressurePolicy
@@ -85,7 +86,7 @@ Item {
                ? root.tint
                : Qt.rgba(UiTheme.panel.r, UiTheme.panel.g, UiTheme.panel.b, 0.98)
         border.color: UiTheme.borderSubtle
-        border.width: 1
+        border.width: root.frameVisible ? 1 : 0
         radius: 0
     }
 }

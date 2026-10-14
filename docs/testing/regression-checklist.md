@@ -77,10 +77,10 @@ that the backdrop blurs a stripe pattern while the captured backing stays sharp.
 
 The exit prompt uses the same separable GPU blur on `mainLayout` alone (never
 the app root or overlay controls). Its quarter-resolution textures are capped at
-512x512 each, frozen while the prompt stays open, refreshed on resize/reopen and
+512x512 each, updated live while the prompt stays open, resized/recreated as needed and
 detached before shutdown teardown. Software rendering, background operation and
 render pressure retain the readable flat fallback. The RHI harness verifies real
-stripe blur, frozen content, resize/reopen refresh and capture destruction.
+stripe blur, live content updates, resize/reopen refresh and capture destruction.
 
 `control_clock` and the production-header QML harness exercise sustained 60 Hz
 GUI delivery against the 250 Hz clock: every base tick is severely late, but

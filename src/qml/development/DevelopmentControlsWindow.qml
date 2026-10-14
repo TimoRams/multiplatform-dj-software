@@ -16,7 +16,7 @@ Window {
     maximumHeight: 430
     visible: appWindow && appWindow.showDevelopmentControls
     title: "BrockDJ — Development Controls"
-    color: UiTheme.bgDeep
+    color: UiTheme.surfaceInset
 
     // FxBar historically derives its height from the containing window.
     readonly property int fxBarHeight: UiTheme.px(90)
@@ -43,7 +43,7 @@ Window {
                     Layout.preferredHeight: 26
                     Layout.minimumHeight: 26
                     Layout.maximumHeight: 26
-                    color: UiTheme.bg0
+                    color: UiTheme.surfaceInset
 
                     Text {
                         anchors.left: parent.left
@@ -51,7 +51,8 @@ Window {
                         anchors.verticalCenter: parent.verticalCenter
                         text: "DEVELOPMENT CONTROLS"
                         color: UiTheme.textPrimary
-                        font.pixelSize: 9
+                        font.pixelSize: 10
+                        font.family: UiTheme.uiFontFamily
                         font.bold: true
                         font.letterSpacing: 1.0
                     }
@@ -62,7 +63,8 @@ Window {
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Desktop bridge — toggle in View"
                         color: UiTheme.textLabel
-                        font.pixelSize: 8
+                        font.pixelSize: 10
+                        font.family: UiTheme.uiFontFamily
                     }
                 }
 
@@ -216,10 +218,10 @@ Window {
 
         property bool _restoringSettings: false
 
-        readonly property color clrA: "#ff9900"
-        readonly property color clrB: "#00ccff"
-        readonly property color clrC: "#cc44ff"
-        readonly property color clrD: "#44ddaa"
+        readonly property color clrA: UiTheme.deckA
+        readonly property color clrB: UiTheme.deckB
+        readonly property color clrC: UiTheme.deckC
+        readonly property color clrD: UiTheme.deckD
 
         readonly property bool cfCurveIsLinear: cfCurveMode === "linear"
 
@@ -369,17 +371,17 @@ Window {
 
                     Rectangle {
                         anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
-                        height: isActive ? 2 : 0
+                        height: 1
                         visible: isActive
-                        color: "#3a7ad4"
+                        color: UiTheme.blue
                     }
                     Text {
                         anchors.centerIn: parent; text: parent.modelData.label
-                        color: parent.isActive ? "#7ab8f5" : "#444"
-                        font.pixelSize: cfBar.hostWindow.spViewport(7); font.bold: true; font.family: "monospace"
+                        color: parent.isActive ? UiTheme.blue : UiTheme.textLabel
+                        font.pixelSize: 9; font.bold: true; font.family: UiTheme.uiFontFamily
                     }
                     HoverHandler { id: modeHov }
-                    Rectangle { anchors.fill: parent; radius: 2; color: "#fff"
+                    Rectangle { anchors.fill: parent; radius: 0; color: UiTheme.textPrimary
                         opacity: modeHov.hovered && !parent.isActive ? 0.04 : 0.0 }
                     MouseArea {
                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor
@@ -413,17 +415,17 @@ Window {
 
                     Rectangle {
                         anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
-                        height: isActive ? 2 : 0
+                        height: 1
                         visible: isActive
-                        color: "#3a7ad4"
+                        color: UiTheme.blue
                     }
                     Text {
                         anchors.centerIn: parent; text: parent.modelData.label
-                        color: parent.isActive ? "#7ab8f5" : "#444"
-                        font.pixelSize: cfBar.hostWindow.spViewport(7); font.bold: true; font.family: "monospace"
+                        color: parent.isActive ? UiTheme.blue : UiTheme.textLabel
+                        font.pixelSize: 9; font.bold: true; font.family: UiTheme.uiFontFamily
                     }
                     HoverHandler { id: ph }
-                    Rectangle { anchors.fill: parent; radius: 2; color: "#fff"
+                    Rectangle { anchors.fill: parent; radius: 0; color: UiTheme.textPrimary
                         opacity: ph.hovered && !parent.isActive ? 0.04 : 0.0 }
                     MouseArea {
                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor
@@ -516,9 +518,9 @@ Window {
                                 var r  = Math.min(width,height) * 0.42
                                 var s0 = 120 * Math.PI/180; var span = 300 * Math.PI/180
                                 ctx.lineWidth = 2; ctx.lineCap = "round"
-                                ctx.strokeStyle = "#222"
+                                ctx.strokeStyle = UiTheme.knobTrack
                                 ctx.beginPath(); ctx.arc(cx,cy,r, s0, s0+span, false); ctx.stroke()
-                                ctx.strokeStyle = cfBar.cfCurveIsLinear ? "#333" : "#3a7ad4"
+                                ctx.strokeStyle = cfBar.cfCurveIsLinear ? UiTheme.knobTrack : UiTheme.blue
                                 ctx.beginPath(); ctx.arc(cx,cy,r, s0, s0 + curveDial.value*span, false); ctx.stroke()
                             }
                             Connections {
@@ -531,7 +533,7 @@ Window {
                         Rectangle {
                             anchors.centerIn: parent
                             width: parent.width*0.72; height: parent.height*0.72
-                            radius: width/2; color: "#141414"
+                            radius: width/2; color: UiTheme.knobFace
                         }
                     }
                     handle: Rectangle {
@@ -540,7 +542,7 @@ Window {
                         y: curveDial.background.y + curveDial.background.height/2 - height/2
                         width: curveDial.width*0.72; height: curveDial.height*0.72; color: "transparent"
                         Rectangle {
-                            color: "#aaa"; width: 1; height: parent.height*0.38
+                            color: UiTheme.knobHandle; width: 1; height: parent.height*0.38
                             anchors.horizontalCenter: parent.horizontalCenter
                             anchors.top: parent.top; anchors.topMargin: -1
                         }
@@ -563,10 +565,8 @@ Window {
                     var w = width; var h = height
                     var pad = 2
 
-                    ctx.fillStyle = "#161616"; ctx.fillRect(0,0,w,h)
-                    ctx.strokeStyle = "#2a2a2a"; ctx.lineWidth = 1
-                    ctx.strokeRect(0.5, 0.5, w-1, h-1)
-                    ctx.strokeStyle = "#333333"; ctx.lineWidth = 0.5
+                    ctx.fillStyle = UiTheme.displayBackground; ctx.fillRect(0,0,w,h)
+                    ctx.strokeStyle = UiTheme.separatorSubtle; ctx.lineWidth = 1
                     ctx.beginPath(); ctx.moveTo(w/2, pad); ctx.lineTo(w/2, h-pad); ctx.stroke()
 
                     function drawCurve(color, isA) {
@@ -581,8 +581,8 @@ Window {
                         }
                         ctx.stroke()
                     }
-                    drawCurve("#ff9900", true)
-                    drawCurve("#00ccff", false)
+                    drawCurve(cfBar.clrA, true)
+                    drawCurve(cfBar.clrB, false)
                 }
 
                 Connections {
@@ -622,15 +622,17 @@ Window {
 
                 Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    y: 0; width: 1; height: 4; color: "#2a2a2a"
+                    y: 0; width: 1; height: 4; color: UiTheme.separatorSubtle
                 }
                 Text {
                     anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
-                    text: "◄"; color: cfBar.clrA; font.pixelSize: cfBar.hostWindow.spViewport(8)
+                    text: "◄"; color: cfBar.clrA; font.pixelSize: 9
+                    font.family: UiTheme.uiFontFamily
                 }
                 Text {
                     anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                    text: "►"; color: cfBar.clrB; font.pixelSize: cfBar.hostWindow.spViewport(8)
+                    text: "►"; color: cfBar.clrB; font.pixelSize: 9
+                    font.family: UiTheme.uiFontFamily
                 }
 
                 Slider {
@@ -661,9 +663,9 @@ Window {
                         x: cfSlider.leftPadding + cfSlider.visualPosition * (cfSlider.availableWidth - width)
                         y: cfSlider.height / 2 - height / 2
                         implicitWidth: 18; implicitHeight: 22; radius: 0
-                        color: cfSlider.pressed || cfSlider.cfDragActive ? "#f0f0f0" : UiTheme.faderCap
+                        color: cfSlider.pressed || cfSlider.cfDragActive ? UiTheme.textPrimary : UiTheme.faderCap
 
-                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height * 0.48; color: "#666666" }
+                        Rectangle { anchors.centerIn: parent; width: 2; height: parent.height * 0.48; color: UiTheme.borderStrong }
                     }
 
                     MouseArea {
@@ -750,9 +752,9 @@ Window {
         Text {
             text: ag.deckLabel
             color: ag.deckAccent
-            font.pixelSize: ag.crossfader.hostWindow.spViewport(8)
+            font.pixelSize: 10
             font.bold: true
-            font.family: "monospace"
+            font.family: UiTheme.uiFontFamily
             Layout.alignment: Qt.AlignVCenter
             Layout.rightMargin: 3
         }
@@ -769,22 +771,22 @@ Window {
                     anchors.bottom: parent.bottom
                     anchors.left: parent.left
                     anchors.right: parent.right
-                    height: ag.currentAssign === modelData ? 2 : 0
+                    height: 1
                     visible: ag.currentAssign === modelData
                     color: ag.deckAccent
                 }
                 Text {
                     anchors.centerIn: parent
                     text: parent.modelData
-                    color: ag.currentAssign === parent.modelData ? ag.deckAccent : "#3a3a3a"
-                    font.pixelSize: ag.crossfader.hostWindow.spViewport(7)
+                    color: ag.currentAssign === parent.modelData ? ag.deckAccent : UiTheme.textLabel
+                    font.pixelSize: 9
                     font.bold: true
-                    font.family: "monospace"
+                    font.family: UiTheme.uiFontFamily
                 }
                 HoverHandler { id: hov }
                 Rectangle {
                     anchors.fill: parent
-                    color: "#fff"
+                    color: UiTheme.textPrimary
                     opacity: hov.hovered && ag.currentAssign !== parent.modelData ? 0.04 : 0.0
                 }
                 MouseArea {

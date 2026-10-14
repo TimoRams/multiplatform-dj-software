@@ -702,7 +702,7 @@ Item {
                         width: parent.width
                         height: 40
                         color: settingsWindow.selectedCategory === index
-                               ? UiTheme.blueDim
+                               ? UiTheme.surfaceRaised
                                : containsMouse ? UiTheme.panelRaised : "transparent"
                         property bool containsMouse: false
 
@@ -766,7 +766,8 @@ Item {
 
                 background: Rectangle {
                     color: UiTheme.buttonBg(false, parent.hovered, parent.down)
-                    border.color: parent.hovered ? UiTheme.borderHover : UiTheme.border
+                    border.color: parent.activeFocus ? UiTheme.borderActive
+                                : parent.hovered ? UiTheme.borderHover : UiTheme.borderSubtle
                     radius: 0
                 }
 
@@ -974,7 +975,7 @@ Item {
 
                                 background: Rectangle {
                                     color: UiTheme.surfaceInset
-                                    border.color: UiTheme.border
+                                    border.color: parent.activeFocus ? UiTheme.borderActive : UiTheme.borderSubtle
                                     radius: 0
                                 }
                             }
@@ -1026,7 +1027,7 @@ Item {
 
                                 background: Rectangle {
                                     color: UiTheme.surfaceInset
-                                    border.color: UiTheme.border
+                                    border.color: parent.activeFocus ? UiTheme.borderActive : UiTheme.borderSubtle
                                     radius: 0
                                 }
                             }
@@ -1087,7 +1088,8 @@ Item {
 
                                 background: Rectangle {
                                     color: UiTheme.buttonBg(false, parent.hovered, parent.down)
-                                    border.color: parent.hovered ? UiTheme.borderHover : UiTheme.border
+                                    border.color: parent.activeFocus ? UiTheme.borderActive
+                                                : parent.hovered ? UiTheme.borderHover : UiTheme.borderSubtle
                                     radius: 0
                                 }
 
@@ -1289,7 +1291,7 @@ Item {
 
                             background: Rectangle {
                                 color: UiTheme.surfaceInset
-                                border.color: UiTheme.border
+                                border.color: parent.activeFocus ? UiTheme.borderActive : UiTheme.borderSubtle
                                 radius: 0
                             }
 
@@ -1388,7 +1390,7 @@ Item {
                             
                             background: Rectangle {
                                 color: UiTheme.surfaceInset
-                                border.color: UiTheme.border
+                                border.color: parent.activeFocus ? UiTheme.borderActive : UiTheme.borderSubtle
                                 radius: 0
                             }
                             
@@ -1405,7 +1407,8 @@ Item {
                             Layout.preferredHeight: 32
                             background: Rectangle {
                                 color: UiTheme.buttonBg(false, parent.hovered, parent.down)
-                                border.color: parent.hovered ? UiTheme.borderHover : "transparent"
+                                border.color: parent.activeFocus ? UiTheme.borderActive
+                                            : parent.hovered ? UiTheme.borderHover : "transparent"
                                 radius: 0
                             }
                             contentItem: Text {
@@ -1468,7 +1471,7 @@ Item {
 
                             background: Rectangle {
                                 color: UiTheme.surfaceInset
-                                border.color: UiTheme.border
+                                border.color: parent.activeFocus ? UiTheme.borderActive : UiTheme.borderSubtle
                                 radius: 0
                             }
 
@@ -1488,7 +1491,8 @@ Item {
                             Layout.preferredHeight: 32
                             background: Rectangle {
                                 color: UiTheme.buttonBg(false, parent.hovered, parent.down)
-                                border.color: parent.hovered ? UiTheme.borderHover : "transparent"
+                                border.color: parent.activeFocus ? UiTheme.borderActive
+                                            : parent.hovered ? UiTheme.borderHover : "transparent"
                                 radius: 0
                             }
                             contentItem: Text {
@@ -1567,7 +1571,8 @@ Item {
 
                             background: Rectangle {
                                 color: UiTheme.buttonBg(false, parent.hovered, parent.down)
-                                border.color: parent.hovered ? UiTheme.borderHover : "transparent"
+                                border.color: parent.activeFocus ? UiTheme.borderActive
+                                            : parent.hovered ? UiTheme.borderHover : "transparent"
                                 radius: 0
                             }
 
@@ -1596,12 +1601,14 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 26
-                        color: UiTheme.surfaceInset
-                        border.color: UiTheme.border
+                        color: UiTheme.panelInset
+                        border.color: UiTheme.borderSubtle
                         radius: 0
 
                         Row {
                             anchors.fill: parent
+                            anchors.topMargin: parent.border.width
+                            anchors.bottomMargin: parent.border.width
                             anchors.leftMargin: 8
                             anchors.rightMargin: 8
                             spacing: 6
@@ -1638,7 +1645,8 @@ Item {
 
                             background: Rectangle {
                                 color: UiTheme.buttonBg(false, parent.hovered, parent.down)
-                                border.color: parent.hovered ? UiTheme.borderHover : UiTheme.border
+                                border.color: parent.activeFocus ? UiTheme.borderActive
+                                            : parent.hovered ? UiTheme.borderHover : UiTheme.borderSubtle
                                 radius: 0
                             }
 
@@ -1706,7 +1714,7 @@ Item {
                             Layout.fillWidth: true
                             height: 32
                             color: UiTheme.surfaceInset
-                            border.color: UiTheme.border
+                            border.color: UiTheme.borderSubtle
                             radius: 0
 
                             Text {
@@ -1724,7 +1732,7 @@ Item {
                             width: 70
                             height: 32
                             color: UiTheme.buttonBg(false, false, false)
-                            border.color: UiTheme.border
+                            border.color: UiTheme.borderSubtle
                             radius: 0
 
                             Text {
@@ -1953,7 +1961,8 @@ Item {
 
                             background: Rectangle {
                                 color: UiTheme.buttonBg(false, parent.hovered, parent.down)
-                                border.color: parent.hovered ? UiTheme.borderHover : "transparent"
+                                border.color: parent.activeFocus ? UiTheme.borderActive
+                                            : parent.hovered ? UiTheme.borderHover : "transparent"
                                 radius: 0
                             }
 
@@ -1974,7 +1983,8 @@ Item {
 
                             background: Rectangle {
                                 color: UiTheme.buttonBg(false, parent.hovered, parent.down)
-                                border.color: parent.hovered ? UiTheme.borderHover : "transparent"
+                                border.color: parent.activeFocus ? UiTheme.borderActive
+                                            : parent.hovered ? UiTheme.borderHover : "transparent"
                                 radius: 0
                             }
 

@@ -1520,9 +1520,9 @@ bool appOverlaysRuntimeTests(const std::string& source)
         return false;
     ok &= require(backdrop->property("sourceItem").value<QQuickItem*>()
                       == qobject_cast<QQuickItem*>(mainLayout.get())
-                      && !backdrop->property("live").toBool()
+                      && backdrop->property("live").toBool()
                       && backdrop->property("maximumCaptureSize").toSize() == QSize(512, 512),
-                  "exit captures only mainLayout into bounded frozen textures");
+                  "exit captures only mainLayout into bounded live textures");
     const bool software = window.rendererInterface()->graphicsApi() == QSGRendererInterface::Software;
     if (software)
         ok &= require(!backdrop->property("blurActive").toBool(),
@@ -1532,9 +1532,9 @@ bool appOverlaysRuntimeTests(const std::string& source)
     activate.evaluate();
     QCoreApplication::processEvents();
     QPointer<QObject> capture(backdrop->findChild<QObject*>("backdropCapture"));
-    ok &= require(capture && !capture->property("live").toBool()
+    ok &= require(capture && capture->property("live").toBool()
                       && !capture->property("recursive").toBool(),
-                  "exit creates a nonrecursive one-shot GPU capture");
+                  "exit creates a nonrecursive live GPU capture");
     if (!software) {
         startupItem->setProperty("welcomeActive", false);
         appWindow->setProperty("uncleanShutdownWarningVisible", false);
@@ -1547,16 +1547,18 @@ bool appOverlaysRuntimeTests(const std::string& source)
                       "exit really blurs stripes instead of merely dimming them");
         mainLayout->setProperty("stripeColor", QColor(Qt::red));
         QTest::qWait(50);
-        const QImage frozen = window.grabWindow();
-        ok &= require(!frozen.isNull() && frozen.pixelColor(36, 40) == firstPixel,
-                      "exit snapshot does not recapture animated backing content");
+        const QImage updated = window.grabWindow();
+        ok &= require(!updated.isNull()
+                          && updated.pixelColor(36, 40).green() < firstPixel.green()
+                          && updated.pixelColor(36, 40).red() > updated.pixelColor(36, 40).green(),
+                      "exit blur follows backing updates while the prompt stays open");
         appWindow->setProperty("exitPromptVisible", false);
         QCoreApplication::processEvents();
         appWindow->setProperty("exitPromptVisible", true);
         QTest::qWait(50);
         const QImage reopened = window.grabWindow();
         ok &= require(!reopened.isNull() && reopened.pixelColor(36, 40).green() < firstPixel.green(),
-                      "reopening exit takes a fresh snapshot");
+                      "reopening exit restores the current live background");
         mainLayout->setProperty("stripeColor", QColor(Qt::blue));
         qobject_cast<QQuickItem*>(mainLayout.get())->setSize(QSizeF(640, 480));
         qobject_cast<QQuickItem*>(host.get())->setSize(QSizeF(640, 480));
@@ -1566,7 +1568,7 @@ bool appOverlaysRuntimeTests(const std::string& source)
         ok &= require(!resized.isNull()
                           && resized.pixelColor(36, 40).blue() > resized.pixelColor(36, 40).red()
                           && backdrop->property("captureRect").toRectF().size() == QSizeF(640, 480),
-                      "resizing refreshes the frozen exit snapshot to current geometry and content");
+                      "resizing keeps the live exit background at current geometry and content");
     }
     appWindow->setProperty("exitShutdownInProgress", true);
     QCoreApplication::processEvents();
@@ -2053,6 +2055,36 @@ bool qmlMergeRuntimeTests()
                       return beatFxPanel->property("visible").toBool();
                   }),
                   "the right-side Beat FX panel remains host-controlled");
+    for (auto* panel : {quickA, quickB, gridPanel, beatFxPanel}) {
+        auto* visualPanel = qobject_cast<QQuickItem*>(panel);
+        auto* scroll = panel ? panel->findChild<QQuickItem*>(
+            panel == gridPanel ? QStringLiteral("gridScroll")
+                : (panel == beatFxPanel ? QStringLiteral("fxScroll")
+                                       : QStringLiteral("deckScroll"))) : nullptr;
+        ok &= require(visualPanel && scroll
+                          && scroll->x() == 1 && scroll->y() == 1
+                          && scroll->width() == visualPanel->width() - 2
+                          && scroll->height() == visualPanel->height() - 2,
+                      "sidebar content is inset so it cannot paint over its single outer frame");
+    }
+    auto* mixBar = beatFxPanel ? beatFxPanel->findChild<QQuickItem*>(QStringLiteral("fxMixBar")) : nullptr;
+    QQuickItem* mixFill = nullptr;
+    if (mixBar) {
+        for (auto* child : mixBar->childItems()) {
+            if (QByteArray(child->metaObject()->className()).startsWith("QQuickRectangle")) {
+                mixFill = child;
+                break;
+            }
+        }
+    }
+    for (const double mix : {0.0, 0.5, 1.0}) {
+        fxManager->setProperty("wetDry1", mix);
+        QCoreApplication::processEvents();
+        ok &= require(mixBar && mixFill && mixFill->x() == 1 && mixFill->y() == 1
+                          && mixFill->width() <= mixBar->width() - 2
+                          && mixFill->height() == mixBar->height() - 2,
+                      "FX level fill leaves its one-pixel border visible at every mix amount");
+    }
 
     // Resize the existing instances: construction at 900x600 hid shrinking rows.
     const auto checkPanelGeometry = [&](QObject* panel, const char* label) {
@@ -2198,6 +2230,8 @@ bool qmlMergeRuntimeTests()
         ok &= require(backdrop->property("sourceItem").value<QQuickItem*>() == backing
                           && !backing->isAncestorOf(backdrop),
                       "blur captures the waveform layer, never itself or its panel");
+        ok &= require(!backdrop->property("frameVisible").toBool(),
+                      "sidebar backdrops do not duplicate the foreground panel frame");
         auto* loader = backdrop->findChild<QObject*>(QStringLiteral("backdropEffects"));
         if (!require(loader != nullptr, "backdrop has a lazy effect loader")) {
             ok = false;
@@ -2865,7 +2899,7 @@ int main(int argc, char** argv)
                           != std::string::npos
                       && sourcePage.find("function syncCursorToActiveSource()")
                           != std::string::npos
-                      && sourcePage.find("color: active ? \"#40d84b\" : \"#d6d8df\"")
+                      && sourcePage.find("color: active ? UiTheme.green : UiTheme.textPrimary")
                           != std::string::npos,
                   "standalone Source reflects the active Local or USB library");
     ok &= require(library.find("readonly property bool usbTrackViewVisible")

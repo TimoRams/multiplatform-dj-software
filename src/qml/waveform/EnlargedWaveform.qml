@@ -44,7 +44,7 @@ Item {
 
         property var engine: null
         property string deckName: "A"
-        property color accentColor: "#888888"
+        property color accentColor: UiTheme.blue
         property bool editMode: false
         property bool expanded: false
 
@@ -77,7 +77,7 @@ Item {
 
         width: occupiedWidth
         height: parent ? parent.height : implicitHeight
-        color: "#dd0a0a0a"
+        color: UiTheme.surface
         z: 25
         clip: true
 
@@ -183,12 +183,12 @@ Item {
                             anchors.fill: parent
                             visible: modelData.type === "bpm"
                             enabled: root.engine && root.engine.trackData && root.engine.trackData.isBpmAnalyzed
-                            color: "#eee"
+                            color: UiTheme.textPrimary
                             placeholderText: "BPM"
-                            placeholderTextColor: "#555"
-                            background: Rectangle { color: "#111"; border.color: "#333"; radius: 2 }
-                            font.pixelSize: Math.max(7, root.btnSize * 0.34)
-                            font.family: "monospace"
+                            placeholderTextColor: UiTheme.textMuted
+                            background: Rectangle { color: UiTheme.panelInset; border.color: bpmField.activeFocus ? root.accentColor : UiTheme.border; border.width: 1; radius: 0 }
+                            font.pixelSize: Math.max(9, Math.round(root.btnSize * 0.34))
+                            font.family: UiTheme.numericFontFamily
                             horizontalAlignment: TextInput.AlignHCenter
                             validator: DoubleValidator { bottom: 20; top: 300; decimals: 1 }
                             text: {
@@ -207,17 +207,17 @@ Item {
                         Rectangle {
                             anchors.fill: parent
                             visible: modelData.type !== "bpm"
-                            radius: 2
+                            radius: 0
                             color: {
-                                if (modelData.action === "edit" && root.editMode) return "#331e7bd4"
-                                if (modelData.action === "lock" && lockBox.checked) return "#331e7bd4"
-                                return cellHover.containsMouse ? "#252525" : "#161616"
+                                if (modelData.action === "edit" && root.editMode) return UiTheme.blueDim
+                                if (modelData.action === "lock" && lockBox.checked) return UiTheme.blueDim
+                                return cellHover.containsMouse ? UiTheme.panelRaised : UiTheme.panelInset
                             }
                             border.color: {
-                                if (modelData.action === "edit" && root.editMode) return "#1e7bd4"
-                                if (modelData.action === "lock" && lockBox.checked) return "#1e7bd4"
-                                if (modelData.type === "downbeat") return "#55e60000"
-                                return "#2a2a2a"
+                                if (modelData.action === "edit" && root.editMode) return root.accentColor
+                                if (modelData.action === "lock" && lockBox.checked) return root.accentColor
+                                if (modelData.type === "downbeat") return UiTheme.error
+                                return UiTheme.borderSubtle
                             }
 
                             Text {
@@ -226,17 +226,18 @@ Item {
                                 text: modelData.action === "lock"
                                       ? (lockBox.checked ? "🔒" : "🔓")
                                       : modelData.label
-                                color: "#ccc"
-                                font.pixelSize: Math.max(7, root.btnSize * 0.36)
-                                font.bold: true
-                                font.family: modelData.label.length <= 3 ? "monospace" : undefined
+                                color: UiTheme.textSecondary
+                                font.pixelSize: Math.max(9, Math.round(root.btnSize * 0.36))
+                                font.weight: Font.Medium
+                                font.family: UiTheme.uiFontFamily
+                                renderType: Text.QtRendering
                             }
 
                             Text {
                                 anchors.centerIn: parent
                                 visible: modelData.type === "downbeat"
                                 text: "I"
-                                color: "#e60000"
+                                color: UiTheme.error
                                 font.pixelSize: Math.max(14, root.btnSize * 0.72)
                                 font.bold: true
                             }
@@ -560,8 +561,7 @@ Item {
             height: 22
             z: 30
             visible: root.sameTrackDoubleHint
-            color: "#cc1a1408"
-            border.color: "#66ffb000"
+            color: UiTheme.orangeDim
 
             Text {
                 anchors.verticalCenter: parent.verticalCenter
@@ -570,7 +570,7 @@ Item {
                 anchors.right: parent.right
                 anchors.rightMargin: 8
                 text: "Same track on multiple decks — may sound thin (comb filtering). Nudge, EQ, or polarity (−)."
-                color: "#dfc08a"
+                color: UiTheme.cue
                 font.pixelSize: 9
                 elide: Text.ElideRight
             }
@@ -580,7 +580,7 @@ Item {
     Rectangle {
         anchors.fill: parent
         z: 50
-        color: "#5599ff"
+        color: UiTheme.sync
         opacity: root.dropHovered ? 0.08 : 0.0
         Behavior on opacity { NumberAnimation { duration: 80 } }
     }
@@ -588,8 +588,8 @@ Item {
         anchors.fill: parent
         z: 50
         color: "transparent"
-        border.color: "#5599ff"
-        border.width: 3
+        border.color: UiTheme.sync
+        border.width: 2
         visible: root.dropHovered
     }
 }

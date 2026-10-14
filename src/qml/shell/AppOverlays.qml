@@ -80,7 +80,7 @@ Item {
 
             Rectangle {
                 anchors.fill: parent
-                color: "#000000"
+                color: UiTheme.displayBackground
                 opacity: 0.78
                 MouseArea { anchors.fill: parent }
             }
@@ -89,18 +89,9 @@ Item {
                 anchors.centerIn: parent
                 width: Math.min(parent.width * 0.92, 620)
                 height: welcomeContent.implicitHeight + 56
-                color: "#18181a"
-                border.color: UiTheme.separator
-                radius: 8
-
-                Rectangle {
-                    anchors.top: parent.top
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    height: 3
-                    radius: 3
-                    color: UiTheme.orange
-                }
+                color: UiTheme.surface
+                border.color: UiTheme.borderSubtle
+                radius: 0
 
                 ColumnLayout {
                     id: welcomeContent
@@ -128,8 +119,8 @@ Item {
                                 implicitWidth: badgeText.implicitWidth + 16
                                 implicitHeight: 22
                                 color: UiTheme.surfaceInset
-                                border.color: UiTheme.borderStrong
-                                radius: 3
+                                border.color: UiTheme.borderSubtle
+                                radius: 0
 
                                 Text {
                                     id: badgeText
@@ -155,16 +146,16 @@ Item {
                     Rectangle {
                         Layout.fillWidth: true
                         implicitHeight: warningText.implicitHeight + 28
-                        color: "#120c00"
-                        border.color: "#3d2500"
-                        radius: 5
+                        color: UiTheme.panelInset
+                        border.color: UiTheme.borderSubtle
+                        radius: 0
 
                         Text {
                             id: warningText
                             anchors.fill: parent
                             anchors.margins: 14
                             text: "Ultra-early state: APIs are unstable and crashes or audio glitches are possible. Do not use this build where reliability matters."
-                            color: "#b87828"
+                            color: UiTheme.warning
                             font.pixelSize: window.sp(12)
                             font.bold: true
                             wrapMode: Text.WordWrap
@@ -279,7 +270,7 @@ Item {
 
         Rectangle {
             anchors.fill: parent
-            color: "#070707"
+            color: UiTheme.displayBackground
         }
 
         Column {
@@ -289,7 +280,7 @@ Item {
 
             Text {
                 text: "BROCK DJ"
-                color: "#f2f2f2"
+                color: UiTheme.textPrimary
                 font.pixelSize: window.sp(24)
                 font.bold: true
                 font.family: UiTheme.numericFontFamily
@@ -305,7 +296,7 @@ Item {
                 Text {
                     width: parent.width
                     text: loadingIndicator.statusTitle
-                    color: "#f0f0f0"
+                    color: UiTheme.textPrimary
                     font.pixelSize: window.sp(15)
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
@@ -315,7 +306,7 @@ Item {
                 Text {
                     width: parent.width
                     text: loadingIndicator.statusDetail
-                    color: "#8f8f8f"
+                    color: UiTheme.textSecondary
                     font.pixelSize: window.sp(10)
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideRight
@@ -332,7 +323,7 @@ Item {
                     anchors.right: parent.right
                     anchors.top: parent.top
                     text: loadingIndicator.statusDetail
-                    color: "#8f8f8f"
+                    color: UiTheme.textSecondary
                     font.pixelSize: window.sp(10)
                     horizontalAlignment: Text.AlignHCenter
                     elide: Text.ElideRight
@@ -344,14 +335,14 @@ Item {
                     anchors.top: parent.top
                     anchors.topMargin: 28
                     height: 2
-                    color: "#1c1c1c"
+                    color: UiTheme.knobTrack
 
                     Rectangle {
                         anchors.left: parent.left
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         width: Math.max(2, parent.width * loadingIndicator.stageProgress)
-                        color: "#f2f2f2"
+                        color: UiTheme.textPrimary
 
                         Behavior on width {
                             enabled: loadingIndicator.running && loadingIndicator.visible
@@ -374,9 +365,9 @@ Item {
                             required property var modelData
                             width: parent.width / loadingIndicator.startupStages.length
                             text: modelData.name
-                            color: loadingIndicator.activeStage === index ? "#f2f2f2"
-                                  : loadingIndicator.activeStage > index ? "#7a7a7a"
-                                  : "#444444"
+                            color: loadingIndicator.activeStage === index ? UiTheme.textPrimary
+                                  : loadingIndicator.activeStage > index ? UiTheme.textSecondary
+                                  : UiTheme.textDim
                             horizontalAlignment: Text.AlignHCenter
                             elide: Text.ElideRight
                             font.pixelSize: window.sp(9)
@@ -389,16 +380,14 @@ Item {
             Rectangle {
                 width: parent.width
                 height: 30
-                color: "transparent"
-                border.color: "#1b1b1b"
-                border.width: 1
+                color: UiTheme.panelInset
 
                 Text {
                     anchors.centerIn: parent
                     text: loadingIndicator.activeStage >= 4
                           ? "Runtime ready"
                           : "Initializing low-latency deck environment"
-                    color: loadingIndicator.activeStage >= 4 ? "#4dd98a" : "#686868"
+                    color: loadingIndicator.activeStage >= 4 ? UiTheme.play : UiTheme.textLabel
                     font.pixelSize: window.sp(9)
                     font.family: UiTheme.numericFontFamily
                     font.letterSpacing: 0.6
@@ -414,7 +403,7 @@ Item {
             Text {
                 width: parent.width
                 text: "Audio device setup may take a moment on first launch."
-                color: "#5a5a5a"
+                color: UiTheme.textDim
                 font.pixelSize: window.sp(9)
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
@@ -435,9 +424,9 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         width: Math.min(parent.width * 0.92, 640)
         height: audioStartupWarningText.implicitHeight + 24
-        radius: 6
-        color: "#1a1200"
-        border.color: "#7a4800"
+        radius: 0
+        color: UiTheme.surface
+        border.color: UiTheme.borderSubtle
         z: 1000
         visible: window.startupReady && window.startupAudioError.length > 0
 
@@ -447,7 +436,7 @@ Item {
             anchors.margins: 12
             text: "Audio is unavailable: " + window.startupAudioError
                   + ". Open Audio Settings to choose an output device."
-            color: "#e0bd75"
+            color: UiTheme.warning
             font.pixelSize: window.sp(12)
             wrapMode: Text.WordWrap
         }
@@ -461,9 +450,9 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         width: Math.min(parent.width * 0.92, 640)
         height: unsafeShutdownRow.implicitHeight + 22
-        radius: 6
-        color: "#1d1508"
-        border.color: "#8a5a14"
+        radius: 0
+        color: UiTheme.surface
+        border.color: UiTheme.borderSubtle
         z: 1001
         visible: window.uncleanShutdownWarningVisible
         opacity: visible ? 1.0 : 0.0
@@ -486,14 +475,13 @@ Item {
                 width: 22
                 height: 22
                 radius: 11
-                color: "#3a2505"
-                border.color: "#a76a16"
+                color: UiTheme.orangeDim
                 anchors.verticalCenter: parent.verticalCenter
 
                 Text {
                     anchors.centerIn: parent
                     text: "!"
-                    color: "#ffb347"
+                    color: UiTheme.warning
                     font.pixelSize: 14
                     font.bold: true
                 }
@@ -502,7 +490,7 @@ Item {
             Text {
                 width: parent.width - 64
                 text: uncleanShutdownWarning.visibleMessage
-                color: "#dfc08a"
+                color: UiTheme.textSecondary
                 font.pixelSize: window.sp(12)
                 wrapMode: Text.WordWrap
                 anchors.verticalCenter: parent.verticalCenter
@@ -511,17 +499,17 @@ Item {
             Rectangle {
                 width: 22
                 height: 22
-                radius: 3
+                radius: 0
                 anchors.verticalCenter: parent.verticalCenter
-                color: unsafeShutdownDismissHover.hovered ? "#3a2610" : "#24180a"
-                border.color: "#6a4518"
+                color: unsafeShutdownDismissHover.hovered ? UiTheme.surfaceRaised : UiTheme.panelInset
+                border.color: unsafeShutdownDismissHover.hovered ? UiTheme.borderHover : UiTheme.borderSubtle
                 HoverHandler { id: unsafeShutdownDismissHover; cursorShape: Qt.PointingHandCursor }
                 TapHandler { onTapped: window.uncleanShutdownWarningVisible = false }
 
                 Text {
                     anchors.centerIn: parent
                     text: "x"
-                    color: "#b78b4a"
+                    color: UiTheme.textSecondary
                     font.pixelSize: 11
                     font.bold: true
                 }
@@ -537,9 +525,9 @@ Item {
         anchors.horizontalCenter: parent.horizontalCenter
         width: Math.min(parent.width * 0.9, 600)
         height: toastCol.implicitHeight + 20
-        radius: 6
-        color: "#1a1200"
-        border.color: "#7a4800"
+        radius: 0
+        color: UiTheme.surface
+        border.color: UiTheme.borderSubtle
         z: 998
         visible: opacity > 0
         opacity: 0.0
@@ -581,7 +569,7 @@ Item {
 
             Text {
                 text: "⚠"
-                color: "#ff9900"
+                color: UiTheme.warning
                 font.pixelSize: 14
                 anchors.verticalCenter: parent.verticalCenter
             }
@@ -589,7 +577,7 @@ Item {
             Text {
                 width: parent.width - 60
                 text: audioFallbackToast.message
-                color: "#ccaa66"
+                color: UiTheme.textSecondary
                 font.pixelSize: 11
                 wrapMode: Text.WordWrap
                 anchors.verticalCenter: parent.verticalCenter
@@ -597,13 +585,13 @@ Item {
 
             Rectangle {
                 width: 22; height: 22
-                radius: 3
+                radius: 0
                 anchors.verticalCenter: parent.verticalCenter
-                color: dismissH.hovered ? "#2a0000" : "#1a0000"
-                border.color: "#442222"
+                color: dismissH.hovered ? UiTheme.surfaceRaised : UiTheme.panelInset
+                border.color: dismissH.hovered ? UiTheme.borderHover : UiTheme.borderSubtle
                 HoverHandler { id: dismissH; cursorShape: Qt.PointingHandCursor }
                 TapHandler { onTapped: audioFallbackToast.opacity = 0.0 }
-                Text { anchors.centerIn: parent; text: "✕"; color: "#885555"; font.pixelSize: 10 }
+                Text { anchors.centerIn: parent; text: "✕"; color: UiTheme.textSecondary; font.pixelSize: 10 }
             }
         }
     }
@@ -627,8 +615,9 @@ Item {
             sourceOrigin: Qt.point(0, 0)
             requested: exitOverlay.visible && !window.exitShutdownInProgress
             maximumCaptureSize: Qt.size(512, 512)
-            live: false
-            tint: Qt.rgba(0.06, 0.06, 0.06, 0.65)
+            live: true
+            tint: Qt.rgba(UiTheme.displayBackground.r, UiTheme.displayBackground.g,
+                          UiTheme.displayBackground.b, 0.65)
         }
 
         MouseArea {
@@ -645,7 +634,7 @@ Item {
                 text: window.exitShutdownInProgress
                       ? "Closing..."
                       : "Are you sure you want to quit?"
-                color: "#e5e5e5"
+                color: UiTheme.textPrimary
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 font.pixelSize: window.sp(20)
@@ -661,14 +650,14 @@ Item {
                     width: 118
                     height: 38
                     radius: 0
-                    color: yesArea.pressed ? "#3b3b3b" : "#353535"
+                    color: UiTheme.buttonBg(false, yesArea.containsMouse, yesArea.pressed)
                     border.width: 1
-                    border.color: UiTheme.separator
+                    border.color: yesArea.containsMouse ? UiTheme.borderHover : UiTheme.borderSubtle
 
                     Text {
                         anchors.centerIn: parent
                         text: "OK"
-                        color: "#f0f0f0"
+                        color: UiTheme.textPrimary
                         font.pixelSize: window.sp(13)
                         font.bold: true
                     }
@@ -676,6 +665,7 @@ Item {
                     MouseArea {
                         id: yesArea
                         anchors.fill: parent
+                        hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: window.confirmAppClose()
                     }
@@ -685,14 +675,14 @@ Item {
                     width: 118
                     height: 38
                     radius: 0
-                    color: noArea.pressed ? "#3b3b3b" : "#353535"
+                    color: UiTheme.buttonBg(false, noArea.containsMouse, noArea.pressed)
                     border.width: 1
-                    border.color: UiTheme.separator
+                    border.color: noArea.containsMouse ? UiTheme.borderHover : UiTheme.borderSubtle
 
                     Text {
                         anchors.centerIn: parent
                         text: "Cancel"
-                        color: "#f0f0f0"
+                        color: UiTheme.textPrimary
                         font.pixelSize: window.sp(13)
                         font.bold: true
                     }
@@ -700,6 +690,7 @@ Item {
                     MouseArea {
                         id: noArea
                         anchors.fill: parent
+                        hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: window.cancelAppClosePrompt()
                     }
@@ -709,15 +700,18 @@ Item {
             Rectangle {
                 width: parent.width
                 height: 6
-                color: "#1f1f1f"
+                color: UiTheme.panelInset
                 border.width: 1
-                border.color: UiTheme.separator
+                border.color: UiTheme.borderSubtle
                 visible: window.exitShutdownInProgress
 
                 Rectangle {
-                    width: parent.width * window.exitProgress
-                    height: parent.height
-                    color: "#6f6f6f"
+                    x: parent.border.width
+                    y: parent.border.width
+                    width: Math.max(0, parent.width - 2 * parent.border.width)
+                           * Math.max(0, Math.min(1, window.exitProgress))
+                    height: Math.max(0, parent.height - 2 * parent.border.width)
+                    color: UiTheme.textLabel
                 }
             }
 
@@ -725,7 +719,7 @@ Item {
                 width: parent.width
                 visible: window.exitShutdownInProgress
                 text: "Saving database and settings..."
-                color: "#cfcfcf"
+                color: UiTheme.textSecondary
                 horizontalAlignment: Text.AlignHCenter
                 font.pixelSize: window.sp(11)
             }
@@ -736,7 +730,7 @@ Item {
                 text: (typeof libraryDb !== "undefined" && libraryDb !== null)
                       ? (libraryDb.mirroredDatabaseStatus ? libraryDb.mirroredDatabaseStatus : "DB A: unknown | DB B: unknown")
                       : "DB A: unknown | DB B: unknown"
-                color: "#b8b8b8"
+                color: UiTheme.textSecondary
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
                 font.pixelSize: window.sp(11)
@@ -752,23 +746,24 @@ Item {
                 indicator: Rectangle {
                     implicitWidth: 16
                     implicitHeight: 16
-                    radius: 2
+                    radius: 0
                     border.width: 1
-                    border.color: parent.checked ? "#9a9a9a" : "#5a5a5a"
-                    color: parent.checked ? "#4c4c4c" : "#232323"
+                    border.color: manualBackupCheck.activeFocus ? UiTheme.borderActive
+                                : manualBackupCheck.checked ? UiTheme.borderStrong : UiTheme.borderSubtle
+                    color: manualBackupCheck.checked ? UiTheme.surfaceRaised : UiTheme.panelInset
 
                     Rectangle {
                         anchors.centerIn: parent
                         width: 8
                         height: 8
-                        radius: 1
-                        color: parent.visible && parent.parent.checked ? "#e5e5e5" : "transparent"
+                        radius: 0
+                        color: parent.visible && parent.parent.checked ? UiTheme.textPrimary : "transparent"
                         visible: parent.parent.checked
                     }
                 }
                 contentItem: Text {
                     text: manualBackupCheck.text
-                    color: "#f0f0f0"
+                    color: UiTheme.textPrimary
                     font.pixelSize: window.sp(12)
                     font.bold: true
                     verticalAlignment: Text.AlignVCenter
@@ -785,7 +780,7 @@ Item {
                 width: parent.width
                 visible: !window.exitShutdownInProgress
                 text: "When enabled, a separate backup file is saved on exit, only updated through this option."
-                color: "#a8a8a8"
+                color: UiTheme.textLabel
                 font.pixelSize: window.sp(10)
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap

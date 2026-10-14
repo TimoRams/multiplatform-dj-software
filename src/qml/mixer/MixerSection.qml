@@ -39,7 +39,7 @@ Rectangle {
     readonly property int spineW:   3
     readonly property int stripW:   faderW + 1 + vuW + 1 + knobColW
     readonly property int minimumUsableHeight:
-        labelH + 4 + 5 * (knobSz + 10) + 2 + 2 * cueH + 7
+        labelH + 4 + 5 * (knobSz + 12) + 2 + 2 * cueH + 7
 
     function hideDragCursor() {
         if (typeof cursorControl !== "undefined" && cursorControl)
@@ -201,7 +201,7 @@ Rectangle {
         signal moved(real value)
 
         implicitWidth: size + 14
-        implicitHeight: size + 10
+        implicitHeight: size + 12
         Layout.preferredWidth: implicitWidth
         Layout.preferredHeight: implicitHeight
         Layout.alignment: Qt.AlignHCenter
@@ -231,7 +231,7 @@ Rectangle {
 
         property real peakHoldLevel: 0.0
         readonly property int segs: 28
-        readonly property real segH: Math.max(1, (height - (segs - 1)) / segs)
+        readonly property real segH: Math.max(1, (height - 2 - (segs - 1)) / segs)
         readonly property real displayLevel: normalizedDb(levelLinear)
 
         function normalizedDb(peak) {
@@ -362,23 +362,14 @@ Rectangle {
         Layout.preferredHeight: mixer.labelH
         color: UiTheme.panelDeep
 
-        Rectangle {
-            width: 1
-            height: parent.height
-            anchors.left: mirrored ? parent.left : undefined
-            anchors.right: mirrored ? undefined : parent.right
-            color: accent
-            opacity: 0.65
-        }
         Text {
             anchors.centerIn: parent
             anchors.horizontalCenterOffset: mirrored ? -10 : 10
             text: deckName
             color: accent
-            font.pixelSize: window.spViewport(9)
+            font.pixelSize: 10
             font.bold: true
-            font.family: "monospace"
-            font.letterSpacing: 2.0
+            font.family: UiTheme.uiFontFamily
         }
         Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: UiTheme.separatorSubtle }
     }
@@ -462,7 +453,7 @@ Rectangle {
                         height: cueActive ? 2 : 0; color: UiTheme.green
                     }
                     HoverHandler { id: cueHov; cursorShape: Qt.PointingHandCursor }
-                    Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: cueHov.hovered && !cueActive ? 0.05 : 0 }
+                    Rectangle { anchors.fill: parent; color: UiTheme.textPrimary; opacity: cueHov.hovered && !cueActive ? 0.05 : 0 }
                     MouseArea {
                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                         onClicked: {
@@ -496,7 +487,7 @@ Rectangle {
                         height: polBtn.polActive ? 2 : 0; color: UiTheme.cue
                     }
                     HoverHandler { id: polHov; cursorShape: Qt.PointingHandCursor }
-                    Rectangle { anchors.fill: parent; color: "#ffffff"; opacity: polHov.hovered && !polBtn.polActive ? 0.05 : 0 }
+                    Rectangle { anchors.fill: parent; color: UiTheme.textPrimary; opacity: polHov.hovered && !polBtn.polActive ? 0.05 : 0 }
                     Controls.ToolTip {
                         visible: polHov.hovered
                         delay: 350
@@ -532,6 +523,7 @@ Rectangle {
                 id: fader
                 anchors.fill: parent
                 anchors.margins: 6
+                anchors.bottomMargin: volumeLabel.implicitHeight + 4
                 orientation: Qt.Vertical
                 from: 0.0; to: 1.0; value: 1.0
                 capAccent: faderAccent
@@ -542,6 +534,7 @@ Rectangle {
         }
 
         SilkLabel {
+            id: volumeLabel
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 2
