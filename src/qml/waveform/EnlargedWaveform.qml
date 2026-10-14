@@ -452,8 +452,8 @@ Item {
         // playhead snapshot is sampled exactly once for the frame the scene
         // graph is about to render. A free-running 16 ms timer slowly beats
         // against 59.94/90/120/144 Hz presentation and produces duplicate and
-        // skipped waveform positions. Under audio pressure the frame driver is
-        // stopped completely and the lower-rate disposable timer takes over.
+        // skipped waveform positions. Moderate pressure suspends raster/blur
+        // work first; only critical pressure switches motion to the timer.
         FrameAnimation {
             running: root.waveformMotionActive
                      && root.waveformMotionIntervalMs <= 17

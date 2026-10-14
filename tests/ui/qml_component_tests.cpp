@@ -1364,12 +1364,16 @@ bool appOverlaysRuntimeTests(const std::string& source)
         Item {
             width: 800; height: 600; visible: false
             property color stripeColor: "white"
+            property real stripePeriod: 16
+            property real stripeWidth: 8
+            property real stripePhase: 0
             Rectangle { anchors.fill: parent; color: "black" }
             Repeater {
-                model: 50
+                model: Math.ceil(800 / parent.stripePeriod) + 1
                 Rectangle {
                     required property int index
-                    x: index * 16; width: 8; height: 600
+                    x: index * parent.stripePeriod - parent.stripePhase
+                    width: parent.stripeWidth; height: 600
                     color: parent.stripeColor
                 }
             }
@@ -1533,8 +1537,14 @@ bool appOverlaysRuntimeTests(const std::string& source)
     QCoreApplication::processEvents();
     QPointer<QObject> capture(backdrop->findChild<QObject*>("backdropCapture"));
     ok &= require(capture && capture->property("live").toBool()
+                      && capture->property("mipmap").toBool()
+                      && capture->property("textureSize").toSize()
+                          == backdrop->property("sourceTextureSize").toSize()
+                      && backdrop->property("sourceTextureSize").toSize().width() <= 1024
+                      && backdrop->property("sourceTextureSize").toSize().height() <= 1024
+                      && backdrop->property("blurRadius").toDouble() == 28
                       && !capture->property("recursive").toBool(),
-                  "exit creates a nonrecursive live GPU capture");
+                  "exit uses bounded supersampled live capture with prefiltered fullscreen blur");
     if (!software) {
         startupItem->setProperty("welcomeActive", false);
         appWindow->setProperty("uncleanShutdownWarningVisible", false);
@@ -1542,22 +1552,55 @@ bool appOverlaysRuntimeTests(const std::string& source)
         const QImage first = window.grabWindow();
         if (!require(!first.isNull(), "exit blur renders a framebuffer"))
             return false;
-        const QColor firstPixel = first.pixelColor(36, 40);
-        ok &= require(std::abs(firstPixel.red() - first.pixelColor(44, 40).red()) < 30,
+        const QPoint probePoint(first.width() / 10, first.height() / 4);
+        const QColor firstPixel = first.pixelColor(probePoint);
+        ok &= require(std::abs(firstPixel.red()
+                              - first.pixelColor(probePoint + QPoint(8, 0)).red()) < 30,
                       "exit really blurs stripes instead of merely dimming them");
+        mainLayout->setProperty("stripePeriod", 2);
+        mainLayout->setProperty("stripeWidth", 1);
+        int lowestMean = 255;
+        int highestMean = 0;
+        for (const double phase : {0.0, 0.25, 0.5, 0.75, 1.0}) {
+            mainLayout->setProperty("stripePhase", phase);
+            QTest::qWait(50);
+            const QImage moving = window.grabWindow();
+            if (!require(!moving.isNull(), "moving fine-line blur renders a framebuffer"))
+                return false;
+            int sum = 0;
+            int lowest = 255;
+            int highest = 0;
+            for (int x = probePoint.x(); x < probePoint.x() + 80; ++x) {
+                const int value = moving.pixelColor(x, probePoint.y()).red();
+                sum += value;
+                lowest = std::min(lowest, value);
+                highest = std::max(highest, value);
+            }
+            lowestMean = std::min(lowestMean, sum / 80);
+            highestMean = std::max(highestMean, sum / 80);
+            ok &= require(highest - lowest < 10,
+                          "fullscreen blur suppresses fine-line spatial aliasing");
+        }
+        std::cout << "Fullscreen blur fine-line temporal range="
+                  << highestMean - lowestMean << '\n';
+        ok &= require(highestMean - lowestMean < 10,
+                      "moving fine lines do not pulse behind fullscreen blur");
+        mainLayout->setProperty("stripePeriod", 16);
+        mainLayout->setProperty("stripeWidth", 8);
+        mainLayout->setProperty("stripePhase", 0);
         mainLayout->setProperty("stripeColor", QColor(Qt::red));
         QTest::qWait(50);
         const QImage updated = window.grabWindow();
         ok &= require(!updated.isNull()
-                          && updated.pixelColor(36, 40).green() < firstPixel.green()
-                          && updated.pixelColor(36, 40).red() > updated.pixelColor(36, 40).green(),
+                          && updated.pixelColor(probePoint).green() < firstPixel.green()
+                          && updated.pixelColor(probePoint).red() > updated.pixelColor(probePoint).green(),
                       "exit blur follows backing updates while the prompt stays open");
         appWindow->setProperty("exitPromptVisible", false);
         QCoreApplication::processEvents();
         appWindow->setProperty("exitPromptVisible", true);
         QTest::qWait(50);
         const QImage reopened = window.grabWindow();
-        ok &= require(!reopened.isNull() && reopened.pixelColor(36, 40).green() < firstPixel.green(),
+        ok &= require(!reopened.isNull() && reopened.pixelColor(probePoint).green() < firstPixel.green(),
                       "reopening exit restores the current live background");
         mainLayout->setProperty("stripeColor", QColor(Qt::blue));
         qobject_cast<QQuickItem*>(mainLayout.get())->setSize(QSizeF(640, 480));

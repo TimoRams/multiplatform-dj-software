@@ -45,31 +45,12 @@ QString RenderPressurePolicy::tier() const
 
 int RenderPressurePolicy::waveformUpdateIntervalMs() const noexcept
 {
-    switch (m_tier) {
-    case Tier::Normal:
-        return 16;
-    case Tier::Elevated:
-        return 33;
-    case Tier::Critical:
-        return 66;
-    case Tier::Suspended:
-        return 250;
-    }
-    return 66;
+    return motionIntervalMs(m_tier);
 }
 
 int RenderPressurePolicy::interactiveWaveformUpdateIntervalMs() const noexcept
 {
-    switch (m_tier) {
-    case Tier::Normal:
-        return 16;
-    case Tier::Elevated:
-    case Tier::Critical:
-        return 33;
-    case Tier::Suspended:
-        return 250;
-    }
-    return 33;
+    return motionIntervalMs(m_tier, true);
 }
 
 int RenderPressurePolicy::overviewUpdateIntervalMs() const noexcept

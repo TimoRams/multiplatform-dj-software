@@ -76,11 +76,15 @@ build-tests/BrockDJ_qml_component_tests`. Its RHI-only framebuffer probe checks
 that the backdrop blurs a stripe pattern while the captured backing stays sharp.
 
 The exit prompt uses the same separable GPU blur on `mainLayout` alone (never
-the app root or overlay controls). Its quarter-resolution textures are capped at
-512x512 each, updated live while the prompt stays open, resized/recreated as needed and
+the app root or overlay controls). Its blur intermediate is capped at 512x512;
+the source uses up to 4x supersampling (at most native resolution or 1024x1024), requests 4x MSAA where
+supported, and uses mipmapped filtering to suppress moving fine-line aliasing.
+The 28-logical-pixel blur is independent of window size and DPR.
+Textures are updated live while the prompt stays open, resized/recreated as needed and
 detached before shutdown teardown. Software rendering, background operation and
 render pressure retain the readable flat fallback. The RHI harness verifies real
-stripe blur, live content updates, resize/reopen refresh and capture destruction.
+stripe blur, spatial/temporal stability of moving one-pixel stripes, live content
+updates, resize/reopen refresh and capture destruction.
 
 `control_clock` and the production-header QML harness exercise sustained 60 Hz
 GUI delivery against the 250 Hz clock: every base tick is severely late, but
@@ -459,19 +463,14 @@ No file-count reduction or offscreen smoke replaces this matrix.
   cross several guarded tile windows. Peaks, cue lines and loop edges must move
   monotonically without alternating thick/thin columns, brightness pulses,
   seams, fallback flashes or a one-pixel stop/start cadence.
-- Beat and downbeat ticks specifically must render as a constant, fully-opaque
-  width at every DPR and zoom while scrolling — they ride a separate,
-  pixel-snapped transform (`markerTimeline`/`physicalPixelSnap`/`markerLineX`
-  in `ScrollingWaveformItem.cpp`/`WaveformRenderMath.h`) precisely because a
-  rigid tick line showed the waveform texture's accepted sub-pixel-phase
-  residual (see `performance-stability-audit.md`'s "Scrolling waveform
-  presentation invariants") far more objectionably than a noisy waveform peak
-  does. A regression here looks like ticks alternating between crisp and soft
-  as playback advances, or ticks drifting out of step with the waveform texture
-  by more than one physical pixel.
+- Beat and downbeat ticks share the waveform's continuous timeline transform.
+  Feathered edges provide subpixel coverage without rounding motion to whole
+  pixels. Check slow playback for repeated marker positions, relative jitter
+  against audio peaks, and changes in beat spacing across fractional DPR.
 - Repeat with two and four visible decks while analysis and track loading run.
   Force `UI RENDER` through `reduced`, `audio-first` and `suspended`: detail
-  raster requests may be discarded and visual frames may be skipped, while
+  raster requests may be discarded; `reduced` must retain presentation-clock
+  motion, while `audio-first` and `suspended` may reduce visual cadence. Meanwhile
   existing textures remain coherent and callback/device XRun counters do not
   increase.
 - Inspect `renderStats()`: `waveformColumnsPerPhysicalPixel == 1`,

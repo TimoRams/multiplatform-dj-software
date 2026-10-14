@@ -615,6 +615,9 @@ Item {
             sourceOrigin: Qt.point(0, 0)
             requested: exitOverlay.visible && !window.exitShutdownInProgress
             maximumCaptureSize: Qt.size(512, 512)
+            captureSupersampling: 4
+            blurRadius: 28
+            frameVisible: false
             live: true
             tint: Qt.rgba(UiTheme.displayBackground.r, UiTheme.displayBackground.g,
                           UiTheme.displayBackground.b, 0.65)

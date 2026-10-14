@@ -341,14 +341,9 @@ pattern. These are now review invariants:
 4. The timeline transform remains fractional and is centred on an actual
    physical-pixel centre for the window DPR. Waveform texture, cue lines, loop
    edges, hit-testing and the QML playhead use the same centre convention.
-   Beat/downbeat ticks are the one exception: they ride a second transform
-   node (`markerTimeline`) snapped to the nearest whole physical pixel every
-   frame (`physicalPixelSnap`), paired with geometry pre-centred on a physical
-   pixel at rebuild time (`markerLineX`). A rigid tick line has no envelope to
-   hide sub-pixel phase in the way waveform peaks do, so leaving it on the
-   continuous transform read as a visible alternation between a crisp pixel
-   and a soft two-pixel smear as playback advanced — see the residual note
-   below for why the waveform texture itself keeps the continuous transform.
+   Beat/downbeat ticks also share this transform and use feathered edges.
+   Independently rounding their translation caused repeated marker positions
+   and relative jitter against the continuously moving waveform.
 5. Normal motion is requested by Qt Quick's presentation clock. Reduced tiers
    may discard frames; they never run a catch-up loop.
 6. The audio callback publishes only its existing playhead/diagnostic atomics.

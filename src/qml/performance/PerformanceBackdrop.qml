@@ -11,6 +11,8 @@ Item {
     property bool applicationActive: Qt.application.state === Qt.ApplicationActive
     property size maximumCaptureSize: Qt.size(128, 256)
     property real downsampleFactor: 4
+    property real captureSupersampling: 1
+    property real blurRadius: 0
     property bool live: true
     property bool frameVisible: true
     property color tint: Qt.rgba(UiTheme.panel.r, UiTheme.panel.g, UiTheme.panel.b, 0.72)
@@ -24,6 +26,11 @@ Item {
     // Sidebar defaults: two RGBA textures at most 128x256 (256 KiB per pane).
     readonly property size captureSize: Qt.size(Math.min(maximumCaptureSize.width, Math.max(1, Math.ceil(width * captureDpr / Math.max(1, downsampleFactor)))),
                                                 Math.min(maximumCaptureSize.height, Math.max(1, Math.ceil(height * captureDpr / Math.max(1, downsampleFactor)))))
+    readonly property size sourceTextureSize: captureSupersampling <= 1 ? captureSize : Qt.size(
+        Math.ceil(Math.min(width * captureDpr, maximumCaptureSize.width * 2,
+                           captureSize.width * Math.max(1, captureSupersampling))),
+        Math.ceil(Math.min(height * captureDpr, maximumCaptureSize.height * 2,
+                           captureSize.height * Math.max(1, captureSupersampling))))
     readonly property rect captureRect: {
         if (!sourceItem)
             return Qt.rect(0, 0, 0, 0)
@@ -44,12 +51,14 @@ Item {
                 objectName: "backdropCapture"
                 sourceItem: root.sourceItem
                 sourceRect: root.captureRect
-                textureSize: root.captureSize
+                textureSize: root.sourceTextureSize
                 live: root.live
                 recursive: false
                 hideSource: false
                 visible: false
                 smooth: true
+                mipmap: root.captureSupersampling > 1
+                samples: root.captureSupersampling > 1 ? 4 : 0
                 // A frozen modal backdrop needs a fresh snapshot after resize.
                 onSourceRectChanged: scheduleUpdate()
                 onTextureSizeChanged: scheduleUpdate()
@@ -58,7 +67,11 @@ Item {
                 id: horizontal
                 anchors.fill: parent
                 property var source: capture
-                property vector2d stepSize: Qt.vector2d(1 / root.captureSize.width, 0)
+                // Express the blur in logical pixels, not stretched capture texels.
+                property vector2d stepSize: Qt.vector2d(
+                    root.blurRadius > 0
+                        ? root.blurRadius / (1.7 * Math.max(1, root.captureRect.width))
+                        : 1 / root.captureSize.width, 0)
                 fragmentShader: "qrc:/shaders/sidebarblur.frag.qsb"
             }
             ShaderEffectSource {
@@ -74,7 +87,10 @@ Item {
             ShaderEffect {
                 anchors.fill: parent
                 property var source: intermediate
-                property vector2d stepSize: Qt.vector2d(0, 1 / root.captureSize.height)
+                property vector2d stepSize: Qt.vector2d(0,
+                    root.blurRadius > 0
+                        ? root.blurRadius / (1.7 * Math.max(1, root.captureRect.height))
+                        : 1 / root.captureSize.height)
                 fragmentShader: "qrc:/shaders/sidebarblur.frag.qsb"
             }
         }

@@ -19,6 +19,13 @@ int main()
     assert(!Policy::rasterWorkAllowed(Policy::Tier::Elevated));
     assert(!Policy::rasterWorkAllowed(Policy::Tier::Critical));
     assert(!Policy::rasterWorkAllowed(Policy::Tier::Suspended));
+    for (const bool interactive : {false, true}) {
+        assert(Policy::motionIntervalMs(Policy::Tier::Normal, interactive) == 16);
+        assert(Policy::motionIntervalMs(Policy::Tier::Elevated, interactive) == 16);
+        assert(Policy::motionIntervalMs(Policy::Tier::Suspended, interactive) == 250);
+    }
+    assert(Policy::motionIntervalMs(Policy::Tier::Critical) == 66);
+    assert(Policy::motionIntervalMs(Policy::Tier::Critical, true) == 33);
 
     std::cout << "Render-pressure policy tests passed\n";
     return 0;

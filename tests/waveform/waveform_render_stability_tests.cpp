@@ -333,50 +333,39 @@ int main()
                       "subpixel phases");
     }
 
-    // Beat/downbeat ticks are rigid, high-contrast lines with no envelope to
-    // hide sub-pixel phase in, so — unlike the waveform, cue lines and loop
-    // edges checked above — they use a dedicated snap (markerLineX on the
-    // local x, physicalPixelSnap on the shared translation) so their combined
-    // on-screen position always lands exactly on a physical-pixel centre,
-    // instead of sweeping continuously and alternating between a crisp pixel
-    // and a soft two-pixel smear.
+    // Beat ticks share the waveform transform: rounding only the markers
+    // introduces repeated positions and relative jitter at low scroll speeds.
     for (const double dpr : {1.0, 1.25, 1.5, 2.0, 3.0}) {
         constexpr double originLine = 40'000.0;
         constexpr double pixelsPerLine = 0.22;
         constexpr double beatLine = 42'375.25;
-        const double localX = waveform_render::markerLineX(
+        const double localX = waveform_render::snappedTimelineX(
             beatLine, originLine, pixelsPerLine, dpr);
-        int offPhaseFrames = 0;
+        double previous = 0.0;
         for (int frame = 0; frame < 240; ++frame) {
             const double playheadLine = 41'000.0 + frame * 0.71;
             const double translation = waveform_render::smoothTimelineTranslation(
                 1600.0, playheadLine, originLine, pixelsPerLine, dpr);
-            const double markerTranslation = waveform_render::physicalPixelSnap(
-                translation, dpr);
-            const double physicalCentre = (localX + markerTranslation) * dpr;
-            const double physicalFraction = physicalCentre - std::floor(physicalCentre);
-            if (std::abs(physicalFraction - 0.5) > 1.0e-9)
-                ++offPhaseFrames;
+            const double markerX = localX + translation;
+            if (frame > 0)
+                ok &= require(std::abs(previous - markerX - 0.71 * pixelsPerLine) < 1e-9,
+                              "beat markers advance continuously without repeated pixel positions");
+            previous = markerX;
         }
-        ok &= require(offPhaseFrames == 0,
-                      "snapped beat markers must stay pixel-centred every frame");
     }
 
-    // Each marker rounds independently, so exact spacing between two beats can
-    // drift by at most one physical pixel relative to their true spacing —
-    // imperceptible on screen and the accepted trade-off for constant width.
+    // Shared origin alignment preserves exact spacing between beats.
     for (const double dpr : {1.0, 1.25, 1.5, 2.0, 3.0}) {
         constexpr double originLine = 0.0;
         constexpr double pixelsPerLine = 0.35;
         constexpr double beatSpacingLines = 587.375;
-        const double firstX = waveform_render::markerLineX(
+        const double firstX = waveform_render::snappedTimelineX(
             10'000.0, originLine, pixelsPerLine, dpr);
-        const double secondX = waveform_render::markerLineX(
+        const double secondX = waveform_render::snappedTimelineX(
             10'000.0 + beatSpacingLines, originLine, pixelsPerLine, dpr);
         const double trueSpacing = beatSpacingLines * pixelsPerLine;
-        ok &= require(std::abs((secondX - firstX) - trueSpacing) <= 1.0 / dpr + 1.0e-9,
-                      "snapped beat spacing must stay within one physical pixel "
-                      "of true spacing");
+        ok &= require(std::abs((secondX - firstX) - trueSpacing) < 1.0e-9,
+                      "beat spacing stays exact at fractional DPR");
     }
 
     // Changing zoom must keep the playhead's timeline coordinate at the exact

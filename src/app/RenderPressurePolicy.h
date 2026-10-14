@@ -46,6 +46,20 @@ public:
     [[nodiscard]] int waveformUpdateIntervalMs() const noexcept;
     [[nodiscard]] int interactiveWaveformUpdateIntervalMs() const noexcept;
     [[nodiscard]] int overviewUpdateIntervalMs() const noexcept;
+    [[nodiscard]] static constexpr int motionIntervalMs(Tier tier,
+                                                       bool interactive = false) noexcept
+    {
+        switch (tier) {
+        case Tier::Normal:
+        case Tier::Elevated:
+            return 16;
+        case Tier::Critical:
+            return interactive ? 33 : 66;
+        case Tier::Suspended:
+            return 250;
+        }
+        return 66;
+    }
     [[nodiscard]] bool waveformRasterWorkEnabled() const noexcept
     {
         return rasterWorkAllowed(m_tier);
