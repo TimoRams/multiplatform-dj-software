@@ -262,7 +262,7 @@ bool constantNumerics(const QString& path, const Analysis& analysis)
     const float low = coefficient(400.0f);
     const float high = coefficient(4000.0f);
     const auto shape = [](float value) {
-        return std::pow(std::clamp(value, 0.0f, 1.0f), 0.72f);
+        return std::clamp(value, 0.0f, 1.0f);
     };
     const auto close = [](float actual, float expected) {
         return std::abs(actual - expected) < 1.0e-6f;
@@ -297,20 +297,20 @@ bool constantNumerics(const QString& path, const Analysis& analysis)
         globalMax = std::max({globalMax, bass, mid, treble});
         const auto& geometry = analysis.geometry[bin];
         if (!close(geometry.minimum, 0.0f)
-            || !close(geometry.maximum, value / 0.05f)
-            || !close(geometry.peak, shape(value / 0.05f))
-            || !close(geometry.rms, shape(value / 0.02f)))
+            || !close(geometry.maximum, value)
+            || !close(geometry.peak, shape(value))
+            || !close(geometry.rms, shape(value)))
             return false;
-        const float shapedBass = shape(bass / 0.02f);
-        const float shapedMid = shape(mid / 0.02f);
-        const float shapedTreble = shape(treble / 0.02f);
+        const float shapedBass = shape(bass);
+        const float shapedMid = shape(mid);
+        const float shapedTreble = shape(treble);
         spectralBass += shapedBass * shapedBass;
         spectralMid += shapedMid * shapedMid;
         spectralTreble += shapedTreble * shapedTreble;
         if ((bin + 1) % spectralRatio == 0) {
             const auto& spectral = analysis.spectral[bin / spectralRatio];
-            if (!close(spectral.peak, shape(value / 0.05f))
-                || !close(spectral.rms, shape(value / 0.02f))
+            if (!close(spectral.peak, shape(value))
+                || !close(spectral.rms, shape(value))
                 || !close(spectral.bass, std::sqrt(static_cast<float>(spectralBass) / spectralRatio))
                 || !close(spectral.mid, std::sqrt(static_cast<float>(spectralMid) / spectralRatio))
                 || !close(spectral.treble, std::sqrt(static_cast<float>(spectralTreble) / spectralRatio)))
@@ -318,7 +318,7 @@ bool constantNumerics(const QString& path, const Analysis& analysis)
             spectralBass = spectralMid = spectralTreble = 0.0;
         }
     }
-    const auto expectedPeak = static_cast<qint8>(value * (127.0f / value));
+    const auto expectedPeak = static_cast<qint8>(value * 127.0f);
     return close(analysis.globalMaxPeak, globalMax)
         && analysis.peaks.size() == kSeconds * TrackData::PEAK_POINTS_PER_SECOND
         && std::all_of(analysis.peaks.cbegin(), analysis.peaks.cend(),
@@ -346,6 +346,7 @@ int main(int argc, char** argv)
 
     const QString silencePath = dir.filePath("silence.wav");
     const QString bassPath = dir.filePath("bass.wav");
+    const QString quietBassPath = dir.filePath("quiet-bass.wav");
     const QString midPath = dir.filePath("mid.wav");
     const QString highPath = dir.filePath("high.wav");
     const QString sweepPath = dir.filePath("sweep.wav");
@@ -358,6 +359,7 @@ int main(int argc, char** argv)
     bool ok = true;
     ok &= writeFixture(silencePath, [](int, double) { return 0.0f; });
     ok &= writeFixture(bassPath, sine(80.0, 0.65f));
+    ok &= writeFixture(quietBassPath, sine(80.0, 0.065f));
     ok &= writeFixture(midPath, sine(1000.0, 0.65f));
     ok &= writeFixture(highPath, sine(9000.0, 0.65f));
     ok &= writeFixture(sweepPath, [](int, double time) {
@@ -389,6 +391,7 @@ int main(int argc, char** argv)
 
     const Analysis silence = analyze(silencePath);
     const Analysis bass = analyze(bassPath);
+    const Analysis quietBass = analyze(quietBassPath);
     const Analysis mid = analyze(midPath);
     const Analysis high = analyze(highPath);
     const Analysis sweep = analyze(sweepPath);
@@ -515,7 +518,7 @@ int main(int argc, char** argv)
         quiet += dynamics.geometry[index].rms;
     for (int index = halfGeometry; index < dynamics.geometry.size(); ++index)
         loud += dynamics.geometry[index].rms;
-    ok &= require(loud > quiet * 3.0,
+    ok &= require(loud > quiet * 8.0 && loud < quiet * 10.0,
                   "quiet intro and loud drop lost relative dynamics");
 
     std::vector<float> ordinary;
@@ -527,8 +530,30 @@ int main(int argc, char** argv)
     std::nth_element(ordinary.begin(),
                      ordinary.begin() + ordinary.size() / 2,
                      ordinary.end());
-    ok &= require(ordinary[ordinary.size() / 2] > 0.25f,
-                  "one clipping transient flattened ordinary waveform dynamics");
+    ok &= require(ordinary[ordinary.size() / 2] > 0.1f
+                      && ordinary[ordinary.size() / 2] < 0.2f,
+                  "one clipping transient changed ordinary waveform amplitudes");
+    ok &= require(std::all_of(weakHigh.geometry.cbegin(), weakHigh.geometry.cend(),
+                      [](const auto& point) {
+                          return point.peak <= 0.676f && point.rms <= point.peak + 1e-6f;
+                      }),
+                  "analysis boosts or clips full-scale peak/RMS amplitudes");
+    ok &= require(quietBass.completed && quietBass.geometry.size() == bass.geometry.size(),
+                  "quiet waveform fixture analysis did not complete");
+    if (quietBass.geometry.size() == bass.geometry.size()) {
+        for (int index = 0; index < bass.geometry.size(); ++index) {
+            ok &= require(std::abs(quietBass.geometry[index].peak * 10.0f
+                                      - bass.geometry[index].peak) < 2e-5f
+                              && std::abs(quietBass.geometry[index].rms * 10.0f
+                                      - bass.geometry[index].rms) < 2e-5f,
+                          "a quiet track was amplified relative to the same loud audio");
+        }
+    }
+    const auto quietMean = meanSpectrum(quietBass.spectral);
+    ok &= require(std::abs(quietMean.bass * 10.0f - bassMean.bass) < 2e-5f
+                      && std::abs(quietMean.mid * 10.0f - bassMean.mid) < 2e-5f
+                      && std::abs(quietMean.treble * 10.0f - bassMean.treble) < 2e-5f,
+                  "frequency bands no longer preserve the audio's relative amplitude");
     ok &= require(!sweep.spectral.isEmpty(),
                   "frequency sweep analysis produced no spectral data");
 

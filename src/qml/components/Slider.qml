@@ -25,13 +25,13 @@ Controls.Slider {
             x: 1; y: 1
             width:  Math.max(0, control.visualPosition * (parent.width - 2))
             height: parent.height - 2
-            radius: 1
+            radius: 0
             color:  control.pressed ? UiTheme.borderHover : UiTheme.faderFill
         }
 
         Rectangle {
             visible: control.orientation === Qt.Horizontal && control.centerFill
-            y: 1; height: parent.height - 2; radius: 1
+            y: 1; height: parent.height - 2; radius: 0
             color:  control.pressed ? UiTheme.borderHover : UiTheme.faderFill
             readonly property real midPx: parent.width / 2
             readonly property real posPx: 1 + control.visualPosition * (parent.width - 2)
@@ -45,13 +45,13 @@ Controls.Slider {
             y: parent.height - 1 - Math.max(0, (1.0 - control.visualPosition) * (parent.height - 2))
             width:  parent.width  - 2
             height: Math.max(0, (1.0 - control.visualPosition) * (parent.height - 2))
-            radius: 1
+            radius: 0
             color:  control.pressed ? UiTheme.borderHover : UiTheme.faderFill
         }
 
         Rectangle {
             visible: control.orientation === Qt.Vertical && control.centerFill
-            x: 1; width: parent.width - 2; radius: 1
+            x: 1; width: parent.width - 2; radius: 0
             color:  control.pressed ? UiTheme.borderHover : UiTheme.faderFill
             readonly property real midPy: parent.height / 2
             readonly property real posPy: 1 + control.visualPosition * (parent.height - 2)
@@ -70,7 +70,7 @@ Controls.Slider {
            ? control.height / 2 - height / 2
            : control.topPadding + control.visualPosition * (control.availableHeight - height)
         radius: 0
-        color:  control.pressed || control.dragActive ? "#e8e8e8" : UiTheme.faderCap
+        color:  control.pressed || control.dragActive ? UiTheme.textPrimary : UiTheme.faderCap
 
         Rectangle {
             anchors.centerIn: parent

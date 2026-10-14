@@ -23,16 +23,16 @@ namespace analysis {
 inline constexpr std::uint32_t kCurrentAnalysisVersion = 3;
 
 struct AnalysisSectionVersions final {
-    std::uint32_t geometry = 1;
-    std::uint32_t spectralWaveform = 1;
-    std::uint32_t overview = 1;
+    std::uint32_t geometry = 2;
+    std::uint32_t spectralWaveform = 2;
+    std::uint32_t overview = 2;
     std::uint32_t beatGrid = 3;
     std::uint32_t key = 1;
     std::uint32_t phrase = 1;
     std::uint32_t renderArtifacts = 1;
 
     [[nodiscard]] static constexpr AnalysisSectionVersions current() noexcept
-    { return {1, 1, 1, 3, 1, 1, 1}; }
+    { return {2, 2, 2, 3, 1, 1, 1}; }
 
     [[nodiscard]] constexpr bool waveformCurrent() const noexcept
     {

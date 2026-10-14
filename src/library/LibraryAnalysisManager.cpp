@@ -1,6 +1,7 @@
 #include "LibraryAnalysisManager.h"
 
 #include "LibraryDatabase.h"
+#include "waveform/WaveformCache.h"
 
 #include <QDebug>
 #include <QFileInfo>
@@ -171,6 +172,18 @@ void LibraryAnalysisManager::startNext()
         ? m_current.title
         : QFileInfo(m_current.filePath).completeBaseName();
     emit progressChanged();
+
+    // Deck writers must stop before either resolution is deleted, otherwise a
+    // late completion can recreate the old cache during this new analysis.
+    emit waveformInvalidationStarted(m_current.filePath);
+    bool cachesInvalidated = true;
+    for (const int resolution : {600, 1200})
+        cachesInvalidated &= WaveformCache::invalidateForFile(m_current.filePath, resolution);
+    emit waveformInvalidationFinished(m_current.filePath);
+    if (!cachesInvalidated) {
+        finishCurrent(false);
+        return;
+    }
 
     m_trackData = std::make_unique<TrackData>();
     m_analyzer = std::make_unique<WaveformAnalyzer>(

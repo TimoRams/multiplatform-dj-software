@@ -141,11 +141,11 @@ struct AudioPageCache::Impl {
         // The worker takes a short shared lease before decoding. Normal track
         // handover atomically detaches the owner without waiting for a slow
         // codec/USB read; explicit eject can wait for active leases to drain.
-        std::shared_ptr<juce::AudioFormatReader> reader;
+        std::atomic<std::shared_ptr<juce::AudioFormatReader>> reader;
         std::atomic<std::uint32_t> activeReaderCalls { 0 };
         // Each entry is retired once. The intrusive link publishes it to the
         // decoder worker without allocating or taking another control lock.
-        std::shared_ptr<juce::AudioFormatReader> retiredReader;
+        std::atomic<std::shared_ptr<juce::AudioFormatReader>> retiredReader;
         Entry* retiredReaderNext = nullptr;
 
         struct ReaderCall final {
@@ -213,8 +213,7 @@ struct AudioPageCache::Impl {
     {
         if (!value)
             return;
-        std::atomic_store_explicit(
-            &entry.retiredReader, std::move(value), std::memory_order_release);
+        entry.retiredReader.store(std::move(value), std::memory_order_release);
         auto* head = retiredReaderHead.load(std::memory_order_relaxed);
         do {
             entry.retiredReaderNext = head;
@@ -287,7 +286,7 @@ AudioCacheHandle AudioPageCache::openTrack(
     entry->sampleRate = reader->sampleRate;
     entry->length = reader->lengthInSamples;
     entry->channels = static_cast<int>(reader->numChannels);
-    std::atomic_store_explicit(&entry->reader, std::move(reader), std::memory_order_release);
+    entry->reader.store(std::move(reader), std::memory_order_release);
     entry->pageCount = (entry->length + AudioPage::kSamplesPerChannel - 1) / AudioPage::kSamplesPerChannel;
     entry->pageSlots = std::make_unique<Impl::PageSlot[]>(static_cast<size_t>(entry->pageCount));
     for (std::int64_t page = 0; page < entry->pageCount; ++page)
@@ -324,9 +323,7 @@ void AudioPageCache::releaseTrack(const AudioCacheHandle& handle,
         entry->generation.fetch_add(1, std::memory_order_acq_rel);
         m_impl->activeEntries.erase(mapKey(entry->key));
         m_impl->open.fetch_sub(1);
-        retiredReader = std::atomic_exchange_explicit(
-            &entry->reader, std::shared_ptr<juce::AudioFormatReader>{},
-            std::memory_order_acq_rel);
+        retiredReader = entry->reader.exchange({}, std::memory_order_acq_rel);
     }
     if (mode == AudioCacheReleaseMode::WaitForReader) {
         entry->waitForReaderCalls();
@@ -483,9 +480,7 @@ bool AudioPageCache::sealTrack(const AudioCacheHandle& handle)
         m_impl->sealedBytes.fetch_sub(bytes, std::memory_order_relaxed);
         return false;
     }
-    auto retiredReader = std::atomic_exchange_explicit(
-        &entry->reader, std::shared_ptr<juce::AudioFormatReader>{},
-        std::memory_order_acq_rel);
+    auto retiredReader = entry->reader.exchange({}, std::memory_order_acq_rel);
     entry->waitForReaderCalls();
     retiredReader.reset();
     return true;
@@ -571,9 +566,7 @@ void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
         while (entry != nullptr) {
             auto* next = entry->retiredReaderNext;
             entry->retiredReaderNext = nullptr;
-            auto retired = std::atomic_exchange_explicit(
-                &entry->retiredReader, std::shared_ptr<juce::AudioFormatReader>{},
-                std::memory_order_acq_rel);
+            auto retired = entry->retiredReader.exchange({}, std::memory_order_acq_rel);
             retired.reset();
             entry = next;
         }
@@ -716,8 +709,7 @@ void AudioPageCache::workerRun(const std::atomic<bool>& shutdown)
             // reader reference is destroyed first. A synchronous eject that
             // observes zero calls therefore also knows the file is closed.
             Impl::Entry::ReaderCall readerCall(*entry);
-            auto reader = std::atomic_load_explicit(
-                &entry->reader, std::memory_order_acquire);
+            auto reader = entry->reader.load(std::memory_order_acquire);
             if (entry->active.load(std::memory_order_acquire)
                 && entry->generation.load(std::memory_order_acquire) == request.generation
                 && reader) {

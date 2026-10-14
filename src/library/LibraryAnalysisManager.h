@@ -50,6 +50,8 @@ public:
 signals:
     void stateChanged();
     void progressChanged();
+    void waveformInvalidationStarted(const QString& filePath);
+    void waveformInvalidationFinished(const QString& filePath);
 
 private:
     using QueueItem = analysis::AnalysisJob;

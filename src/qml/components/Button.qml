@@ -35,13 +35,12 @@ Controls.Button {
             anchors.left:   parent.left
             anchors.right:  parent.right
             anchors.bottom: parent.bottom
-            height: control.checked || control.down ? 2 : 1
-            color: !control.enabled
-                   ? UiTheme.separatorSubtle
-                   : (control.checked || control.down)
-                     ? accentColor
-                     : (control.hovered ? UiTheme.borderHover : UiTheme.border)
-            opacity: control.checked || control.down ? 1.0 : (control.hovered ? 0.55 : 0.35)
+            anchors.leftMargin: 1
+            anchors.rightMargin: 1
+            anchors.bottomMargin: 1
+            height: 2
+            visible: control.enabled && (control.checked || control.down)
+            color: control.accentColor
         }
     }
 
@@ -52,8 +51,8 @@ Controls.Button {
                             : UiTheme.textMuted
         font.pixelSize:     control.sp(12)
         font.family:        UiTheme.uiFontFamily
-        font.bold:          control.checked || control.down
-        font.letterSpacing: 0.4
+        font.weight:        Font.Medium
+        renderType:         Text.QtRendering
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment:   Text.AlignVCenter
         elide:               Text.ElideRight

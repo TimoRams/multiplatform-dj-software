@@ -1273,23 +1273,41 @@ bool performancePadsThemeRuntimeTests()
     ok &= clickItem(window, toggle, "the latched FX can be switched off");
     ok &= require(toggle && !toggle->property("padFxLit").toBool(),
                   "switching off a latched FX clears its highlight");
-    for (const QSizeF size : {QSizeF(420, 100), QSizeF(720, 160)}) {
+    for (const QSizeF size : {QSizeF(420, 100), QSizeF(537, 100), QSizeF(720, 160)}) {
         item->setSize(size);
         window.resize(size.toSize());
         for (int page = 0; page < 4; ++page) {
             pads->setProperty("activeTab", page);
             QCoreApplication::processEvents();
+            auto* bar = findVisualItem(item, QStringLiteral("padModeBar"));
+            for (int tabIndex = 0; tabIndex < 4; ++tabIndex) {
+                auto* tab = findVisualItem(item, QStringLiteral("padTab%1").arg(tabIndex));
+                auto* tabLabel = findVisualItem(item, QStringLiteral("padTabLabel%1").arg(tabIndex));
+                auto* previous = tabIndex > 0
+                    ? findVisualItem(item, QStringLiteral("padTab%1").arg(tabIndex - 1)) : nullptr;
+                ok &= require(bar && tab && tabLabel
+                                  && tab->x() == std::round(tab->x())
+                                  && tab->width() == std::round(tab->width())
+                                  && (!previous || tab->x() == previous->x() + previous->width())
+                                  && (tabIndex != 3 || tab->x() + tab->width() == bar->width() - 1),
+                              "mode tabs share a continuous frame with integer-aligned adjoining cells");
+                ok &= require(tabLabel && !tabLabel->property("truncated").toBool(),
+                              "mode captions remain readable without truncation");
+            }
             for (int index = 0; index < 8; ++index) {
                 auto* pad = findVisualItem(item, QStringLiteral("performancePad%1").arg(index));
                 auto* label = findVisualItem(item, QStringLiteral("padLabel%1").arg(index));
                 auto* number = findVisualItem(item, QStringLiteral("padIndex%1").arg(index));
                 ok &= require(pad && label && number && pad->height() > 20
-                                  && label->y() >= number->y() + number->height()
-                                  && label->y() + label->height() <= pad->height() - 1
+                                  && (label->y() >= number->y() + number->height()
+                                      || label->x() >= number->x() + number->width())
+                                  && label->y() + label->height() <= pad->height()
                                   && label->width() <= pad->width(),
                               "all pad pages keep labels within their compact and full-size frames");
                 ok &= require(label && label->property("color").value<QColor>().lightnessF() > 0.5,
                               "inactive pad labels retain readable contrast");
+                ok &= require(label && !label->property("truncated").toBool(),
+                              "pad values and effect names remain readable at compact sizes");
             }
         }
     }

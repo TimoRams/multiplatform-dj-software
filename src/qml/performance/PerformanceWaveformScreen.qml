@@ -35,6 +35,7 @@ Item {
 
     component PerformanceText: Text {
         font.family: UiTheme.uiFontFamily
+        renderType: Text.QtRendering
     }
 
     component PerformanceScroll: Flickable {

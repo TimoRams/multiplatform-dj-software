@@ -122,6 +122,43 @@ int main(int argc, char** argv)
 
     bool ok = true;
 
+    {
+        const QString source = sourceDir.filePath(QStringLiteral("reanalyze.audio"));
+        const QString other = sourceDir.filePath(QStringLiteral("other.audio"));
+        ok &= require(writeSourceStub(source) && writeSourceStub(other),
+                      "reanalysis source stubs are writable");
+        CachePaths deckPaths;
+        CachePaths otherPaths;
+        ok &= require(seedValidCache(source, deckPaths) && seedValidCache(other, otherPaths),
+                      "deck and unrelated waveform caches can be seeded");
+        auto libraryPayload = makeValidPayload();
+        libraryPayload.pointsPerSecond = 600;
+        libraryPayload.totalExpected /= 2;
+        libraryPayload.waveform.resize(libraryPayload.totalExpected);
+        ok &= require(WaveformCache::saveForFile(source, libraryPayload),
+                      "the same track has an independent library-resolution cache");
+        const CachePaths libraryPaths{WaveformCache::cachePathFor(source, 600),
+                                     WaveformCache::renderCachePathFor(source, 600)};
+        ok &= require(libraryPaths.bothExist() && deckPaths.bothExist(),
+                      "both waveform resolutions exist before reanalysis");
+        for (const int resolution : {600, 1200})
+            ok &= require(WaveformCache::invalidateForFile(source, resolution),
+                          "explicit reanalysis invalidates a cache pair");
+        ok &= require(libraryPaths.neitherExists() && deckPaths.neitherExists()
+                          && otherPaths.bothExist(),
+                      "reanalysis removes both resolutions and render files without touching another track");
+        WaveformCache::Payload loaded;
+        WaveformCache::RenderInfo render;
+        ok &= require(!WaveformCache::loadForFile(source, 1200, &loaded)
+                          && !WaveformCache::inspectRenderCache(source, 1200, &render),
+                      "neither payload nor rendered lines can restore the old deck waveform");
+        ok &= require(WaveformCache::invalidateForFile(source, 1200),
+                      "invalidating an absent cache is idempotent");
+        ok &= require(seedValidCache(source, deckPaths)
+                          && WaveformCache::loadForFile(source, 1200, &loaded),
+                      "a freshly analyzed deck waveform can be saved after invalidation");
+    }
+
     // A valid cache round-trips and is left alone.
     {
         const QString source = sourceDir.filePath(QStringLiteral("intact.audio"));
@@ -188,6 +225,11 @@ int main(int argc, char** argv)
                       "section versions round-trip independently");
         ok &= require(!analysis::AnalysisSectionVersions::fromStorageString({}).waveformCurrent(),
                       "missing section metadata is distinguishable from current data");
+        const auto boosted = analysis::AnalysisSectionVersions::fromStorageString(
+            QStringLiteral("g=1;s=1;o=1;b=3;k=1;p=1;r=1"));
+        ok &= require(!boosted.waveformCurrent() && boosted.beatGridCurrent()
+                          && boosted.keyCurrent() && boosted.phraseCurrent(),
+                      "boosted waveform caches expire without invalidating beatgrid, key or phrase analysis");
     }
 
     // A truncated payload cache is discarded together with its render sibling.

@@ -386,13 +386,17 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        RowLayout {
-            visible: true
+        Rectangle {
+            id: modeBar
+            objectName: "padModeBar"
             Layout.fillWidth: true
             Layout.preferredHeight: root.tabBarHeight
             Layout.minimumHeight: root.tabBarHeight
             Layout.maximumHeight: root.tabBarHeight
-            spacing: 2
+            color: UiTheme.panelInset
+            border.width: 1
+            border.color: UiTheme.borderStrong
+            radius: 0
 
             Repeater {
                 model: root.tabs
@@ -401,33 +405,46 @@ Item {
                     required property int index
                     required property var modelData
                     objectName: "padTab" + index
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
+                    x: 1 + Math.round(index * (modeBar.width - 2) / root.tabs.length)
+                    y: 1
+                    width: Math.round((index + 1) * (modeBar.width - 2) / root.tabs.length)
+                           - Math.round(index * (modeBar.width - 2) / root.tabs.length)
+                    height: modeBar.height - 2
                     radius: 0
                     color: UiTheme.padBackground(root.accentColor, false,
                                                 root.activeTab === index, tabMouse.containsMouse)
-                    border.width: 1
-                    border.color: root.activeTab === index ? root.accentColor
-                                  : (tabMouse.containsMouse ? UiTheme.borderHover : UiTheme.borderSubtle)
+                    border.width: 0
+
+                    Rectangle {
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.left: parent.left
+                        width: 1
+                        visible: index > 0
+                        color: UiTheme.borderSubtle
+                    }
 
                     Rectangle {
                         anchors.bottom: parent.bottom
-                        anchors.bottomMargin: 1
                         anchors.left: parent.left; anchors.right: parent.right
-                        anchors.leftMargin: 1; anchors.rightMargin: 1
                         height: 2
                         visible: root.activeTab === index
                         color: root.accentColor
                     }
 
                     Text {
-                        anchors.centerIn: parent
+                        objectName: "padTabLabel" + index
+                        anchors.fill: parent
+                        anchors.margins: 4
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
                         text: root.keyShiftMode && index === 3 ? "KEY SHIFT" : modelData
                         color: root.activeTab === index ? UiTheme.textPrimary : UiTheme.textSecondary
                         font.family: UiTheme.uiFontFamily
-                        font.pixelSize: 9
-                        font.bold: root.activeTab === index
-                        font.letterSpacing: 0.6
+                        font.pixelSize: 10
+                        font.weight: Font.Medium
+                        renderType: Text.QtRendering
                     }
 
                     MouseArea {
@@ -447,13 +464,11 @@ Item {
             }
         }
 
-        Rectangle {
-            visible: true
+        Item {
             Layout.fillWidth: true
             Layout.preferredHeight: 1
             Layout.minimumHeight: 1
             Layout.maximumHeight: 1
-            color: UiTheme.divider
         }
 
         RowLayout {
@@ -531,13 +546,16 @@ Item {
                         Text {
                             objectName: "padIndex" + index
                             anchors.top: parent.top; anchors.left: parent.left
-                            anchors.topMargin: 3
+                            anchors.topMargin: parent.height < 38 ? 0 : 3
                             anchors.leftMargin: 6
+                            height: parent.height < 38 ? parent.height : implicitHeight
+                            verticalAlignment: Text.AlignVCenter
                             text: (index + 1).toString()
                             color: padRect.padActive ? UiTheme.textPrimary : UiTheme.textLabel
-                            font.pixelSize: 7
-                            font.bold: true
+                            font.pixelSize: 9
+                            font.weight: Font.Medium
                             font.family: UiTheme.numericFontFamily
+                            renderType: Text.QtRendering
                         }
 
                         // Loop-cue badge
@@ -545,22 +563,25 @@ Item {
                             visible: isHotCueTab && kind === "loop"
                             anchors.top: parent.top
                             anchors.right: parent.right
-                            anchors.margins: 3
+                            anchors.margins: 4
                             text: "L"
                             color: UiTheme.play
-                            font.pixelSize: 8
-                            font.bold: true
+                            font.pixelSize: 9
+                            font.weight: Font.Medium
+                            renderType: Text.QtRendering
                         }
 
                         Text {
                             objectName: "padLabel" + index
                             anchors.left: parent.left
                             anchors.right: parent.right
-                            anchors.leftMargin: 6
-                            anchors.rightMargin: 4
+                            anchors.leftMargin: parent.height < 38 ? 18 : 6
+                            anchors.rightMargin: kind === "loop" ? 14 : 4
+                            height: parent.height < 38 ? parent.height : implicitHeight
                             anchors.bottom: parent.bottom
-                            anchors.bottomMargin: parent.height < 34 ? 2 : 6
+                            anchors.bottomMargin: parent.height < 38 ? 0 : 6
                             horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
                             elide: Text.ElideRight
                             text: {
                                 if (isHotCueTab)   return root.padLabel(index)
@@ -571,22 +592,22 @@ Item {
                                 return "—"
                             }
                             color: populated || padActive ? UiTheme.textPrimary : UiTheme.textSecondary
-                            font.pixelSize: isPadFxTab || parent.height < 34 ? 9 : 10
-                            font.bold: (isCuePlaybackTab && padSet) || isPadFxTab
-                                || (isKeyShiftTab && root.keyShiftPadSelected(index))
-                            font.letterSpacing: isPadFxTab ? 0.4 : 0.0
+                            font.pixelSize: 10
+                            font.weight: Font.Medium
                             font.family: UiTheme.numericFontFamily
+                            renderType: Text.QtRendering
                         }
 
                         Text {
-                            visible: isPadFxTab && parent.width >= 64
+                            visible: isPadFxTab && parent.width >= 72 && parent.height >= 38
                             anchors.top: parent.top
                             anchors.right: parent.right
                             anchors.margins: 4
                             text: isPadFxMomentary ? "HOLD" : "LATCH"
                             color: UiTheme.textLabel
-                            font.pixelSize: 7
+                            font.pixelSize: 9
                             font.family: UiTheme.uiFontFamily
+                            renderType: Text.QtRendering
                         }
 
                         MouseArea {

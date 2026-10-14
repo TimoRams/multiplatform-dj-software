@@ -1,4 +1,5 @@
 #include "domain/TrackData.h"
+#include "analysis/AnalysisTypes.h"
 
 #include <QCoreApplication>
 
@@ -198,5 +199,27 @@ int main(int argc, char** argv)
                   "immediate beatgrid must include beat and downbeat markers");
     ok &= require(!taggedBeatgrid.beatgridLockedByUser(),
                   "provisional tag beatgrid must remain replaceable by analysis");
+    taggedBeatgrid.installCachedWaveform(
+        QVector<TrackData::WaveformBin>(waveform), 1.0f,
+        QVector<TrackData::RgbWaveformFrame>(rgb), QVector<TrackData::PeakFrame>(4),
+        {}, QVector<TrackData::RgbWaveformFrame>(32));
+    const auto cachedSeed = taggedBeatgrid.createAnalysisSeed();
+    ok &= require(cachedSeed.waveform && !cachedSeed.waveform->isEmpty()
+                      && cachedSeed.overviewWaveform && !cachedSeed.overviewWaveform->isEmpty(),
+                  "reanalysis fixture begins with a reusable cached waveform");
+    const auto oldGeneration = taggedBeatgrid.getWaveformLineStoreSnapshot()->trackGeneration;
+    taggedBeatgrid.beginVisualTrackLoad(oldGeneration);
+    const auto freshSeed = taggedBeatgrid.createAnalysisSeed();
+    ok &= require(freshSeed.totalExpected == 0
+                      && freshSeed.waveform && freshSeed.waveform->isEmpty()
+                      && freshSeed.spectralWaveform && freshSeed.spectralWaveform->isEmpty()
+                      && freshSeed.overviewWaveform && freshSeed.overviewWaveform->isEmpty()
+                      && freshSeed.peakMip && freshSeed.peakMip->isEmpty()
+                      && !freshSeed.preparedWaveformLines,
+                  "reanalysis cannot seed itself with old vectors, overview, peaks or prepared lines");
+    ok &= require(taggedBeatgrid.getWaveformLineStoreSnapshot()->trackGeneration > oldGeneration
+                      && taggedBeatgrid.getBpm() == 120.0
+                      && taggedBeatgrid.getBeatGrid().size() == immediateGrid.size(),
+                  "reanalysis invalidates render snapshots without clearing the playback beatgrid");
     return ok ? 0 : 1;
 }

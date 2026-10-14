@@ -850,6 +850,7 @@ void DjEngine::beginTrackLoad(
                  chunks = std::move(chunks)]() mutable {
                     if (!safeThis
                         || generation != safeThis->m_trackLoader.currentGeneration()
+                        || generation == safeThis->m_reanalyzedVisualGeneration
                         || !safeThis->m_trackData) {
                         return;
                     }
@@ -982,7 +983,8 @@ void DjEngine::applyPreparedTrackVisuals(TrackVisualResult result)
     if (result.generation != m_trackLoader.currentGeneration() || !m_hasTrack)
         return;
 
-    if (result.waveformCacheLoaded) {
+    const bool acceptLoadedWaveform = result.generation != m_reanalyzedVisualGeneration;
+    if (acceptLoadedWaveform && result.waveformCacheLoaded) {
         const int expected = result.waveformCache.totalExpected > 0
             ? result.waveformCache.totalExpected : result.waveformCache.waveform.size();
         m_trackData->setTotalExpected(expected);
@@ -993,19 +995,19 @@ void DjEngine::applyPreparedTrackVisuals(TrackVisualResult result)
             std::move(result.waveformCache.peakMip),
             std::move(result.waveformCache.preparedLines),
             std::move(result.instantOverview));
-    } else if (result.waveformRenderCacheDeferred) {
+    } else if (acceptLoadedWaveform && result.waveformRenderCacheDeferred) {
         m_trackData->initializeCachedWaveformLines(
             result.waveformRenderTotalLines,
             result.waveformRenderLinesPerSecond,
             std::move(result.instantOverview));
-    } else if (!result.instantOverview.isEmpty()) {
+    } else if (acceptLoadedWaveform && !result.instantOverview.isEmpty()) {
         m_trackData->setTotalExpected(std::max(1, result.instantOverviewExpected));
         m_trackData->setOverviewRgbData(std::move(result.instantOverview));
     }
 
     const bool hasReusableWaveform = result.waveformCacheLoaded
         || result.waveformRenderCacheAvailable;
-    if (!(hasReusableWaveform && m_currentLoadHasReusableAnalysis) && m_analyzer) {
+    if (acceptLoadedWaveform && !(hasReusableWaveform && m_currentLoadHasReusableAnalysis) && m_analyzer) {
         m_analyzer->startAnalysis(
             result.canonicalPath, m_transport->audioPositionSeconds(),
             result.generation, m_trackData->createAnalysisSeed());

@@ -49,6 +49,7 @@ public:
 
     static QString cachePathFor(const QString& filePath, int pointsPerSecond);
     static QString renderCachePathFor(const QString& filePath, int pointsPerSecond);
+    static bool invalidateForFile(const QString& filePath, int pointsPerSecond);
     static bool loadForFile(const QString& filePath, int pointsPerSecond, Payload* out);
     static bool inspectRenderCache(const QString& filePath, int pointsPerSecond,
                                    RenderInfo* out);

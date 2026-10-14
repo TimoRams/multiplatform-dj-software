@@ -183,10 +183,10 @@ Rectangle {
 
     component SilkLabel: Text {
         color: UiTheme.textLabel
-        font.pixelSize: 6
-        font.bold: true
-        font.family: "monospace"
-        font.letterSpacing: 0.4
+        font.pixelSize: 9
+        font.weight: Font.Medium
+        font.family: UiTheme.uiFontFamily
+        renderType: Text.QtRendering
         horizontalAlignment: Text.AlignHCenter
     }
 
@@ -455,7 +455,7 @@ Rectangle {
                         anchors.centerIn: parent
                         text: "CUE"
                         color: cueActive ? UiTheme.green : UiTheme.textDim
-                        font.pixelSize: 7
+                        font.pixelSize: 10
                     }
                     Rectangle {
                         anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
@@ -490,8 +490,6 @@ Rectangle {
                         text: "−"
                         color: polBtn.polActive ? UiTheme.cue : UiTheme.textDim
                         font.pixelSize: 11
-                        font.bold: true
-                        font.family: "monospace"
                     }
                     Rectangle {
                         anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right

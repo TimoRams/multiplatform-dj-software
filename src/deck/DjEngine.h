@@ -297,6 +297,8 @@ public:
     Q_INVOKABLE void stopRollOut();
     [[nodiscard]] bool isRollOutActive() const { return m_rollOutActive; }
     [[nodiscard]] TrackData* getTrackData() const;
+    void beginWaveformReanalysis(const QString& filePath);
+    void finishWaveformReanalysis(const QString& filePath);
 
     [[nodiscard]] QString trackTitle()    const { return m_trackTitle; }
     [[nodiscard]] QString trackArtist()   const { return m_trackArtist; }
@@ -645,6 +647,7 @@ private:
     std::uint64_t m_lastKeylockSeedsOnAudioThread = 0;
     QString m_currentTrackId;
     QString m_trackFilePath;
+    std::uint64_t m_reanalyzedVisualGeneration = 0;
     QString m_coverArtUrl;
     QString m_trackLoadError;
     bool    m_hasCoverArt = false;

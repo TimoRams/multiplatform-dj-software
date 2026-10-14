@@ -149,6 +149,25 @@ row without the complete record remains safely behind the aggregate analysis
 version gate. This permits a future beatgrid-version bump to retain current
 key/phrase data and keeps render-only changes outside audio analysis.
 
+Waveform geometry, spectral and overview sections now use version 2.
+The envelope pass stores linear full-scale amplitudes instead of independently
+normalizing peak and RMS to the track's 98th percentile and applying a 0.72
+power expansion. The instant preview and analyzed waveform therefore share
+the same amplitude reference; quiet passages and weak frequency bands are
+not boosted when detail replaces the preview. High-resolution peak samples
+also retain that reference rather than being normalized at pass completion.
+Existing version-1 waveform caches are rebuilt on load without changing the
+beatgrid, key or phrase section versions. Frequency-color mapping and the
+renderer's existing logarithmic display scale remain unchanged.
+
+Explicit library reanalysis invalidates both the 600-point library cache and
+the 1200-point deck cache, including each rendered-line sibling. Loaded decks
+stop their old analyzer before deletion, reset the complete visual seed and
+start fresh waveform analysis without reloading audio. Loader publications
+from the pre-reanalysis visual generation are rejected so delayed cache reads
+cannot restore the old waveform after the reset. File removal failures are
+reported and counted as failed library jobs rather than silently accepted.
+
 Beat analysis retains the existing estimator/tracker/fitter chain. It now
 generates explicit metric-ratio alternatives and verifies a nearby whole/half
 BPM only when the same long-term grid score improves by a conservative margin.

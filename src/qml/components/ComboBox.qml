@@ -26,15 +26,9 @@ Controls.ComboBox {
     background: Rectangle {
         radius: 0
         color: UiTheme.buttonBg(false, control.hovered, control.pressed)
-        border.color: control.visualFocus ? UiTheme.blue : UiTheme.border
-
-        Rectangle {
-            anchors.left:   parent.left
-            anchors.right:  parent.right
-            anchors.bottom: parent.bottom
-            height: 1
-            color: control.visualFocus ? UiTheme.blue : UiTheme.border
-        }
+        border.width: 1
+        border.color: control.visualFocus ? UiTheme.blue
+                      : (control.hovered ? UiTheme.borderHover : UiTheme.border)
     }
 
     contentItem: Text {
@@ -42,6 +36,7 @@ Controls.ComboBox {
         color:             control.enabled ? UiTheme.textPrimary : UiTheme.textMuted
         font.family:       UiTheme.uiFontFamily
         font.pixelSize:    control.sp(12)
+        renderType:        Text.QtRendering
         verticalAlignment: Text.AlignVCenter
         leftPadding:  Math.max(8, Math.round(control.implicitHeight * 0.3))
         rightPadding: Math.max(20, Math.round(control.implicitHeight * 0.8))
@@ -69,14 +64,7 @@ Controls.ComboBox {
     popup.background: Rectangle {
         radius: 0
         color: UiTheme.surfaceInset
+        border.width: 1
         border.color: UiTheme.borderStrong
-
-        Rectangle {
-            anchors.left:  parent.left
-            anchors.right: parent.right
-            anchors.top:   parent.top
-            height: 1
-            color: UiTheme.borderStrong
-        }
     }
 }

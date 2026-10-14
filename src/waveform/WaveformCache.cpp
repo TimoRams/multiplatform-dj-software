@@ -263,6 +263,20 @@ QString WaveformCache::renderCachePathFor(const QString& filePath, int pointsPer
     return QDir(base).filePath(key + ".lines");
 }
 
+bool WaveformCache::invalidateForFile(const QString& filePath, int pointsPerSecond)
+{
+    bool success = true;
+    for (const auto& path : {cachePathFor(filePath, pointsPerSecond),
+                            renderCachePathFor(filePath, pointsPerSecond)}) {
+        QFile file(path);
+        if (file.exists() && !file.remove()) {
+            qWarning() << "[WaveformCache] Cannot invalidate" << path << file.errorString();
+            success = false;
+        }
+    }
+    return success;
+}
+
 bool WaveformCache::inspectRenderCache(const QString& filePath,
                                        int pointsPerSecond,
                                        RenderInfo* out)

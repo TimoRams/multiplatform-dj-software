@@ -580,6 +580,28 @@ void DjEngine::onSyncApplyControlTick(const ControlTickContext& context)
     refreshSyncFacadeSignals();
 }
 
+void DjEngine::beginWaveformReanalysis(const QString& filePath)
+{
+    if (!m_hasTrack || QFileInfo(filePath) != QFileInfo(m_trackFilePath))
+        return;
+    if (m_analyzer)
+        m_analyzer->shutdownAndJoin();
+    m_reanalyzedVisualGeneration = m_trackLoader.currentGeneration();
+    m_trackData->beginVisualTrackLoad(m_reanalyzedVisualGeneration);
+    m_trackData->reportAnalysisProgress(0.0, true);
+}
+
+void DjEngine::finishWaveformReanalysis(const QString& filePath)
+{
+    if (!m_hasTrack || !m_analyzer
+        || m_reanalyzedVisualGeneration != m_trackLoader.currentGeneration()
+        || QFileInfo(filePath) != QFileInfo(m_trackFilePath))
+        return;
+    m_analyzer->startAnalysis(m_trackFilePath, m_transport->audioPositionSeconds(),
+        m_trackLoader.currentGeneration(), m_trackData->createAnalysisSeed());
+    syncAnalyzerRealtimeInteractionHint();
+}
+
 void DjEngine::onWaveformControlTick(const ControlTickContext& context)
 {
     (void)context;

@@ -742,6 +742,12 @@ int runApplication(int argc, char *argv[])
                                    runtime.deckC.get(), runtime.deckD.get()}) {
                 deck->setLibraryDatabase(runtime.libraryDb.get());
                 deck->setLibraryCoverService(runtime.libraryCoverService.get());
+                QObject::connect(runtime.libraryAnalysisManager.get(),
+                                 &LibraryAnalysisManager::waveformInvalidationStarted,
+                                 deck, &DjEngine::beginWaveformReanalysis);
+                QObject::connect(runtime.libraryAnalysisManager.get(),
+                                 &LibraryAnalysisManager::waveformInvalidationFinished,
+                                 deck, &DjEngine::finishWaveformReanalysis);
                 QObject::connect(runtime.deviceLibraryManager.get(),
                                  &DeviceLibraryManager::deviceRemoved,
                                  deck, &DjEngine::externalSourceUnavailable);

@@ -97,9 +97,10 @@ Item {
         Layout.alignment: Qt.AlignVCenter
         text: label
         color: deck.sectionLabel
-        font.pixelSize: 8
-        font.family: "monospace"
-        font.letterSpacing: 0.5
+        font.pixelSize: 9
+        font.family: UiTheme.uiFontFamily
+        font.weight: Font.Medium
+        renderType: Text.QtRendering
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
     }
@@ -124,17 +125,19 @@ Item {
             Text {
                 text: metaLabel
                 color: deck.metaLabel
-                font.pixelSize: 7
-                font.bold: true
-                font.family: "monospace"
+                font.pixelSize: 9
+                font.weight: Font.Medium
+                font.family: UiTheme.uiFontFamily
+                renderType: Text.QtRendering
             }
             Text {
                 Layout.fillWidth: true
                 text: metaValue
                 color: metaHighlight ? deck.metaValue : deck.metaEmpty
                 font.pixelSize: 10
-                font.bold: true
-                font.family: "monospace"
+                font.weight: Font.Medium
+                font.family: UiTheme.numericFontFamily
+                renderType: Text.QtRendering
                 elide: Text.ElideRight
             }
         }
@@ -168,7 +171,7 @@ Item {
         property color  fbActiveText:       deck.btnTextActive
         property color  fbInactiveText:     deck.btnTextBright
         property real   fbPreferredHeight:  deck.btnH
-        property real   fbFontPx:           9
+        property real   fbFontPx:           10
         property string fbFontFamily:       UiTheme.uiFontFamily
 
         Layout.preferredHeight: fbPreferredHeight
@@ -205,7 +208,8 @@ Item {
             text:                fb.btnText
             color:               fb.fbActive ? fb.fbActiveText : fb.fbInactiveText
             font.pixelSize:      fb.fbFontPx
-            font.bold:           fb.fbActive
+            font.weight:         Font.Medium
+            renderType:          Text.QtRendering
             font.letterSpacing:  0
             font.family:         fb.fbFontFamily
             horizontalAlignment: Text.AlignHCenter
@@ -1172,8 +1176,8 @@ Item {
 
                                 Row {
                                     anchors.centerIn: parent; spacing: 3
-                                    Text { text: "TEMPO"; color: UiTheme.textLabel; font.pixelSize: 7; font.bold: true; font.letterSpacing: 0.6; font.family: UiTheme.uiFontFamily; anchors.verticalCenter: parent.verticalCenter }
-                                    Text { text: "▾"; color: UiTheme.textSecondary; font.pixelSize: 8; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "TEMPO"; color: UiTheme.textLabel; font.pixelSize: 9; font.weight: Font.Medium; font.family: UiTheme.uiFontFamily; renderType: Text.QtRendering; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "▾"; color: UiTheme.textSecondary; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
                                 }
                                 MouseArea {
                                     anchors.fill: parent; cursorShape: Qt.PointingHandCursor
@@ -1272,9 +1276,10 @@ Item {
                             anchors.centerIn: parent
                             text: modelData.label
                             color: isActive ? deck.btnTextActive : UiTheme.textSecondary
-                            font.pixelSize: 8
-                            font.bold: isActive
-                            font.family: "monospace"
+                            font.pixelSize: 10
+                            font.weight: Font.Medium
+                            font.family: UiTheme.uiFontFamily
+                            renderType: Text.QtRendering
                         }
 
                         HoverHandler { id: rangeHov }
@@ -1312,7 +1317,7 @@ Item {
 
             Column {
                 anchors.fill: parent; anchors.margins: 6; spacing: 6
-                Text { text: "MANUAL BPM"; color: UiTheme.textLabel; font.pixelSize: 8; font.bold: true; font.family: UiTheme.uiFontFamily }
+                Text { text: "MANUAL BPM"; color: UiTheme.textLabel; font.pixelSize: 9; font.weight: Font.Medium; font.family: UiTheme.uiFontFamily }
                 Controls.TextField {
                     id: manualBpmField
                     width: parent.width; height: 28
@@ -1321,7 +1326,7 @@ Item {
                     placeholderTextColor: UiTheme.textMuted
                     selectionColor: deck.btnLineActive
                     selectedTextColor: deck.btnBg
-                    font.pixelSize: 10; font.bold: true; font.family: "monospace"
+                    font.pixelSize: 11; font.weight: Font.Medium; font.family: UiTheme.numericFontFamily
                     background: Rectangle {
                         color: UiTheme.panelInset
                         radius: 0
@@ -1341,7 +1346,7 @@ Item {
                         manualBpmPopup.visible = false
                     }
                 }
-                Text { text: "Enter to apply"; color: UiTheme.textSecondary; font.pixelSize: 7; font.family: UiTheme.uiFontFamily }
+                Text { text: "Enter to apply"; color: UiTheme.textSecondary; font.pixelSize: 9; font.family: UiTheme.uiFontFamily }
             }
         }
 

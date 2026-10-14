@@ -33,6 +33,30 @@ int main(int argc, char** argv)
     const QString fxTypesHeader = readFile(
         QStringLiteral(SOURCE_DIR "/src/fx/FxTypes.h"));
     bool ok = require(!header.isEmpty(), "DjEngine public contract header is readable");
+    const auto deckSource = readFile(QStringLiteral(SOURCE_DIR "/src/deck/DjEngine.cpp"));
+    const auto transportSource = readFile(QStringLiteral(SOURCE_DIR "/src/deck/DjEngineTransport.cpp"));
+    const auto librarySource = readFile(QStringLiteral(SOURCE_DIR "/src/library/LibraryAnalysisManager.cpp"));
+    const auto bootstrapSource = readFile(QStringLiteral(SOURCE_DIR "/src/app/ApplicationBootstrap.cpp"));
+    const auto beginReload = deckSource.indexOf(QStringLiteral("void DjEngine::beginWaveformReanalysis"));
+    const auto finishReload = deckSource.indexOf(QStringLiteral("void DjEngine::finishWaveformReanalysis"));
+    const auto reload = deckSource.mid(beginReload, finishReload - beginReload);
+    ok &= require(beginReload >= 0 && finishReload > beginReload
+                      && reload.indexOf(QStringLiteral("shutdownAndJoin()"))
+                          < reload.indexOf(QStringLiteral("beginVisualTrackLoad"))
+                      && reload.contains(QStringLiteral("m_trackLoader.currentGeneration()"))
+                      && !reload.contains(QStringLiteral("loadTrack("))
+                      && !reload.contains(QStringLiteral("m_transport->")),
+                  "reanalysis stops old waveform writers and resets visuals without reloading audio");
+    const auto invalidation = librarySource.indexOf(QStringLiteral("emit waveformInvalidationStarted"));
+    const auto erase = librarySource.indexOf(QStringLiteral("WaveformCache::invalidateForFile"));
+    const auto resume = librarySource.indexOf(QStringLiteral("emit waveformInvalidationFinished"));
+    ok &= require(invalidation >= 0 && erase > invalidation && resume > erase
+                      && librarySource.contains(QStringLiteral("{600, 1200}"))
+                      && bootstrapSource.contains(QStringLiteral("&DjEngine::beginWaveformReanalysis"))
+                      && bootstrapSource.contains(QStringLiteral("&DjEngine::finishWaveformReanalysis"))
+                      && transportSource.contains(QStringLiteral("generation == safeThis->m_reanalyzedVisualGeneration"))
+                      && transportSource.contains(QStringLiteral("acceptLoadedWaveform")),
+                  "all decks quiesce before both cache resolutions are erased and reject stale loader publications");
     ok &= require(!fxManagerHeader.isEmpty(), "FxManager public header is readable");
     ok &= require(!fxTypesHeader.isEmpty(), "FX type contract header is readable");
 

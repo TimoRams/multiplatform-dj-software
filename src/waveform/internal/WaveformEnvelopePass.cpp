@@ -359,16 +359,12 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     //  "Color bleeding" comes from the intentional overlap of the flat slopes.
     //
     //  Envelope: instant attack (0 ms), exponential release per band.
-    //  Shaping:  pow() expansion + gain multiplier per band.
+    //  Display amplitudes remain linear and use the audio's full-scale reference.
     // -------------------------------------------------------------------------
 
     const int numCh = static_cast<int>(reader.numChannels);
     const BandCoefficients coefficients =
         BandCoefficients::forSampleRate(sampleRate);
-
-    // One robust normalization profile is fixed before the first detail chunk
-    // is published. Every priority, seek and sequential job uses the same
-    // values, so a completed immutable range never changes brightness later.
 
     // Peak mipmap: signed min/max per high-res bin (4× analysis rate).
     // Allows the renderer to show actual audio oscillations at high zoom.
@@ -379,33 +375,9 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         ? std::clamp(requestedPeakRatio, 1, 8) : 0;
     const int numPeakPoints = numPoints * peakRatio;
     std::vector<RawPeak> rawPeakBuf;
-    float globalMaxSample = 0.001f;
 
     float globalMaxPeak   = 0.001f;
 
-    const auto overview = m_trackData->getOverviewWaveformData();
-    const auto robustValue = [&overview](auto member, float floor) {
-        std::vector<float> values;
-        values.reserve(static_cast<std::size_t>(overview.size()));
-        for (const auto& frame : overview) {
-            const float value = std::max(0.0f, frame.*member);
-            if (std::isfinite(value))
-                values.push_back(value);
-        }
-        if (values.empty())
-            return floor;
-        const auto percentileIndex = std::min(
-            values.size() - 1,
-            static_cast<std::size_t>(std::floor(
-                static_cast<double>(values.size() - 1) * 0.98)));
-        std::nth_element(values.begin(), values.begin() + percentileIndex,
-                         values.end());
-        return std::max(floor, values[percentileIndex]);
-    };
-    const float amplitudeScale = robustValue(
-        &TrackData::SpectralWaveformPoint::rms, 0.02f);
-    const float peakScale = robustValue(
-        &TrackData::SpectralWaveformPoint::peak, 0.05f);
     const int spectralRatio = std::max(
         1, static_cast<int>(std::lround(
             static_cast<double>(m_pointsPerSecond)
@@ -440,9 +412,11 @@ bool runEnvelopePass(const EnvelopePassInput& input)
                 firstBin / spectralRatio, totalSpectralBins, spectral, state);
     };
 
-    // Shared shaping helper — used identically in preview AND final pass.
+    // Match the instant preview's full-scale amplitudes. Track-relative RMS
+    // normalization and power expansion used to inflate quiet detail and clip
+    // the strongest bands when the preview was replaced by analyzed data.
     auto shapeBin = [](float norm) -> float {
-        return std::pow(std::clamp(norm, 0.0f, 1.0f), 0.72f);
+        return std::clamp(norm, 0.0f, 1.0f);
     };
 
     // Single conversion from raw band envelopes to a display frame. The
@@ -450,19 +424,19 @@ bool runEnvelopePass(const EnvelopePassInput& input)
     // region changes brightness when the pass overwrites a priority chunk.
     const auto makeGeometry = [&](const RawBin& raw) {
         TrackData::WaveformBin geometry;
-        geometry.minimum = std::clamp(raw.minimum / peakScale, -1.0f, 0.0f);
-        geometry.maximum = std::clamp(raw.maximum / peakScale, 0.0f, 1.0f);
-        geometry.peak = shapeBin(raw.peak / peakScale);
-        geometry.rms = shapeBin(raw.rms / amplitudeScale);
+        geometry.minimum = std::clamp(raw.minimum, -1.0f, 0.0f);
+        geometry.maximum = std::clamp(raw.maximum, 0.0f, 1.0f);
+        geometry.peak = shapeBin(raw.peak);
+        geometry.rms = shapeBin(raw.rms);
         return geometry;
     };
     const auto makeSpectral = [&](const RawBin& raw) {
         TrackData::SpectralWaveformPoint spectral;
-        spectral.peak = shapeBin(raw.peak / peakScale);
-        spectral.rms = shapeBin(raw.rms / amplitudeScale);
-        spectral.bass = shapeBin(raw.bass / amplitudeScale);
-        spectral.mid = shapeBin(raw.mid / amplitudeScale);
-        spectral.treble = shapeBin(raw.treble / amplitudeScale);
+        spectral.peak = shapeBin(raw.peak);
+        spectral.rms = shapeBin(raw.rms);
+        spectral.bass = shapeBin(raw.bass);
+        spectral.mid = shapeBin(raw.mid);
+        spectral.treble = shapeBin(raw.treble);
         return spectral;
     };
     const auto downsampleSpectral = [spectralRatio](
@@ -679,8 +653,6 @@ bool runEnvelopePass(const EnvelopePassInput& input)
                 for (int pb = 0; pb < peakRatio; ++pb) {
                     const auto& peak = peaks[static_cast<std::size_t>(pb)];
                     rawPeakBuf[static_cast<std::size_t>(peakBinBase + pb)] = peak;
-                    globalMaxSample = std::max(
-                        {globalMaxSample, peak.maxRaw, -peak.minRaw});
                 }
             }
             globalMaxPeak = std::max(
@@ -710,7 +682,7 @@ bool runEnvelopePass(const EnvelopePassInput& input)
         m_trackData->setGlobalMaxPeak(globalMaxPeak);
         if (!rawPeakBuf.empty()) {
             m_trackData->reportAnalysisProgress(0.58, true);
-            const float normScale = 127.0f / std::max(0.001f, globalMaxSample);
+            constexpr float normScale = 127.0f;
             QVector<TrackData::PeakFrame> peakMip(static_cast<int>(rawPeakBuf.size()));
             const int peakTotal = static_cast<int>(rawPeakBuf.size());
             for (int i = 0; i < peakTotal; ++i) {
