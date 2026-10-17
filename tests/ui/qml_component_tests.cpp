@@ -1367,15 +1367,24 @@ bool appOverlaysRuntimeTests(const std::string& source)
             property real stripePeriod: 16
             property real stripeWidth: 8
             property real stripePhase: 0
+            property bool impulseMode: false
+            property bool horizontalImpulse: false
             Rectangle { anchors.fill: parent; color: "black" }
             Repeater {
-                model: Math.ceil(800 / parent.stripePeriod) + 1
+                model: parent.impulseMode ? 0 : Math.ceil(800 / parent.stripePeriod) + 1
                 Rectangle {
                     required property int index
                     x: index * parent.stripePeriod - parent.stripePhase
                     width: parent.stripeWidth; height: 600
                     color: parent.stripeColor
                 }
+            }
+            Rectangle {
+                x: parent.horizontalImpulse ? 0 : 158
+                y: parent.horizontalImpulse ? 98 : 0
+                width: parent.horizontalImpulse ? parent.width : 4
+                height: parent.horizontalImpulse ? 4 : parent.height
+                color: "white"; visible: parent.impulseMode
             }
         }
     )"), "AppOverlays main-layout sink instantiates");
@@ -1557,6 +1566,30 @@ bool appOverlaysRuntimeTests(const std::string& source)
         ok &= require(std::abs(firstPixel.red()
                               - first.pixelColor(probePoint + QPoint(8, 0)).red()) < 30,
                       "exit really blurs stripes instead of merely dimming them");
+        mainLayout->setProperty("impulseMode", true);
+        for (const bool horizontal : {false, true}) {
+            mainLayout->setProperty("horizontalImpulse", horizontal);
+            QTest::qWait(80);
+            const QImage impulse = window.grabWindow();
+            if (!require(!impulse.isNull(), "exit blur impulse renders a framebuffer"))
+                return false;
+            const double dpr = window.devicePixelRatio();
+            const auto impulseRed = [&](int distance) {
+                return impulse.pixelColor(qRound((horizontal ? 80 : 160 + distance) * dpr),
+                                          qRound((horizontal ? 100 + distance : 100) * dpr)).red();
+            };
+            int previousIntensity = impulseRed(0);
+            const int backgroundIntensity = impulseRed(60);
+            ok &= require(previousIntensity > backgroundIntensity + 3,
+                          "fullscreen blur retains the central response of a thin line");
+            for (const int distance : {4, 8, 12, 16, 20, 24, 28, 36, 48}) {
+                const int intensity = impulseRed(distance);
+                ok &= require(intensity <= previousIntensity + 1,
+                              "fullscreen blur falls off smoothly without displaced ghost lines");
+                previousIntensity = intensity;
+            }
+        }
+        mainLayout->setProperty("impulseMode", false);
         mainLayout->setProperty("stripePeriod", 2);
         mainLayout->setProperty("stripeWidth", 1);
         int lowestMean = 255;

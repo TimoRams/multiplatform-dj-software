@@ -559,7 +559,7 @@ add_test(NAME qml_component COMMAND BrockDJ_qml_component_tests)
 qt_add_shaders(BrockDJ_qml_component_tests "test_sidebar_shaders"
     PREFIX "/shaders"
     BASE "src/qml/performance"
-    FILES "src/qml/performance/sidebarblur.frag"
+    FILES "src/qml/performance/sidebarblur.frag" "src/qml/performance/modalblur.frag"
 )
 
 add_executable(BrockDJ_waveform_render_stability_tests

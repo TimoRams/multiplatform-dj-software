@@ -67,12 +67,14 @@ Item {
                 id: horizontal
                 anchors.fill: parent
                 property var source: capture
-                // Express the blur in logical pixels, not stretched capture texels.
-                property vector2d stepSize: Qt.vector2d(
-                    root.blurRadius > 0
-                        ? root.blurRadius / (1.7 * Math.max(1, root.captureRect.width))
-                        : 1 / root.captureSize.width, 0)
-                fragmentShader: "qrc:/shaders/sidebarblur.frag.qsb"
+                property vector2d stepSize: Qt.vector2d(1 / root.captureSize.width, 0)
+                // A wide blur needs neighboring texels, not widely spaced copies
+                // of the five-tap sidebar kernel.
+                property real sigma: Math.max(0.5, Math.min(4,
+                    root.blurRadius * root.captureSize.width
+                    / (3 * Math.max(1, root.captureRect.width))))
+                fragmentShader: root.blurRadius > 0
+                    ? "qrc:/shaders/modalblur.frag.qsb" : "qrc:/shaders/sidebarblur.frag.qsb"
             }
             ShaderEffectSource {
                 id: intermediate
@@ -87,11 +89,12 @@ Item {
             ShaderEffect {
                 anchors.fill: parent
                 property var source: intermediate
-                property vector2d stepSize: Qt.vector2d(0,
-                    root.blurRadius > 0
-                        ? root.blurRadius / (1.7 * Math.max(1, root.captureRect.height))
-                        : 1 / root.captureSize.height)
-                fragmentShader: "qrc:/shaders/sidebarblur.frag.qsb"
+                property vector2d stepSize: Qt.vector2d(0, 1 / root.captureSize.height)
+                property real sigma: Math.max(0.5, Math.min(4,
+                    root.blurRadius * root.captureSize.height
+                    / (3 * Math.max(1, root.captureRect.height))))
+                fragmentShader: root.blurRadius > 0
+                    ? "qrc:/shaders/modalblur.frag.qsb" : "qrc:/shaders/sidebarblur.frag.qsb"
             }
         }
     }

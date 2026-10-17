@@ -205,5 +205,5 @@ set(BROCKDJ_QML_FILES
 qt_add_shaders(${PROJECT_NAME} "sidebar_shaders"
     PREFIX "/shaders"
     BASE "qml/performance"
-    FILES "qml/performance/sidebarblur.frag"
+    FILES "qml/performance/sidebarblur.frag" "qml/performance/modalblur.frag"
 )

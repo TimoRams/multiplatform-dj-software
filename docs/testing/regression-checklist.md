@@ -75,16 +75,21 @@ Where a GPU backend is available, run the same harness with
 build-tests/BrockDJ_qml_component_tests`. Its RHI-only framebuffer probe checks
 that the backdrop blurs a stripe pattern while the captured backing stays sharp.
 
-The exit prompt uses the same separable GPU blur on `mainLayout` alone (never
+The exit prompt uses the shared backdrop capture on `mainLayout` alone (never
 the app root or overlay controls). Its blur intermediate is capped at 512x512;
 the source uses up to 4x supersampling (at most native resolution or 1024x1024), requests 4x MSAA where
 supported, and uses mipmapped filtering to suppress moving fine-line aliasing.
-The 28-logical-pixel blur is independent of window size and DPR.
+The modal filter uses two normalized 25-tap Gaussian passes over neighboring
+capture texels, with a 28-logical-pixel radius converted per axis. It must not
+enlarge the spacing of the sidebar's five-tap filter: that produces displaced
+copies of thin lines/text rather than a continuous blur. The sidebar's existing
+five-tap filter and texture limits are unchanged.
 Textures are updated live while the prompt stays open, resized/recreated as needed and
 detached before shutdown teardown. Software rendering, background operation and
 render pressure retain the readable flat fallback. The RHI harness verifies real
-stripe blur, spatial/temporal stability of moving one-pixel stripes, live content
-updates, resize/reopen refresh and capture destruction.
+stripe blur, monotonically fading horizontal/vertical thin-line responses
+(no ghost contours), spatial/temporal stability of moving one-pixel stripes,
+live content updates, resize/reopen refresh and capture destruction.
 
 `control_clock` and the production-header QML harness exercise sustained 60 Hz
 GUI delivery against the 250 Hz clock: every base tick is severely late, but
