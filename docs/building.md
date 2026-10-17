@@ -215,6 +215,71 @@ cmake --preset macos-dev-x86_64-make
 cmake --build --preset macos-dev-x86_64-make --parallel 4
 ```
 
+### DDJ-FLX10 jog displays on macOS
+
+Keep the vendor's macOS audio/MIDI driver installed and enabled. BrockDJ uses
+Apple's system IOKit/CoreFoundation frameworks for the **shared** IOHID screen
+service and its existing JUCE/CoreMIDI backend for the session SysEx and
+keepalive. No additional dependency, root access, libusb installation, kernel
+extension or driver replacement is required. It never opens/seizes the whole
+USB device, changes its configuration, detaches a driver, or claims the
+audio/MIDI USB interfaces. This is **not** an implementation of a proprietary
+vendor-driver API.
+
+1. Connect one FLX10, allow its vendor driver to initialize, and close other DJ
+   applications which may own the screen service.
+2. Select the built-in DDJ-FLX10 MIDI mapping and enable DDJ-FLX10 controller
+   support in Settings. Its dedicated display session uses the primary
+   FLX10 CoreMIDI output, not MIDI/port 2.
+3. Use Refresh after changing the connection or permissions. While enabled,
+   disconnected/failed sessions are also retried every five seconds.
+4. If shared HID access is denied, check the logged IOKit error and macOS
+   Privacy & Security permissions where applicable. Do not uninstall the
+   audio driver or run BrockDJ as root to work around this.
+
+Only VID:PID `2B73:0041`, USB interface **5**, with the expected unnumbered
+128-byte output descriptor is accepted. The interface number is also checked
+on registry parents for macOS versions which omit it from IOHID properties.
+Multiple matching controllers, missing/incompatible descriptors, hidden HID,
+ambiguous MIDI ports and exclusive opens are rejected with actionable status
+messages rather than guessing an interface. The deck byte (`10`, `20`, etc.)
+is payload, **not** a report ID: IOHID receives report ID 0 plus exactly the
+original 128 bytes, with no Linux-hidraw zero prefix.
+
+The existing bounded FIFO/latest-state coalescing writer is shared with Linux.
+At most two consecutive status packets precede an ordered upload packet when
+both queues have work. This keeps track initialization, cover segments and
+waveform uploads moving even when macOS HID completions are slower than the
+200 Hz status producer. Ordered initialization/cover failures end the session
+instead of silently dropping a required packet and leaving an unloaded screen.
+macOS submits one asynchronous IOHID output at a time with an 8 ms driver
+timeout and a bounded completion wait. Missing completions terminate the
+session; the report buffer remains alive until the device is closed. Shutdown
+unschedules on the writer, joins it, then closes the HID service. Repeated
+timeouts and disconnects release the session so reconnect can retry.
+`BROCKDJ_FLX10_DIAGNOSTICS=1` enables its existing transfer counters.
+
+**Limitations:** native macOS builds and packet/descriptor tests do not verify
+real screen rendering. A successful output completion is not a firmware-level
+acknowledgement. The macOS path deliberately does **not** issue the Linux
+device-wide vendor-unlock sequence; activation is left to the installed
+driver. A driver that hides interface 5 or firmware that still needs further
+activation cannot be supported by this shared-HID path. Audio/MIDI can keep
+working even when displays are unavailable. There is no fallback that seizes
+USB or interferes with the vendor driver.
+
+Hardware acceptance still requires checking cover art, waveforms, scratching,
+idle keepalive, unplug/replug, Refresh and shutdown while vendor-driver audio
+and MIDI remain operational. The focused native regression tests can be run
+with `ctest --test-dir <build-dir> -R 'flx10_(display_protocol|jog_routing)' --output-on-failure`.
+
+Protocol/interface evidence:
+[public FLX10 integration notes](https://github.com/Veezuhz/Mixxx_FLX10_Controller_Mapping/blob/main/findings/FLX10-INTEGRATION-NOTES.md)
+document interface 5 and unnumbered 128-byte output reports;
+[Apple IOHIDDevice API](https://developer.apple.com/documentation/iokit/iohiddevice_h)
+defines shared opens and separate report IDs. These sources establish the
+transport contract, not vendor-driver compatibility on a particular device.
+
 ## Windows x64
 
 Use a Visual Studio 2022 x64 developer shell. Install Qt 6.8.x built for

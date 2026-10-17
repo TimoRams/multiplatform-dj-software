@@ -82,6 +82,12 @@ For Intel Macs, replace `macos-dev-arm64` with `macos-dev-x86_64`.
 
 If Ninja is not installed, use `macos-dev-arm64-make` or `macos-dev-x86_64-make` instead.
 
+DDJ-FLX10 jog displays use macOS's shared IOHID interface alongside the installed
+vendor audio/MIDI driver, without libusb, USB seizure or driver detachment.
+This is not a proprietary driver API integration or hardware-verified support:
+the driver must expose the screen HID service and activate the device.
+See [FLX10 setup and limitations](docs/building.md#ddj-flx10-jog-displays-on-macos).
+
 ## Documentation
 
 * [Complete build guide](docs/building.md)

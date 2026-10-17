@@ -1,4 +1,21 @@
 #include "controllers/flx10/Flx10Protocol.h"
+#include "controllers/flx10/Flx10HidReport.h"
+#include "controllers/flx10/Flx10HidSupport.h"
+#if defined(Q_OS_MACOS)
+#include "controllers/flx10/Flx10MacHidTransport.h"
+#include <IOKit/IOReturn.h>
+#if !defined(BROCKDJ_FLX10_HAS_HID)
+#error macOS HID must be available without libusb
+#endif
+#elif defined(Q_OS_LINUX) && !defined(BROCKDJ_HAS_LIBUSB)
+#if defined(BROCKDJ_FLX10_HAS_HID)
+#error Linux HID must not be enabled without libusb
+#endif
+#elif !defined(Q_OS_LINUX)
+#if defined(BROCKDJ_FLX10_HAS_HID)
+#error HID must not be advertised on unsupported platforms
+#endif
+#endif
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -15,6 +32,71 @@ using flx10_protocol::jogPhaseBytes;
 using flx10_protocol::kJogPhaseTicksPerRevolution;
 using flx10_protocol::kJogPhaseTicksPerSecond;
 using flx10_protocol::kJogRevolutionSeconds;
+
+void nativeHidReportLayout()
+{
+    using namespace flx10_protocol;
+    HidPacketFairness fairness;
+    int uploaded = 0;
+    int burst = 0;
+    // A slow transport always has fresh status pending at each completion.
+    // Every third opportunity must nevertheless advance track initialization.
+    for (int opportunity = 0; opportunity < 300; ++opportunity) {
+        if (fairness.takeDisplay(true, true)) {
+            assert(++burst <= 2);
+        } else {
+            ++uploaded;
+            burst = 0;
+        }
+    }
+    assert(uploaded == 100);
+    for (int opportunity = 0; opportunity < 10; ++opportunity)
+        assert(fairness.takeDisplay(true, false));
+    assert(!fairness.takeDisplay(false, true));
+#if defined(Q_OS_MACOS)
+    static_assert(flx10::kHidTransportAvailable);
+#elif !defined(BROCKDJ_FLX10_HAS_HID)
+    static_assert(!flx10::kHidTransportAvailable);
+#endif
+    const QByteArray descriptor = QByteArray::fromHex(
+        "0600ff0901a101150026ff00750896800009019102c0");
+    assert(isScreenHidInterface(5, descriptor));
+    assert(!isScreenHidInterface(4, descriptor));
+    assert(!isScreenHidInterface(-1, descriptor));
+    assert(!isScreenReportDescriptor({}));
+    assert(!isScreenReportDescriptor(QByteArray::fromHex("7508968000")));
+    assert(!isScreenReportDescriptor(QByteArray::fromHex("7508957f9102")));
+    assert(!isScreenReportDescriptor(QByteArray::fromHex("75089681009102")));
+    assert(!isScreenReportDescriptor(QByteArray::fromHex("851075089680009102")));
+    assert(!isScreenReportDescriptor(QByteArray::fromHex("850075089680009102")));
+    assert(!isScreenReportDescriptor(QByteArray::fromHex("75089680")));
+    assert(!isScreenReportDescriptor(QByteArray::fromHex("b475089680009102")));
+    assert(!isScreenReportDescriptor(QByteArray::fromHex("fe010000")));
+    assert(isScreenReportDescriptor(QByteArray::fromHex("7508954091029102")));
+    assert(isScreenReportDescriptor(QByteArray::fromHex(
+        "75089540a475109520b491029102")));
+
+    for (int deck = 1; deck <= 4; ++deck) {
+        const QByteArray packet = encodeXx27Packet(deck, {});
+        const auto report = nativeScreenReport(packet);
+        assert(report && report->id == 0);
+        assert(report->bytes.size() == kHidPacketSize);
+        assert(report->bytes.data() == packet.constData());
+        assert(static_cast<std::uint8_t>(report->bytes[0]) == deckByte(deck));
+        assert(report->bytes[1] == char(0x27));
+        assert(!nativeScreenReport(QByteArray(1, '\0') + packet));
+        assert(!nativeScreenReport(packet.first(kHidPacketSize - 1)));
+    }
+#if defined(Q_OS_MACOS)
+    Flx10MacHidTransport transport;
+    int transferred = -1;
+    assert(transport.write(QByteArray(kHidPacketSize, '\0'), transferred)
+           == kIOReturnNoDevice);
+    assert(transferred == 0);
+    transport.close();
+    transport.close();
+#endif
+}
 
 void basicEncoding()
 {
@@ -204,6 +286,7 @@ void beatgridTintsWithoutInventingTransients()
 
 int main()
 {
+    nativeHidReportLayout();
     basicEncoding();
     continuousAtDisplayRate();
     jogStateUsesProtocolCadence();

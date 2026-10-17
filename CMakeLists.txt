@@ -457,6 +457,15 @@ endif()
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 
+if(APPLE)
+    find_library(BROCKDJ_IOKIT_FRAMEWORK IOKit REQUIRED)
+    find_library(BROCKDJ_COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
+    target_sources(${PROJECT_NAME} PRIVATE
+        src/controllers/flx10/Flx10MacHidTransport.cpp)
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        "${BROCKDJ_IOKIT_FRAMEWORK}" "${BROCKDJ_COREFOUNDATION_FRAMEWORK}")
+endif()
+
 option(BROCKDJ_TESTS_ONLY "Exclude the GUI application from the default test build" OFF)
 if(BROCKDJ_TESTS_ONLY)
     set_target_properties(${PROJECT_NAME} PROPERTIES EXCLUDE_FROM_ALL TRUE)
@@ -710,6 +719,12 @@ add_executable(BrockDJ_flx10_display_protocol_tests
 target_include_directories(BrockDJ_flx10_display_protocol_tests PRIVATE src)
 target_link_libraries(BrockDJ_flx10_display_protocol_tests PRIVATE Qt6::Core Qt6::Gui)
 target_compile_features(BrockDJ_flx10_display_protocol_tests PRIVATE cxx_std_23)
+if(APPLE)
+    target_sources(BrockDJ_flx10_display_protocol_tests PRIVATE
+        src/controllers/flx10/Flx10MacHidTransport.cpp)
+    target_link_libraries(BrockDJ_flx10_display_protocol_tests PRIVATE
+        "${BROCKDJ_IOKIT_FRAMEWORK}" "${BROCKDJ_COREFOUNDATION_FRAMEWORK}")
+endif()
 add_test(NAME flx10_display_protocol COMMAND BrockDJ_flx10_display_protocol_tests)
 
 add_executable(BrockDJ_sync_coordinator_tests

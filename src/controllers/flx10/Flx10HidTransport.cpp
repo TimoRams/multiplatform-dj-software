@@ -2,6 +2,9 @@
 
 #if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
 #include <libusb-1.0/libusb.h>
+#elif defined(Q_OS_MACOS)
+#include "Flx10MacHidTransport.h"
+#include <IOKit/IOReturn.h>
 #endif
 
 #include <QDebug>
@@ -13,6 +16,32 @@
 #include "Flx10Protocol.h"
 
 using namespace flx10_protocol;
+
+namespace {
+#if defined(BROCKDJ_FLX10_HAS_HID)
+bool transferTimedOut(int result)
+{
+#if defined(Q_OS_MACOS)
+    return result == kIOReturnTimeout;
+#else
+    return result == LIBUSB_ERROR_TIMEOUT;
+#endif
+}
+
+bool transientTransfer(int result, int transferred, qsizetype expected)
+{
+#if defined(Q_OS_MACOS)
+    return result == kIOReturnTimeout || result == kIOReturnBusy
+        || result == kIOReturnUnderrun || result == kIOReturnOverrun
+        || (result == 0 && transferred != expected);
+#else
+    return result == LIBUSB_ERROR_TIMEOUT || result == LIBUSB_ERROR_INTERRUPTED
+        || result == LIBUSB_ERROR_BUSY || result == LIBUSB_ERROR_IO
+        || result == LIBUSB_ERROR_PIPE || (result == 0 && transferred != expected);
+#endif
+}
+#endif
+}
 
 bool DDJFLX10Controller::initialiseUsb()
 {
@@ -57,6 +86,15 @@ bool DDJFLX10Controller::initialiseUsb()
 
     libusb_set_auto_detach_kernel_driver(m_handle, 1);
     libusb_set_configuration(m_handle, 1);
+    return true;
+#elif defined(Q_OS_MACOS)
+    m_nativeHid = std::make_unique<Flx10MacHidTransport>();
+    QString error;
+    if (!m_nativeHid->open(error)) {
+        m_nativeHid.reset();
+        setStatus(error);
+        return false;
+    }
     return true;
 #else
     return false;
@@ -128,15 +166,23 @@ bool DDJFLX10Controller::claimScreenInterface()
     if (!found)
         qWarning() << "[DDJ-FLX10] no HID OUT endpoint found";
     return found;
+#elif defined(Q_OS_MACOS)
+    // initialiseUsb has already validated and opened only HID interface 5.
+    return m_nativeHid != nullptr;
 #else
     return false;
 #endif
 }
 bool DDJFLX10Controller::writePacket(const QByteArray& packetBytes)
 {
-#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+#if defined(BROCKDJ_FLX10_HAS_HID)
+#if defined(Q_OS_MACOS)
+    if (!m_nativeHid || packetBytes.size() != kHidPacketSize)
+        return false;
+#else
     if (!m_handle || !m_outEndpoint || packetBytes.size() != kHidPacketSize)
         return false;
+#endif
 
     std::lock_guard lock(m_hidWriteMutex);
     if (!m_hidWriterRunning || m_hidWriterStopping
@@ -174,7 +220,7 @@ bool DDJFLX10Controller::writePacket(const QByteArray& packetBytes)
 #endif
 }
 
-#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+#if defined(BROCKDJ_FLX10_HAS_HID)
 
 void DDJFLX10Controller::startHidWriter()
 {
@@ -251,7 +297,15 @@ void DDJFLX10Controller::discardQueuedDeckPackets(int deck)
 
 void DDJFLX10Controller::hidWriterLoop()
 {
+#if defined(Q_OS_MACOS)
+    m_nativeHid->beginWrites();
+    struct ScheduleGuard {
+        Flx10MacHidTransport* transport;
+        ~ScheduleGuard() { transport->endWrites(); }
+    } scheduleGuard {m_nativeHid.get()};
+#endif
     int consecutiveDroppedPackets = 0;
+    HidPacketFairness fairness;
     while (true) {
         QByteArray packetBytes;
         std::uint64_t displaySequence = 0;
@@ -263,7 +317,9 @@ void DDJFLX10Controller::hidWriterLoop()
             });
             if (m_hidWriterStopping)
                 return;
-            if (auto display = m_latestHidDisplayPackets.takeNext()) {
+            if (fairness.takeDisplay(!m_latestHidDisplayPackets.empty(),
+                                     !m_hidWriteQueue.empty())) {
+                auto display = m_latestHidDisplayPackets.takeNext();
                 packetBytes = std::move(display->bytes);
                 displaySequence = display->sequence;
             } else {
@@ -273,36 +329,31 @@ void DDJFLX10Controller::hidWriterLoop()
         }
 
         const auto writeStarted = std::chrono::steady_clock::now();
-        int result = LIBUSB_ERROR_OTHER;
+        int result = 0;
         int transferred = 0;
         for (int attempt = 0; attempt <= kHidTransientRetries; ++attempt) {
             transferred = 0;
+#if defined(Q_OS_MACOS)
+            result = m_nativeHid->write(packetBytes, transferred);
+#else
             result = libusb_interrupt_transfer(
                 m_handle, m_outEndpoint,
                 reinterpret_cast<unsigned char*>(packetBytes.data()), packetBytes.size(),
                 &transferred, kHidTransferTimeoutMs);
+#endif
             if (result == 0 && transferred == packetBytes.size())
                 break;
 
-            const bool transient = result == LIBUSB_ERROR_TIMEOUT
-                || result == LIBUSB_ERROR_INTERRUPTED
-                || result == LIBUSB_ERROR_BUSY
-                || result == LIBUSB_ERROR_IO
-                || result == LIBUSB_ERROR_PIPE
-                || (result == 0 && transferred != packetBytes.size());
+            const bool transient = transientTransfer(result, transferred, packetBytes.size());
             if (!transient || attempt == kHidTransientRetries)
                 break;
 
-            // Do not let a retry of cover/waveform data hold a newer platter
-            // position. The FIFO packet is expendable (sweeps repeat); xx27 is
-            // real-time state and must win at the next USB opportunity.
-            if (displaySequence == 0) {
-                std::lock_guard lock(m_hidWriteMutex);
-                if (!m_latestHidDisplayPackets.empty())
-                    break;
-            }
+            // Ordered initialization and cover segments are not expendable.
+            // Keep their bounded retry even while newer status is pending.
+#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
             if (result == LIBUSB_ERROR_PIPE)
                 libusb_clear_halt(m_handle, m_outEndpoint);
+#endif
             std::this_thread::sleep_for(std::chrono::milliseconds(2 << attempt));
         }
 
@@ -327,18 +378,16 @@ void DDJFLX10Controller::hidWriterLoop()
 
         if (displaySequence != 0) {
             m_displayWriteFailures.fetch_add(1, std::memory_order_relaxed);
-            if (result == LIBUSB_ERROR_TIMEOUT)
+            if (transferTimedOut(result))
                 m_displayWriteTimeouts.fetch_add(1, std::memory_order_relaxed);
         }
 
-        const bool transient = result == LIBUSB_ERROR_TIMEOUT
-            || result == LIBUSB_ERROR_INTERRUPTED
-            || result == LIBUSB_ERROR_BUSY
-            || result == LIBUSB_ERROR_IO
-            || result == LIBUSB_ERROR_PIPE
-            || (result == 0 && transferred != packetBytes.size());
-        if (transient) {
-            ++consecutiveDroppedPackets;
+        const bool transient = transientTransfer(result, transferred, packetBytes.size());
+        const bool repeatable = displaySequence != 0
+            || packetBytes.at(1) == char(0x36);
+        // Do not advertise a healthy connection forever when a driver accepts
+        // the open but every report times out. Let the normal hotplug retry it.
+        if (transient && repeatable && ++consecutiveDroppedPackets < 32) {
             m_hidStateRefreshPending.store(true, std::memory_order_release);
             if (consecutiveDroppedPackets == 1
                 || (consecutiveDroppedPackets & (consecutiveDroppedPackets - 1)) == 0) {
@@ -367,10 +416,16 @@ void DDJFLX10Controller::reportHidWriteFailure()
     const int result = m_hidWriteError.load(std::memory_order_acquire);
     const int transferred = m_hidWriteTransferred.load(std::memory_order_acquire);
     qWarning() << "[DDJ-FLX10] HID writer stopped after transfer failure" << result << transferred;
-    setConnected(false);
+    stop();
+#if defined(Q_OS_MACOS)
+    setStatus(QStringLiteral("DDJ-FLX10: macOS HID output stopped (0x%1, %2 bytes). Reconnect, close other DJ apps and Refresh; verify the vendor driver is active. Driver-hidden HID or firmware requiring additional activation is unsupported. Audio/MIDI were not detached.")
+                  .arg(static_cast<quint32>(result), 8, 16, QLatin1Char('0'))
+                  .arg(transferred));
+#else
     setStatus(QStringLiteral("DDJ-FLX10: disconnected (%1, %2 bytes); waiting for hotplug reconnect")
                   .arg(result)
                   .arg(transferred));
+#endif
 }
 
 #endif

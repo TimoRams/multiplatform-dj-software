@@ -12,6 +12,7 @@ class ControllerIntegrationManager : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(bool flx10Enabled READ flx10Enabled WRITE setFlx10Enabled NOTIFY flx10EnabledChanged)
+    Q_PROPERTY(bool flx10Available READ flx10Available CONSTANT)
     Q_PROPERTY(bool flx10Connected READ flx10Connected NOTIFY flx10StatusChanged)
     Q_PROPERTY(QString flx10Status READ flx10Status NOTIFY flx10StatusChanged)
 
@@ -23,6 +24,7 @@ public:
     void prepareForShutdown() noexcept;
 
     bool flx10Enabled() const { return m_flx10Enabled; }
+    bool flx10Available() const { return flx10::kHidTransportAvailable; }
     bool flx10Connected() const { return m_flx10.isConnected(); }
     QString flx10Status() const { return m_flx10.status(); }
 

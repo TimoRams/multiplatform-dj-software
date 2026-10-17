@@ -1325,11 +1325,20 @@ Item {
                             CheckBox {
                                 id: flx10SupportCheckBox
                                 text: "Enable DDJ-FLX10 HID jog display support"
+                                enabled: controllerManager ? controllerManager.flx10Available : false
                                 checked: settingsManager ? settingsManager.flx10ControllerSupportEnabled : false
                                 onToggled: {
                                     if (settingsManager)
                                         settingsManager.flx10ControllerSupportEnabled = checked
                                 }
+                            }
+
+                            Button {
+                                text: "Refresh jog displays"
+                                enabled: controllerManager
+                                         ? controllerManager.flx10Available && controllerManager.flx10Enabled
+                                         : false
+                                onClicked: controllerManager.refreshFlx10()
                             }
 
                             Text {

@@ -49,7 +49,7 @@ void ControllerIntegrationManager::setFlx10Enabled(bool enabled)
     if (m_flx10Enabled) {
         qInfo() << "[Controller] DDJ-FLX10 support enabled";
         m_flx10.start();
-        if (!m_shuttingDown)
+        if (!m_shuttingDown && flx10Available())
             m_flx10HotplugTimer.start();
     } else {
         qInfo() << "[Controller] DDJ-FLX10 support disabled";

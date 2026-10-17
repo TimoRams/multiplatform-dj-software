@@ -367,6 +367,25 @@ struct PendingDisplayPacket
     std::uint64_t sequence = 0;
 };
 
+// Status remains low-latency, but cannot starve the ordered track-load upload
+// when a shared HID transport completes more slowly than the 200 Hz producer.
+class HidPacketFairness
+{
+public:
+    bool takeDisplay(bool displayPending, bool uploadPending) noexcept
+    {
+        if (displayPending && (!uploadPending || m_displayBurst < 2)) {
+            m_displayBurst = std::min(2, m_displayBurst + 1);
+            return true;
+        }
+        m_displayBurst = 0;
+        return false;
+    }
+
+private:
+    int m_displayBurst = 0;
+};
+
 // Fixed-size latest-state slots. Callers provide synchronization; keeping this
 // policy separate makes the actual coalescing/backlog contract testable without
 // USB hardware.

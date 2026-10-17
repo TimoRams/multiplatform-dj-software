@@ -70,6 +70,9 @@ target_sources(${PROJECT_NAME} PRIVATE
     controllers/flx10/DDJFLX10Controller.h
     controllers/flx10/DDJFLX10Controller.cpp
     controllers/flx10/Flx10HidTransport.cpp
+    controllers/flx10/Flx10HidSupport.h
+    controllers/flx10/Flx10HidReport.h
+    controllers/flx10/Flx10MacHidTransport.h
     controllers/flx10/Flx10Display.cpp
     controllers/flx10/Flx10MidiBridge.cpp
 

@@ -3,6 +3,7 @@
 #include "controllers/midi/AlsaMidiTransport.h"
 #include "app/ControlClock.h"
 #include "Flx10Protocol.h"
+#include "Flx10HidSupport.h"
 
 #include <QObject>
 #include <QByteArray>
@@ -30,6 +31,9 @@
 #if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
 #include <libusb-1.0/libusb.h>
 #endif
+
+class Flx10MacHidTransport;
+namespace juce { class MidiOutput; }
 
 class DDJFLX10Controller : public QObject
 {
@@ -66,7 +70,7 @@ private:
     bool sendVendorUnlock();
     bool claimScreenInterface();
     bool writePacket(const QByteArray& packet);
-#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+#if defined(BROCKDJ_FLX10_HAS_HID)
     void startHidWriter();
     void stopHidWriter() noexcept;
     void hidWriterLoop();
@@ -75,7 +79,7 @@ private:
 #endif
 
     QString findMidiPort() const;
-    bool openSequencerMidiPort();
+    bool openSessionMidiPort();
     bool sendMidiHex(const QString& hex) const;
     void sendSessionSysEx();
     void updateJogRingWarning(int deck, double elapsedSeconds, double durationSeconds, bool playing);
@@ -200,6 +204,9 @@ private:
 #if defined(Q_OS_LINUX)
     std::unique_ptr<AlsaMidiOutput> m_sequencerMidiOut;
     std::unique_ptr<QProcess> m_keepAliveProcess;
+#elif defined(Q_OS_MACOS)
+    std::unique_ptr<juce::MidiOutput> m_nativeMidiOut;
+    std::unique_ptr<Flx10MacHidTransport> m_nativeHid;
 #endif
     ControlClock::Registration m_clockRegistration;
     QTimer m_uploadTimer;
@@ -271,6 +278,8 @@ private:
     libusb_device_handle* m_handle = nullptr;
     uint8_t m_outEndpoint = 0;
     bool m_interfaceClaimed = false;
+#endif
+#if defined(BROCKDJ_FLX10_HAS_HID)
     std::mutex m_hidWriteMutex;
     std::condition_variable m_hidWriteCondition;
     std::deque<QByteArray> m_hidWriteQueue;

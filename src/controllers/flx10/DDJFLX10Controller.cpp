@@ -4,6 +4,10 @@
 #include "deck/DjEngine.h"
 #include "Flx10Protocol.h"
 #include "domain/TrackData.h"
+#if defined(Q_OS_MACOS)
+#include "Flx10MacHidTransport.h"
+#include <juce_audio_devices/juce_audio_devices.h>
+#endif
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -62,17 +66,32 @@ bool DDJFLX10Controller::start()
     stop();
     m_shuttingDown.store(false, std::memory_order_release);
 
-#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+#if defined(BROCKDJ_FLX10_HAS_HID)
+#if defined(Q_OS_MACOS)
+    setStatus(QStringLiteral("DDJ-FLX10: starting shared macOS HID display"));
+#else
     setStatus(QStringLiteral("DDJ-FLX10: starting Linux HID activation"));
+#endif
 
     if (!initialiseUsb())
         return false;
 
+    // Device-wide vendor activation belongs to the Linux path only. macOS
+    // leaves that job to the installed audio driver and never opens USB.
+#if defined(Q_OS_LINUX)
     sendVendorUnlock();
-
-    const bool sequencerMidiReady = openSequencerMidiPort();
+#endif
+    const bool sequencerMidiReady = openSessionMidiPort();
+#if defined(Q_OS_LINUX)
     if (!sequencerMidiReady)
         m_midiPort = findMidiPort();
+#elif defined(Q_OS_MACOS)
+    if (!sequencerMidiReady) {
+        stop();
+        setStatus(QStringLiteral("DDJ-FLX10: CoreMIDI session output unavailable or ambiguous. Connect one FLX10, enable its vendor driver, close other DJ apps and Refresh; audio/MIDI have not been detached."));
+        return false;
+    }
+#endif
 
     if (sequencerMidiReady || !m_midiPort.isEmpty())
         sendSessionSysEx();
@@ -80,8 +99,15 @@ bool DDJFLX10Controller::start()
         qWarning() << "[DDJ-FLX10] MIDI port not found; SysEx gate skipped";
 
     if (!claimScreenInterface()) {
+#if defined(Q_OS_MACOS)
+        const QString error = m_status;
+#endif
         stop();
+#if defined(Q_OS_MACOS)
+        setStatus(error);
+#else
         setStatus(QStringLiteral("DDJ-FLX10: could not claim HID interface 5 (run with udev permission or root)"));
+#endif
         return false;
     }
 
@@ -129,14 +155,18 @@ bool DDJFLX10Controller::start()
         m_keepAliveTimer.start();
     }
 
+#if defined(Q_OS_MACOS)
+    setStatus(QStringLiteral("DDJ-FLX10: shared macOS HID output started (screen rendering not verified; requires vendor-driver activation)"));
+#else
     setStatus(QStringLiteral("DDJ-FLX10: HID display active"));
+#endif
     return true;
 #else
     setConnected(false);
 #if defined(Q_OS_LINUX)
     setStatus(QStringLiteral("DDJ-FLX10: libusb not available at build time"));
 #else
-    setStatus(QStringLiteral("DDJ-FLX10: HID activation is implemented for Linux only"));
+    setStatus(QStringLiteral("DDJ-FLX10: native HID displays are unavailable on this platform"));
 #endif
     return false;
 #endif
@@ -144,25 +174,10 @@ bool DDJFLX10Controller::start()
 
 void DDJFLX10Controller::prepareForShutdown() noexcept
 {
-    m_shuttingDown.store(true, std::memory_order_release);
-    disconnectDeckSignals();
-    m_uploadTimer.stop();
-    m_keepAliveTimer.stop();
-    m_stateTimer.stop();
-    m_tempoWaveformRefreshTimer.stop();
-    m_pendingTempoWaveformDeckMask = 0;
-    m_keepAliveEnabled = false;
-    stopWaveformWorker();
-    // Join before the deck pointers go: the display thread reads a playhead
-    // cell that belongs to the deck, so it must be gone first, not after.
-    m_displayFeedActive.store(false, std::memory_order_release);
-    stopDisplayThread();
+    // Release HID/MIDI now, not later in destruction after the decks disappear.
+    stop();
     for (auto& sink : m_deckPlayheadSinks)
         sink.store(nullptr, std::memory_order_release);
-#if defined(Q_OS_LINUX)
-    if (m_keepAliveProcess && m_keepAliveProcess->state() != QProcess::NotRunning)
-        m_keepAliveProcess->kill();
-#endif
     QCoreApplication::removePostedEvents(this);
     m_deckA = nullptr;
     m_deckB = nullptr;
@@ -215,9 +230,11 @@ void DDJFLX10Controller::stop()
 
     stopWaveformWorker();
 
-#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+#if defined(BROCKDJ_FLX10_HAS_HID)
     stopHidWriter();
+#endif
 
+#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
     if (m_handle && m_interfaceClaimed) {
         libusb_release_interface(m_handle, kScreenInterface);
         m_interfaceClaimed = false;
@@ -234,11 +251,15 @@ void DDJFLX10Controller::stop()
     }
 
     m_outEndpoint = 0;
+#elif defined(Q_OS_MACOS)
+    m_nativeHid.reset();
 #endif
 
     m_midiPort.clear();
 #if defined(Q_OS_LINUX)
     m_sequencerMidiOut.reset();
+#elif defined(Q_OS_MACOS)
+    m_nativeMidiOut.reset();
 #endif
 
     setConnected(false);
@@ -524,7 +545,7 @@ void DDJFLX10Controller::invalidateDeckSnapshot(int deck, const QString& trackPa
     m_lastCoverUrls[deck].clear();
     resetDisplayPacketState(deck);
 
-#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+#if defined(BROCKDJ_FLX10_HAS_HID)
     discardQueuedDeckPackets(deck);
 #endif
     if (clearDevice && m_connected)
@@ -659,7 +680,7 @@ void DDJFLX10Controller::flushTempoWaveformRefresh()
             continue;
         }
 
-#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+#if defined(BROCKDJ_FLX10_HAS_HID)
         // Drop old-scale xx36 packets that have not reached the device yet.
         // The priority xx27 slot is republished immediately below.
         discardQueuedDeckPackets(deck);
@@ -823,6 +844,7 @@ void DDJFLX10Controller::setConnected(bool connected)
 
 QString DDJFLX10Controller::findMidiPort() const
 {
+#if defined(Q_OS_LINUX)
     QProcess process;
     process.start(QStringLiteral("amidi"), {QStringLiteral("-l")});
     if (!process.waitForFinished(1000))
@@ -852,9 +874,12 @@ QString DDJFLX10Controller::findMidiPort() const
             return port;
     }
     return fallbackPort;
+#else
+    return {};
+#endif
 }
 
-bool DDJFLX10Controller::openSequencerMidiPort()
+bool DDJFLX10Controller::openSessionMidiPort()
 {
 #if defined(Q_OS_LINUX)
     m_sequencerMidiOut.reset();
@@ -915,6 +940,26 @@ bool DDJFLX10Controller::openSequencerMidiPort()
         qWarning() << "[DDJ-FLX10] ALSA sequencer SysEx candidate failed:"
                    << candidate << errorMessage;
     }
+#elif defined(Q_OS_MACOS)
+    m_nativeMidiOut.reset();
+    std::vector<juce::MidiDeviceInfo> candidates;
+    for (const auto& device : juce::MidiOutput::getAvailableDevices()) {
+        const QString name = QString::fromStdString(device.name.toStdString());
+        if (!flx10::looksLikeControllerName(name))
+            continue;
+        const QString key = name.toLower().simplified();
+        if (key.contains(QStringLiteral("midi 2")) || key.contains(QStringLiteral("midi2"))
+            || key.contains(QStringLiteral("port 2")) || key.contains(QStringLiteral("port2")))
+            continue;
+        candidates.push_back(device);
+    }
+    if (candidates.size() != 1)
+        return false;
+    m_nativeMidiOut = juce::MidiOutput::openDevice(candidates.front().identifier);
+    if (m_nativeMidiOut) {
+        m_midiPort = QString::fromStdString(candidates.front().identifier.toStdString());
+        return true;
+    }
 #endif
     return false;
 }
@@ -930,8 +975,19 @@ bool DDJFLX10Controller::sendMidiHex(const QString& hex) const
             qWarning() << "[DDJ-FLX10] ALSA sequencer MIDI send failed:" << errorMessage;
         return ok;
     }
+#elif defined(Q_OS_MACOS)
+    if (!m_nativeMidiOut)
+        return false;
+    const QByteArray bytes = bytesFromHexString(hex);
+    m_nativeMidiOut->sendMessageNow(juce::MidiMessage(bytes.constData(),
+                                                    static_cast<int>(bytes.size())));
+    return true;
+#else
+    Q_UNUSED(hex)
+    return false;
 #endif
 
+#if defined(Q_OS_LINUX)
     if (m_midiPort.isEmpty())
         return false;
 
@@ -940,6 +996,7 @@ bool DDJFLX10Controller::sendMidiHex(const QString& hex) const
     if (!process.waitForFinished(1500))
         return false;
     return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+#endif
 }
 
 bool DDJFLX10Controller::sendJogRingIllumination(int deck, bool on)
@@ -1035,7 +1092,7 @@ void DDJFLX10Controller::sendStateTick()
     if (m_shuttingDown.load(std::memory_order_acquire) || !m_connected)
         return;
 
-#if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+#if defined(BROCKDJ_FLX10_HAS_HID)
     reportHidWriteFailure();
     if (!m_hidWriteHealthy.load(std::memory_order_acquire))
         return;
