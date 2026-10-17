@@ -29,9 +29,8 @@ struct TimeStretchRealtimeStats {
     // stretcher out of its continuous state.
     std::uint64_t keylockSeeds = 0;
     std::uint64_t worstKeylockSeedMicros = 0;
-    // Blocks spent on the direct path while the worker seeded the stretcher,
-    // and seeds that had to run inline because the worker did not answer in
-    // time. Inline seeds are the only ones that can overrun a callback.
+    // Direct bridge blocks while the worker primes/catches up the stretcher.
+    // The audio-thread seed counter is retained as a zero-required diagnostic.
     std::uint64_t keylockSeedBridgeBlocks = 0;
     std::uint64_t keylockSeedsOnAudioThread = 0;
 };
@@ -77,18 +76,6 @@ public:
     // pipeline can be seeded with what the listener just heard. Big enough for
     // the longest pre-roll any supported sample rate asks for.
     static constexpr int kOutputHistorySamples = 16384;
-    // A seed is only taken inside the callback when it fits with this much room
-    // to spare, so several decks can transition in the same block without the
-    // device deadline being at risk.
-    static constexpr double kSeedBudgetHeadroom = 4.0;
-    // For small realtime buffers (64..1024) even "affordable" seed spikes are
-    // jitter-prone under real scheduler noise. Keep those transitions worker-
-    // seeded and bridge briefly on the direct path instead of risking callback
-    // overrun crackle.
-    static constexpr int kMinimumInlineSeedBlockSamples = 2048;
-    // Upper bound on how long playback may run unlocked while the worker seeds.
-    static constexpr double kMaximumSeedBridgeSeconds = 0.03;
-
     explicit TimeStretchProcessor(juce::AudioSource* inSource);
     ~TimeStretchProcessor() override;
 
@@ -122,7 +109,8 @@ private:
     // Handshake for seeding the stretcher off the audio thread. The audio
     // thread only ever writes the snapshot while Idle and only ever renders
     // through the pipeline again once it has consumed a Ready seed, so the
-    // worker owns the stretcher exclusively while it is Seeding.
+    // worker owns the stretcher exclusively while it is Seeding. Ready batches
+    // can be followed by catch-up batches before live rendering resumes.
     enum class SeedState : std::uint8_t { Idle, Requested, Seeding, Ready };
     struct Pipeline {
         std::unique_ptr<RubberBand::RubberBandStretcher> rubberBand;
@@ -151,20 +139,13 @@ private:
     void stopWorker() noexcept;
     void activatePreparedPipelineAtBlockBoundary() noexcept;
     void processPipeline(Pipeline& pipeline, const juce::AudioSourceChannelInfo& info) noexcept;
-    // outputSeek() bakes its pre-roll phase state using whatever transpose
-    // factor is live on the stretcher *at call time*. Tempo changes never
-    // rebuild the pipeline (that would stall the callback), so a pipeline's
-    // transpose factor is only ever refreshed lazily inside processPipeline().
-    // Any seed path (worker or inline) must call this first, or it seeds
-    // phase continuity for a stale pitch and the very next processPipeline()
-    // call yanks the transpose to the correct value out from under it.
+    // Refresh pitch before processing either live input or worker-side pre-roll.
     void syncPipelinePitchScale(Pipeline& pipeline) noexcept;
     void processSignalsmithPipeline(Pipeline& pipeline,
                                     const juce::AudioSourceChannelInfo& info) noexcept;
     void applySwitchFade(const juce::AudioSourceChannelInfo& info) noexcept;
     void beginTransitionFade() noexcept;
-    void prepareKeylockTransition(Pipeline& pipeline) noexcept;
-    [[nodiscard]] bool requestKeylockSeed(int slot) noexcept;
+    [[nodiscard]] bool requestKeylockSeed(int slot, std::uint64_t catchupSamples = 0) noexcept;
     bool serviceSeedRequest() noexcept;
     void recordSeedDuration(std::chrono::steady_clock::time_point started) noexcept;
     void wakeWorker() noexcept
@@ -174,7 +155,6 @@ private:
     }
     void appendOutputHistory(const juce::AudioSourceChannelInfo& info) noexcept;
     void readOutputHistory(juce::AudioBuffer<float>& destination, int count) const noexcept;
-    void seedPipelineFromHistory(Pipeline& pipeline) noexcept;
     static bool validConfiguration(const TimeStretchConfiguration& config) noexcept;
     void resizeBuffer(juce::AudioBuffer<float>& buffer, int channels, int samples);
 
@@ -199,13 +179,15 @@ private:
     bool m_keylockRenderActive = false;
     // Seeding runs on the worker: it costs several FFT frames and would blow a
     // small callback budget. While a seed is in flight the audio thread bridges
-    // through the direct path, which is continuous audio at the wrong pitch for
-    // a fraction of a millisecond instead of a dropout.
+    // through the direct path at unlocked pitch until the worker catches up,
+    // rather than dropping audio or blocking on the worker.
     std::atomic<SeedState> m_seedState { SeedState::Idle };
     std::atomic<int> m_seedSlot { -1 };
     juce::AudioBuffer<float> m_seedSnapshot;
     int m_seedSnapshotLength = 0;
-    int m_seedBridgeSamples = 0;
+    bool m_seedNeedsReset = true; // published with the seed snapshot
+    bool m_seedValid = false; // audio-thread-owned validity of the in-flight seed
+    std::uint64_t m_seedHistoryEnd = 0;
     std::atomic<double> m_sampleRate { 44100.0 };
     std::atomic<int> m_maximumBlockSize { 512 };
     std::atomic<std::uint64_t> m_trackGeneration { 0 };
@@ -215,11 +197,10 @@ private:
     std::atomic<int> m_reportedLatencySamples { 0 };
     std::atomic<int> m_switchFadeRemaining { 0 };
     juce::AudioBuffer<float> m_previousTail;
-    // Ring of everything this processor has emitted, plus a linear scratch the
-    // ring is unwrapped into. Only ever touched from the audio thread.
+    // Ring of everything this processor has emitted. Audio-thread-owned.
     juce::AudioBuffer<float> m_outputHistory;
-    juce::AudioBuffer<float> m_historyScratch;
     int m_historyWrite = 0;
+    std::uint64_t m_historySamples = 0;
     std::atomic<bool> m_accepting { false };
     std::atomic<bool> m_prepared { false };
     std::atomic<bool> m_stopRequested { false };

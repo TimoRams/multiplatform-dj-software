@@ -20,9 +20,9 @@ The complete CTest suite covers the following relevant focused groups:
 | Area | Tests |
 | --- | --- |
 | UI/QML | `ui_scale`, `waveform_zoom`, `ui_layout`, `qml_component`, `waveform_render_stability` |
-| Mixer/audio graph | `smoke`, `mixer_dsp`, `deck_audio_graph`, `master_bus`, `audio_routing_contract` |
+| Mixer/audio graph | `smoke`, `mixer_dsp`, `deck_audio_graph`, `master_bus` (mixed zero crossings remain unmodified; real silence still fades), `audio_routing_contract` |
 | Transport/sync | `deck_transport`, `sync_coordinator`, `control_clock`, `render_pressure_policy`, `cue_loop_controller` |
-| Cache/stretch | `audio_page_cache` (deferred/synchronous reader retirement), `scratch_cache` (including 192/48 kHz aliasing), `scratch_motion` (trajectory/spectrum/release), `cached_playback`, `time_stretch` (paused-keylock bypass) |
+| Cache/stretch | `audio_page_cache` (deferred/synchronous reader retirement), `scratch_cache` (including 192/48 kHz aliasing), `scratch_motion` (trajectory/spectrum/release), `cached_playback`, `time_stretch` (paused bypass, both backends, toggle continuity, delayed-worker catch-up, rapid backend/track changes, no callback seeds) |
 | Analysis/waveform | `analysis_lifetime`, `analysis_snapshot`, `library_analysis_manager`, `progressive_waveform_publication`, `waveform_motion`, `waveform_line_*` |
 | Devices/controllers | `audio_device_service`, `alsa_midi_line_parser`, `midi_14bit_accumulator`, `flx10_jog_routing`, `flx10_display_protocol`, `parameter_store` |
 | Workers/lifecycle | `startup_close_smoke`, `startup_early_close_smoke` (full application builds), `posix_signal_handler`, `audio_thread_scheduling`, `database_worker`, `media_io_scheduler`, `track_loader`, `dj_engine_api_contract` |

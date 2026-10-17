@@ -296,7 +296,26 @@ void BrickwallLimiter::applySilenceDeClick(float* const* channelData, int channe
         }
     }
 
+    bool silenceContinues = sourceFrameSilent;
     if (sourceFrameSilent && !m_lastSourceFrameSilent && m_silenceTailRemaining <= 0) {
+        // A single zero frame is also a normal waveform crossing or cancellation
+        // between decks. The existing lookahead lets us distinguish it from a
+        // real stop without adding latency or changing any musical samples.
+        const int inspectSamples = std::min(16, m_lookaheadSamples);
+        for (int ahead = 1; ahead <= inspectSamples && silenceContinues; ++ahead) {
+            const int position = (m_delayWritePos - m_lookaheadSamples + ahead
+                                  + m_delaySize) & m_delayMask;
+            for (int ch = 0; ch < channels; ++ch) {
+                if (std::abs(m_delayBuffer[static_cast<size_t>(ch)][position])
+                    > silenceThreshold) {
+                    silenceContinues = false;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (silenceContinues && !m_lastSourceFrameSilent && m_silenceTailRemaining <= 0) {
         for (int ch = 0; ch < channels; ++ch)
             m_silenceTailStart[static_cast<size_t>(ch)] = m_lastOutputSample[static_cast<size_t>(ch)];
         m_silenceTailRemaining = m_silenceTailSamples;

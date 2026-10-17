@@ -21,8 +21,8 @@ void configureWorkerPriority() noexcept
 {
 #ifdef __linux__
     // This thread services keylock seeds, which gate live audio: if it is not
-    // scheduled promptly the audio thread has to take the seed itself and blow
-    // its budget. Ask for a real-time band just below the callback, and settle
+    // scheduled promptly the unlocked bridge lasts longer. Ask for a real-time
+    // band just below the callback, and settle
     // for normal priority when the host does not allow it.
     sched_param parameters {};
     const int minimum = sched_get_priority_min(SCHED_FIFO);
@@ -158,19 +158,19 @@ void TimeStretchProcessor::prepareToPlay(int blockSize, double sr)
     m_accepting.store(true, std::memory_order_release);
     m_prepared.store(true, std::memory_order_release);
     m_stopRequested.store(false, std::memory_order_release);
-    resizeBuffer(m_previousTail, 2, kSwitchFadeSamples);
+    resizeBuffer(m_previousTail, 2, 1);
     m_previousTail.clear();
     resizeBuffer(m_outputHistory, 2, kOutputHistorySamples);
-    resizeBuffer(m_historyScratch, 2, kOutputHistorySamples);
     resizeBuffer(m_seedSnapshot, 2, kOutputHistorySamples);
     m_outputHistory.clear();
-    m_historyScratch.clear();
     m_seedSnapshot.clear();
     m_seedState.store(SeedState::Idle, std::memory_order_release);
     m_seedSlot.store(-1, std::memory_order_release);
     m_seedSnapshotLength = 0;
-    m_seedBridgeSamples = 0;
+    m_seedValid = false;
+    m_seedHistoryEnd = 0;
     m_historyWrite = 0;
+    m_historySamples = 0;
 
     auto initial = desiredConfiguration();
     initial.configurationGeneration = 1;
@@ -278,8 +278,7 @@ void TimeStretchProcessor::prewarmPipeline(Pipeline& p)
         // gap by a single sample — the delay is inherent, so all it would do is
         // burn input. What this pass is actually for is the allocations inside
         // outputSeek(): doing one here, on the worker thread, leaves the vectors
-        // at full capacity so the real seed at activation time can run on the
-        // audio thread without touching the allocator.
+        // at full capacity before the worker primes real streaming history.
         const int seedLength = std::min(p.zeros.getNumSamples(),
                                         p.signalsmith->outputSeekLength(1.0f));
         if (seedLength > 0)
@@ -352,6 +351,11 @@ void TimeStretchProcessor::workerLoop()
 
 void TimeStretchProcessor::activatePreparedPipelineAtBlockBoundary() noexcept
 {
+    // A seed pins its slot until the callback consumes/discards Ready. Retiring
+    // that slot earlier lets preparation destroy a stretcher still in use by
+    // the seed worker.
+    if (m_seedState.load(std::memory_order_acquire) != SeedState::Idle)
+        return;
     const auto wanted = m_desiredGeneration.load(std::memory_order_acquire);
     for (int i = 0; i < 2; ++i) {
         auto& next = m_pipelines[i];
@@ -378,25 +382,10 @@ void TimeStretchProcessor::activatePreparedPipelineAtBlockBoundary() noexcept
 
 void TimeStretchProcessor::beginTransitionFade() noexcept
 {
-    readOutputHistory(m_previousTail, kSwitchFadeSamples);
+    // Replaying the preceding 256 samples jumps backwards at the splice.
+    // Anchor the ramp at the actual last emitted sample instead.
+    readOutputHistory(m_previousTail, 1);
     m_switchFadeRemaining.store(kSwitchFadeSamples, std::memory_order_relaxed);
-}
-
-void TimeStretchProcessor::prepareKeylockTransition(Pipeline& p) noexcept
-{
-    // Entering keylock from a discontinuity (toggle, scratch release, new
-    // track) must not replay whatever the stretcher still held internally.
-    if (p.fifo) p.fifo->reset();
-    if (!p.signalsmith) {
-        // Rubber Band keeps its internal state deliberately: a reset() here
-        // would re-arm its start pad, and refilling that inside the callback
-        // costs far more than the small spectral discontinuity the crossfade
-        // already covers.
-        return;
-    }
-    const auto started = std::chrono::steady_clock::now();
-    seedPipelineFromHistory(p);
-    recordSeedDuration(started);
 }
 
 void TimeStretchProcessor::recordSeedDuration(std::chrono::steady_clock::time_point started) noexcept
@@ -412,13 +401,16 @@ void TimeStretchProcessor::recordSeedDuration(std::chrono::steady_clock::time_po
     }
 }
 
-bool TimeStretchProcessor::requestKeylockSeed(int slot) noexcept
+bool TimeStretchProcessor::requestKeylockSeed(int slot, std::uint64_t catchupSamples) noexcept
 {
     if (slot < 0 || slot >= static_cast<int>(m_pipelines.size())) return false;
     if (!m_accepting.load(std::memory_order_acquire)) return false;
     auto& p = m_pipelines[slot];
-    if (!p.signalsmith) return false;
-    const int length = std::min({ p.signalsmith->outputSeekLength(1.0f),
+    m_seedNeedsReset = catchupSamples == 0
+        || catchupSamples > static_cast<std::uint64_t>(m_outputHistory.getNumSamples());
+    const int requestedLength = m_seedNeedsReset ? std::max(4096, p.latency * 2)
+                                                : static_cast<int>(catchupSamples);
+    const int length = std::min({ requestedLength,
                                   m_seedSnapshot.getNumSamples(),
                                   m_outputHistory.getNumSamples() });
     if (length <= 0) return false;
@@ -426,6 +418,8 @@ bool TimeStretchProcessor::requestKeylockSeed(int slot) noexcept
     // writing history while the seed runs.
     readOutputHistory(m_seedSnapshot, length);
     m_seedSnapshotLength = length;
+    m_seedValid = true;
+    m_seedHistoryEnd = m_historySamples;
     m_seedSlot.store(slot, std::memory_order_relaxed);
     m_seedState.store(SeedState::Requested, std::memory_order_release);
     wakeWorker();
@@ -441,16 +435,39 @@ bool TimeStretchProcessor::serviceSeedRequest() noexcept
     const int slot = m_seedSlot.load(std::memory_order_relaxed);
     if (slot >= 0 && slot < static_cast<int>(m_pipelines.size()) && m_seedSnapshotLength > 0) {
         auto& p = m_pipelines[slot];
-        if (p.signalsmith) {
-            const auto started = std::chrono::steady_clock::now();
+        const auto started = std::chrono::steady_clock::now();
+        syncPipelinePitchScale(p);
+        if (m_seedNeedsReset) {
             if (p.fifo) p.fifo->reset();
-            // Seed with the pitch the pipeline will actually render at, not
-            // whatever was live when it was last built.
-            syncPipelinePitchScale(p);
-            p.signalsmith->outputSeek(m_seedSnapshot.getArrayOfReadPointers(),
-                                      m_seedSnapshotLength);
-            recordSeedDuration(started);
+            if (p.signalsmith)
+                p.signalsmith->reset();
+            else if (p.rubberBand) {
+                p.rubberBand->reset();
+                prewarmPipeline(p);
+            }
         }
+        // Prime using ordinary streaming input, not outputSeek(): outputSeek
+        // synthesizes a new onset, which is not a continuation of past audio.
+        // Catch-up batches cover every direct bridge sample emitted while the
+        // worker was busy, so live input never jumps over a missing block.
+        for (int offset = 0; offset < m_seedSnapshotLength;) {
+            const int count = std::min(kMaxPullSize, m_seedSnapshotLength - offset);
+            const float* input[2] { m_seedSnapshot.getReadPointer(0, offset),
+                                    m_seedSnapshot.getReadPointer(1, offset) };
+            if (p.signalsmith) {
+                p.signalsmith->process(input, count, p.trim.getArrayOfWritePointers(), count);
+            } else if (p.rubberBand) {
+                p.rubberBand->process(input, count, false);
+                for (int available = p.rubberBand->available(); available > 0;
+                     available = p.rubberBand->available()) {
+                    p.rubberBand->retrieve(p.trim.getArrayOfWritePointers(),
+                                          std::min(available, p.trim.getNumSamples()));
+                }
+            }
+            offset += count;
+        }
+        if (m_seedNeedsReset)
+            recordSeedDuration(started);
     }
     m_seedState.store(SeedState::Ready, std::memory_order_release);
     return true;
@@ -484,7 +501,7 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
             m_keylockRenderActive = false;
             beginTransitionFade();
         }
-        m_seedBridgeSamples = 0;
+        m_seedValid = false;
         // A seed that finished after keylock was switched off describes audio
         // that is no longer the tail of the output; using it later would splice
         // in stale material.
@@ -495,83 +512,50 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
     }
 
     auto& pipeline = m_pipelines[active];
-    if (m_keylockSeedPending.exchange(false, std::memory_order_acq_rel))
+    if (m_keylockSeedPending.exchange(false, std::memory_order_acq_rel)) {
+        m_seedValid = false;
+        if (m_keylockRenderActive)
+            beginTransitionFade();
         m_keylockRenderActive = false;
+    }
 
     if (!m_keylockRenderActive) {
-        // Seeding costs several FFT frames. On a roomy buffer that fits inside
-        // the callback and switching in place is seamless; on a small one it
-        // overruns, so bridge on the direct path until the worker has seeded.
-        // Bridging is continuous audio at an unlocked pitch, which is far less
-        // audible than a dropout, but it is still wrong, so keep it short.
-        const double rate = m_sampleRate.load(std::memory_order_relaxed);
-        const double blockMicros = rate > 0.0 ? 1.0e6 * info.numSamples / rate : 0.0;
-        const auto measuredSeedMicros = m_worstSeedMicros.load(std::memory_order_relaxed);
-        // Until a seed has ever been measured, assume it does not fit.
-        const bool inlineAffordable = info.numSamples >= kMinimumInlineSeedBlockSamples
-            && measuredSeedMicros > 0
-            && static_cast<double>(measuredSeedMicros) * kSeedBudgetHeadroom <= blockMicros;
-        const int bridgeLimit = static_cast<int>(rate * kMaximumSeedBridgeSeconds);
-        const bool bridgeAffordable = !inlineAffordable
-            && m_seedBridgeSamples + info.numSamples <= bridgeLimit;
+        // Never reset/seed a phase vocoder on the device callback, even with a
+        // large block: several decks share that deadline.
         bool seeded = false;
-        bool bridge = false;
+        bool requestSeed = false;
+        bool catchupSeed = false;
         switch (m_seedState.load(std::memory_order_acquire)) {
         case SeedState::Idle:
-            // requestKeylockSeed fails when there is nothing to seek (Rubber
-            // Band) or the worker is gone; either way the audio thread still
-            // owns the pipeline and takes the transition inline.
-            bridge = requestKeylockSeed(active);
+            requestSeed = true;
             break;
         case SeedState::Ready:
-            // A seed for a slot that has since been swapped out is useless.
-            seeded = m_seedSlot.load(std::memory_order_relaxed) == active;
+            seeded = m_seedValid && m_seedSlot.load(std::memory_order_relaxed) == active;
+            catchupSeed = seeded && m_seedHistoryEnd != m_historySamples;
+            seeded = seeded && !catchupSeed;
             m_seedState.store(SeedState::Idle, std::memory_order_release);
-            if (!seeded)
-                bridge = requestKeylockSeed(active);
+            requestSeed = !seeded;
             break;
-        case SeedState::Requested: {
-            // Not picked up yet, so ownership can still be taken back once
-            // bridging has gone on longer than one late callback is worth.
-            auto expected = SeedState::Requested;
-            bridge = bridgeAffordable
-                  || !m_seedState.compare_exchange_strong(expected, SeedState::Idle,
-                                                          std::memory_order_acq_rel);
-            break;
-        }
+        case SeedState::Requested:
         case SeedState::Seeding:
-            // The worker owns the stretcher; touching it here would race.
-            bridge = true;
+            seeded = false;
             break;
         }
 
-        if (bridge) {
-            m_seedBridgeSamples += info.numSamples;
+        if (!seeded) {
             m_seedBridgeBlocks.fetch_add(1, std::memory_order_relaxed);
             renderDirect();
+            // Snapshot the bridge we just emitted, not the preceding block.
+            // Otherwise even a prompt worker seeds one complete callback behind
+            // the next input (a 2048-sample gap at common device settings).
+            if (requestSeed)
+                (void) requestKeylockSeed(
+                    active, catchupSeed ? m_historySamples - m_seedHistoryEnd : 0);
             return;
         }
 
-        if (!seeded && !inlineAffordable) {
-            // Never run a Signalsmith seed in small realtime buffers: occasional
-            // scheduler jitter can still turn an "average-safe" micro-burst into
-            // an audible crackle. Keep bridging and wake the worker again.
-            m_seedBridgeSamples += info.numSamples;
-            m_seedBridgeBlocks.fetch_add(1, std::memory_order_relaxed);
-            wakeWorker();
-            renderDirect();
-            return;
-        }
-
-        m_seedBridgeSamples = 0;
-        // Capture the crossfade tail before the block is overwritten.
         beginTransitionFade();
-        if (seeded) {
-            if (pipeline.fifo) pipeline.fifo->reset();
-        } else {
-            m_inlineSeeds.fetch_add(1, std::memory_order_relaxed);
-            prepareKeylockTransition(pipeline);
-        }
+        if (pipeline.fifo) pipeline.fifo->reset();
         m_keylockRenderActive = true;
     }
     m_reportedLatencySamples.store(pipeline.latency, std::memory_order_relaxed);
@@ -689,7 +673,7 @@ void TimeStretchProcessor::applySwitchFade(const juce::AudioSourceChannelInfo& i
         const int fadeIndex = kSwitchFadeSamples-remaining+i;
         const float gain = static_cast<float>(fadeIndex+1)/kSwitchFadeSamples;
         for(int ch=0;ch<info.buffer->getNumChannels();++ch) {
-            const float oldSample = ch < m_previousTail.getNumChannels() ? m_previousTail.getSample(ch,fadeIndex) : 0.0f;
+            const float oldSample = ch < m_previousTail.getNumChannels() ? m_previousTail.getSample(ch,0) : 0.0f;
             const float newSample = info.buffer->getSample(ch,info.startSample+i);
             info.buffer->setSample(ch,info.startSample+i,oldSample*(1.0f-gain)+newSample*gain);
         }
@@ -714,6 +698,7 @@ void TimeStretchProcessor::appendOutputHistory(const juce::AudioSourceChannelInf
             m_outputHistory.copyFrom(ch, 0, *info.buffer, sourceChannel, sourceStart + first, second);
     }
     m_historyWrite = (m_historyWrite + count) % capacity;
+    m_historySamples += static_cast<std::uint64_t>(info.numSamples);
 }
 
 void TimeStretchProcessor::readOutputHistory(juce::AudioBuffer<float>& destination, int count) const noexcept
@@ -730,29 +715,6 @@ void TimeStretchProcessor::readOutputHistory(juce::AudioBuffer<float>& destinati
         if (second > 0)
             destination.copyFrom(ch, first, m_outputHistory, ch, 0, second);
     }
-}
-
-void TimeStretchProcessor::seedPipelineFromHistory(Pipeline& p) noexcept
-{
-    if (!p.signalsmith || !p.config.keylockEnabled) return;
-    // Seed with the pitch this pipeline will actually render at. Without this,
-    // an inline seed taken with a tempo offset dialed in bakes pre-roll phase
-    // state for the wrong pitch, and the transpose update a few lines later in
-    // processPipeline() invalidates it immediately — audible as a digital
-    // artifact right at the resume point, not a plain amplitude click.
-    syncPipelinePitchScale(p);
-    // A stretcher that has just been built outputs its own latency worth of
-    // silence before the first real sample arrives — at this window that is
-    // over 30 ms of dropout every time keylock is switched on, which is exactly
-    // the click. Handing it the audio the listener just heard as pre-roll lets
-    // it carry that on seamlessly while the new input works its way through.
-    const int seedLength = std::min({ p.signalsmith->outputSeekLength(1.0f),
-                                      m_historyScratch.getNumSamples(),
-                                      m_outputHistory.getNumSamples() });
-    if (seedLength <= 0) return;
-    readOutputHistory(m_historyScratch, seedLength);
-    p.signalsmith->outputSeek(m_historyScratch.getArrayOfReadPointers(), seedLength);
-    p.fifo->reset();
 }
 
 int TimeStretchProcessor::getLatencySamples() const noexcept { return m_reportedLatencySamples.load(std::memory_order_relaxed); }

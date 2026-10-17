@@ -21,6 +21,7 @@ active register.
 | P1 | Shutdown ordering remains an ownership contract | Per-runtime stopping/in-progress/completed flags gate retries and re-entry. Rendering stops before owner-thread, root-specific deferred deletion; teardown no longer pumps general Qt events. Normal and early-close smoke paths exercise the real root. | Preserve callback retirement, root destruction and worker-join ordering; retain sanitizer coverage and verify physical device shutdown. | guarded |
 | P1 | GPU startup remains driver-dependent | The isolated startup smoke requires a real Software-rendered frame and service readiness; load/scene-graph failures exit through common cleanup. This cannot establish physical Vulkan/OpenGL driver behavior or recovery UX. | Verify backend failures and startup on supported physical GPUs; do not treat the offscreen renderer as GPU acceptance. | open |
 | P1 | Time-stretch preparation can be superseded | Rapid tempo, backend, keylock, or track changes can invalidate an in-progress inactive slot. Generation checks discard stale work, temporarily retaining the previous/bypass configuration. | Keep claim-before-read and latest-generation behavior; rate-limit only if profiling shows pressure. | accepted |
+| P1 | Keylock worker scheduling can extend unlocked playback | Priming and catch-up run only on the worker. The callback stays on the direct path until the worker has processed every bridge sample; it never blocks or takes over a reset/seed. | Check bridge-block diagnostics and audible transitions under sustained multi-deck CPU load on physical devices. | accepted |
 | P1 | Cache starvation produces intentional faded silence | Cache misses are callback-safe, but an undersized budget or slow worker can starve playback/scratch. | Tune with production media and expose actionable cache diagnostics before changing the no-fallback contract. | accepted |
 | P2 | Released cache metadata persists until shutdown | `AudioPageCache` retains small slot metadata so stale handles remain safe while PCM is evicted. Many unique tracks can grow metadata. | Add control-thread epoch reclamation only if production measurements justify the complexity. | accepted |
 | P2 | `DjEngine` remains a broad public facade | The API spans transport, cue/loop, mixer, FX, scratch, sync, metadata, and diagnostics across responsibility-named implementation files. | Continue only as a separately reviewed facade/ownership refactor; preserve the public QML/controller contract. | deferred |
@@ -46,9 +47,11 @@ active register.
 - Keylock is a per-block routing decision, never part of the pipeline identity:
   toggling it, entering or leaving scratch, and loading a track must not queue a
   pipeline rebuild.
-- The stretcher is seeded either by the pipeline worker, which owns it
-  exclusively for the duration, or by the callback when the block budget can
-  absorb it — never by both.
+- The stretcher is primed/caught up exclusively by the pipeline worker. An
+  in-flight seed pins its slot until the callback consumes/discards the result.
+  No seed/reset is allowed on the callback, regardless of block size.
+- The always-on limiter silence tail distinguishes sustained silence from
+  ordinary musical zero crossings using its existing lookahead.
 - Filter coefficients are prepared as complete finite snapshots and activated
   in preallocated banks.
 - Analyzer and loader workers are never detached; cancellation invalidates

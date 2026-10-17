@@ -44,7 +44,7 @@ public:
         std::uint64_t scratchRecoveryEvents = 0;
         std::uint64_t scratchGenerationMismatches = 0;
         // Keylock re-entry. Seeding the stretcher costs several FFT frames, so
-        // it normally runs on the pipeline worker while the deck bridges on the
+        // it always runs on the pipeline worker while the deck bridges on the
         // direct path. A rising keylockSeedsOnAudioThread means seeds are
         // landing in the callback, which is what makes transitions crackle.
         std::uint64_t keylockSeeds = 0;

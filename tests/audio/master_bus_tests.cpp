@@ -189,6 +189,42 @@ void outputRouterPreservesSampleContract()
         assert(hardware.getMagnitude(channel, 0, hardware.getNumSamples()) == 0.0f);
 }
 
+void silenceTailPreservesMixedZeroCrossings()
+{
+    constexpr int samples = 512;
+    constexpr double sampleRate = 48000.0;
+    juce::AudioBuffer<float> signal(2, samples);
+    juce::AudioBuffer<float> expected(2, samples);
+    for (int channel = 0; channel < 2; ++channel) {
+        for (int sample = 0; sample < samples; ++sample) {
+            const double phase = juce::MathConstants<double>::twoPi * sample / sampleRate;
+            // Distinct signals sharing a clock, with regular cancellation/zero
+            // crossings. Neither a crossing nor cancellation is a stopped deck.
+            const float value = static_cast<float>(
+                0.2 * std::sin(6000.0 * phase) + 0.2 * std::sin(12000.0 * phase));
+            signal.setSample(channel, sample, value);
+            expected.setSample(channel, sample, value);
+        }
+    }
+    BrickwallLimiter limiter;
+    limiter.prepare(sampleRate, samples, 2);
+    limiter.setEnabled(false);
+    limiter.processBlock(signal.getArrayOfWritePointers(), 2, 0, samples);
+    const int delay = limiter.getLookaheadSamples();
+    for (int channel = 0; channel < 2; ++channel) {
+        for (int sample = delay; sample < samples; ++sample)
+            assert(std::abs(signal.getSample(channel, sample)
+                            - expected.getSample(channel, sample - delay)) < 1.0e-6f);
+    }
+
+    fill(signal, 0.25f);
+    limiter.processBlock(signal.getArrayOfWritePointers(), 2, 0, samples);
+    signal.clear();
+    limiter.processBlock(signal.getArrayOfWritePointers(), 2, 0, samples);
+    assert(signal.getSample(0, delay) > 0.20f);
+    assert(signal.getMagnitude(0, samples - 32, 32) == 0.0f);
+}
+
 void performanceSmoke()
 {
     MasterMixer mixer;
@@ -226,6 +262,7 @@ int main()
     commandQueueIsBounded();
     mixerHeadphoneAndRouter();
     outputRouterPreservesSampleContract();
+    silenceTailPreservesMixedZeroCrossings();
     performanceSmoke();
     std::cout << "master component tests passed\n";
     return 0;

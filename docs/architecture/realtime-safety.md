@@ -159,18 +159,29 @@ The following `TimeStretchRealtimeStats` fields must remain zero during
 transition and stress tests: prepare, reset, prewarm, buffer growth, and
 blocking-lock calls from the audio thread.
 
-Signalsmith's `outputSeek()` bakes its pre-roll phase state using whatever
-transpose factor is live on that stretcher instance *at call time* — it takes
-no pitch argument of its own. Tempo changes never rebuild a pipeline (that
-would risk a callback-thread rebuild), so a pipeline's transpose factor is
-only ever refreshed lazily, inside `processPipeline()`. Every seed path —
-`serviceSeedRequest()` on the worker and `seedPipelineFromHistory()` inline on
-the audio thread — must call `syncPipelinePitchScale()` immediately before its
-`outputSeek()` call. Skipping this seeds phase continuity for a stale pitch,
-and the very next `processPipeline()` call yanks the transpose to the correct
-value out from under it — audible as a digital artifact at the resume point
-whenever a tempo offset is dialed in with keylock active, not a plain
-amplitude click.
+Both backends are primed exclusively on the worker, including large device
+buffers. `serviceSeedRequest()` refreshes pitch, resets the stretcher, and
+processes the bridge history as ordinary streaming pre-roll while discarding
+its output. Signalsmith's `outputSeek()` is only used for preparation-time
+workspace prewarming: its synthesized onset is not a substitute for continuous
+streaming history and can introduce a later splice when live input reaches the
+output.
+
+The callback publishes a private snapshot **after** emitting its direct bridge
+block. If further bridge samples were emitted while the worker was busy,
+`Ready` returns ownership to the callback only long enough to publish a
+catch-up batch. The worker processes that batch without resetting. Live
+rendering resumes only when the seeded history ends exactly at the current
+input boundary; no bridge block may be skipped. A lag beyond the fixed history
+capacity restarts worker-side priming rather than accessing overwritten data.
+The callback never cancels a pending seed to do the work inline.
+
+An in-flight seed pins its pipeline slot through `Requested`, `Seeding`, and
+`Ready`. Backend activation must wait for that handshake to return to `Idle`
+before retiring a slot; otherwise preparation could destroy a stretcher the
+seed worker still owns. Bypass and track/playback discontinuities invalidate
+old seed results. Transition ramps start at the last emitted sample, not at
+the beginning of a replayed tail, which would itself introduce a waveform jump.
 
 Key Shift (`TimeStretchProcessor::setKeySemitoneOffset()`) stores its offset in
 a plain `std::atomic<double>` and never allocates or locks. It composes with
@@ -181,8 +192,8 @@ Shift offset always lands relative to whatever pitch the deck would otherwise
 play. Because a non-zero offset must reach the stretcher even with keylock
 off, `getNextAudioBlock()`'s `keylockRequested` gate is `pitchLockEnabled ||
 keySemitoneActive` — both flags route through the same seed/crossfade
-handshake described above, so the same lazy-refresh-before-`outputSeek()`
-rule applies to Key Shift pitch changes as to keylock ones.
+handshake described above, so the same refresh-before-worker-pre-roll rule
+applies to Key Shift pitch changes as to keylock ones.
 
 A loaded but paused deck sets `TimeStretchProcessor::setInputPlaybackActive(false)`.
 Keylock then renders the direct router path once, which preserves scratch and FX
@@ -213,6 +224,12 @@ counters must remain zero.
 handoff and are applied once at a block boundary. Effect storage is prepared
 in advance; rapid effect switching must not resize buffers or mutate
 callback-owned non-atomic state from a producer thread.
+
+`BrickwallLimiter`'s always-on silence tail must distinguish actual silence
+from individual zero crossings or cancellation between mixed decks. It checks
+the next 16 already-buffered lookahead samples before arming a stop tail. A
+musical zero crossing must remain unchanged, even with the limiter bypassed;
+actual sustained silence still receives the existing bounded fade.
 
 ## Control, sync, analysis, and I/O boundaries
 

@@ -40,6 +40,136 @@ static_assert(noexcept(std::declval<TimeStretchProcessor&>().getNextAudioBlock(
 
 int main(){
     bool ok=true;
+    for (const auto backend : {TimeStretchBackend::Signalsmith, TimeStretchBackend::RubberBand})
+    for (const double rate : {44100.0, 48000.0, 96000.0})
+    for (const int samples : {64, 128, 512, 2048}) {
+        ToneSource tone;
+        TimeStretchProcessor source(&tone);
+        source.setBackend(backend);
+        source.prepareToPlay(samples, rate);
+        source.setTempoRatio(0.92);
+        juce::AudioBuffer<float> block(2, samples + 16);
+        constexpr int start = 7;
+        for (int i = 0; i < 32; ++i)
+            source.getNextAudioBlock({&block, start, samples});
+        float previous = block.getSample(0, start + samples - 1);
+        source.setPitchLockEnabled(true);
+        bool engaged = false;
+        int lockedSamples = 0;
+        float maximumEnableStep = 0.0f;
+        int maximumStepSample = 0;
+        for (int i = 0; i < 100; ++i) {
+            source.getNextAudioBlock({&block, start, samples});
+            for (int sample = start; sample < start + samples; ++sample) {
+                const float value = block.getSample(0, sample);
+                if (std::abs(value - previous) > maximumEnableStep) {
+                    maximumEnableStep = std::abs(value - previous);
+                    maximumStepSample = sample - start;
+                }
+                previous = value;
+            }
+            if (maximumEnableStep >= 0.025f)
+                std::cerr << "transition backend=" << static_cast<int>(backend)
+                          << " rate=" << rate << " block=" << samples
+                          << " maximum-step=" << maximumEnableStep
+                          << " sample=" << maximumStepSample << '\n';
+            ok &= require(maximumEnableStep < 0.025f, "enabling keylock has no waveform step");
+            if (source.getLatencySamples() > 0) {
+                engaged = true;
+                lockedSamples += samples;
+                if (lockedSamples >= source.getLatencySamples() + 2 * samples)
+                    break;
+            }
+            std::this_thread::sleep_for(std::chrono::duration<double>(samples / rate));
+        }
+        if (!engaged)
+            std::cerr << "did not engage backend=" << static_cast<int>(backend)
+                      << " rate=" << rate << " block=" << samples << '\n';
+        ok &= require(engaged, "both backends engage keylock at all device buffer sizes");
+        for (int i = 0; i < 32; ++i)
+            source.getNextAudioBlock({&block, start, samples});
+        previous = block.getSample(0, start + samples - 1);
+        source.setPitchLockEnabled(false);
+        for (int i = 0; i < 4; ++i) {
+            source.getNextAudioBlock({&block, start, samples});
+            for (int sample = start; sample < start + samples; ++sample) {
+                const float value = block.getSample(0, sample);
+                ok &= require(std::abs(value - previous) < 0.025f,
+                              "disabling keylock has no waveform step, including fade boundaries");
+                previous = value;
+            }
+        }
+        ok &= require(source.realtimeStats().keylockSeedsOnAudioThread == 0,
+                      "keylock transitions never seed on the device callback");
+    }
+    {
+        ToneSource tone;
+        TimeStretchProcessor source(&tone);
+        source.prepareToPlay(128, 48000.0);
+        juce::AudioBuffer<float> block(2, 128);
+        for (int i = 0; i < 120; ++i) {
+            source.setPitchLockEnabled(i % 3 != 0);
+            source.setBackend(i % 2 == 0 ? TimeStretchBackend::Signalsmith
+                                        : TimeStretchBackend::RubberBand);
+            if (i % 11 == 0)
+                source.setTrackGeneration(100 + i);
+            source.getNextAudioBlock({&block, 0, 128});
+            ok &= require(finite(block), "concurrent seeds and backend changes remain finite");
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        source.setPitchLockEnabled(true);
+        source.setBackend(TimeStretchBackend::Signalsmith);
+        bool recovered = false;
+        for (int i = 0; i < 500; ++i) {
+            source.getNextAudioBlock({&block, 0, 128});
+            if (source.activeBackend() == TimeStretchBackend::Signalsmith
+                && source.getLatencySamples() > 0) {
+                recovered = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        }
+        ok &= require(recovered, "rapid backend/keylock/track changes recover without a stuck bridge");
+        ok &= require(source.realtimeStats().keylockSeedsOnAudioThread == 0,
+                      "rapid transitions do not reset a stretcher in the callback");
+    }
+    {
+        ToneSource tone;
+        TimeStretchProcessor source(&tone);
+        source.prepareToPlay(128, 48000.0);
+        source.setTempoRatio(0.92);
+        juce::AudioBuffer<float> block(2, 128);
+        for (int i = 0; i < 64; ++i)
+            source.getNextAudioBlock({&block, 0, 128});
+        source.setPitchLockEnabled(true);
+        // Deliberately advance faster than a device, so the snapshot falls
+        // behind even if the seed worker runs promptly.
+        for (int i = 0; i < 32; ++i)
+            source.getNextAudioBlock({&block, 0, 128});
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        bool engaged = false;
+        float previous = block.getSample(0, 127);
+        float maximumStep = 0.0f;
+        for (int i = 0; i < 160; ++i) {
+            source.getNextAudioBlock({&block, 0, 128});
+            engaged |= source.getLatencySamples() > 0;
+            for (int sample = 0; sample < 128; ++sample) {
+                const float value = block.getSample(0, sample);
+                maximumStep = std::max(maximumStep, std::abs(value - previous));
+                previous = value;
+            }
+            std::this_thread::sleep_for(std::chrono::duration<double>(128.0 / 48000.0));
+        }
+        ok &= require(engaged, "a delayed seed catches up and eventually engages");
+        ok &= require(maximumStep < 0.025f, "worker catch-up leaves no missing-input waveform splice");
+        const auto seeds = source.realtimeStats().keylockSeeds;
+        for (int i = 0; i < 64; ++i) {
+            source.setTempoRatio(0.92 + 0.0001 * std::sin(i * 0.1));
+            source.getNextAudioBlock({&block, 0, 128});
+        }
+        ok &= require(source.realtimeStats().keylockSeeds == seeds,
+                      "continuous beatmatch rate corrections never reseed keylock");
+    }
     {   // A loaded but paused deck still passes through this processor. It must
         // pull the silent router once, not spend FFT work filling a keylock
         // pipeline with silence on every callback.
@@ -117,9 +247,8 @@ int main(){
         ok&=require(finite(b),"scratch transition finite");
         ok&=require(source.activeConfigurationGeneration()==preScratchGeneration,
                     "scratch release resumes keylock without waiting for a rebuild");
-        // Small buffers bridge while the worker seeds; larger buffers may still
-        // choose an inline seed. Either way keylock has to return quickly
-        // without waiting on a pipeline rebuild.
+        // All buffers bridge while the worker seeds. Keylock has to return
+        // without waiting on a pipeline rebuild or seeding in the callback.
         int scratchReleaseBlocks = 0;
         const auto blockPeriod = std::chrono::nanoseconds(
             static_cast<long long>(1.0e9 * b.getNumSamples() / rate));
@@ -152,8 +281,8 @@ int main(){
         const auto generation=source.activeConfigurationGeneration();
         source.setPitchLockEnabled(true); source.setTempoRatio(0.9);
         // Render across the whole transition. Whichever path the processor
-        // picks — bridging on the direct path while the worker seeds, or
-        // seeding inline — the output has to stay continuous.
+        // spends bridging on the direct path while the worker seeds, the output
+        // has to stay continuous.
         juce::AudioBuffer<float> b(2,256);
         int blocks=0,latencyWindow=0;
         double transitionSquares=0.0; int transitionCount=0;
