@@ -25,3 +25,9 @@ A snapshot or atomic used only for thread transfer is not a second product owner
 
 `DjEngine`, `MixerControl`, MIDI, HID, and QML publish commands and display snapshots. They
 do not own DSP state or create alternate audio paths.
+
+At natural track end, play intent remains active while `DeckTransport` holds
+the visual anchor and controller cursor at the track endpoint. Display clocks
+must not extrapolate past that stationary cursor or apply moving-playback
+latency compensation to it. Seeking back into the track releases the hold;
+scratch continues to use its own authoritative cursor.

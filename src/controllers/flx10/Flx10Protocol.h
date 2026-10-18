@@ -367,6 +367,17 @@ struct PendingDisplayPacket
     std::uint64_t sequence = 0;
 };
 
+inline double compensatedDisplayPosition(double position, double duration,
+                                         double latency, bool playing,
+                                         bool scratching, bool reverse) noexcept
+{
+    if (!std::isfinite(position))
+        return 0.0;
+    if (playing && !scratching && position > 0.0 && position < duration)
+        position += reverse ? latency : -latency;
+    return std::clamp(position, 0.0, duration);
+}
+
 // Status remains low-latency, but cannot starve the ordered track-load upload
 // when a shared HID transport completes more slowly than the 200 Hz producer.
 class HidPacketFairness

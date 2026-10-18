@@ -590,18 +590,10 @@ void DDJFLX10Controller::displayThreadLoop()
                 // the position the deck is actually rendering, it is written
                 // by the audio thread every block, and reading it needs
                 // nothing from the engine that could be mid-update.
-                double position = sink->load(std::memory_order_acquire);
-                if (!std::isfinite(position)) {
-                    position = 0.0;
-                } else if (feed.playing && !feed.scratching) {
-                    // That cursor is one output buffer ahead of the ear. The
-                    // desktop waveform subtracts the same term; a jog ring that
-                    // did not would sit visibly ahead of the beat it marks.
-                    position += feed.reverse ? feed.latencyCompensationSec
-                                             : -feed.latencyCompensationSec;
-                }
-                snapshot.sourcePositionSec =
-                    std::clamp(position, 0.0, snapshot.trackDurationSec);
+                snapshot.sourcePositionSec = compensatedDisplayPosition(
+                    sink->load(std::memory_order_acquire), snapshot.trackDurationSec,
+                    feed.latencyCompensationSec, feed.playing, feed.scratching,
+                    feed.reverse);
             }
 
             sendXx27(deck, snapshot, nowMs);

@@ -312,7 +312,14 @@ DeckTransport::ControlUpdate DeckTransport::updateControlState(
         // the visual clock here turns control-tick jitter into visible waveform
         // jitter.  Only discontinuities use setSnapAnchor(); normal playback
         // converges with a bounded correction below.
-        reconcileVisualAnchor(m_audiblePositionSeconds);
+        if (!m_reverse && !loop.active && m_trackLengthSeconds > 0.0
+            && m_audiblePositionSeconds >= m_trackLengthSeconds - kEndEpsilonSeconds) {
+            m_audiblePositionSeconds = m_trackLengthSeconds;
+            m_heldPositionSeconds = m_trackLengthSeconds;
+            setSnapAnchor(m_trackLengthSeconds, false);
+        } else {
+            reconcileVisualAnchor(m_audiblePositionSeconds);
+        }
         result.positionChanged = true;
     } else if (m_preRollActive) {
         const double elapsed = static_cast<double>(m_preRollClock.nsecsElapsed()) * 1.0e-9;
@@ -476,7 +483,11 @@ double DeckTransport::visualPositionSeconds(double latencyCompensationSeconds) c
         const double elapsed = static_cast<double>(m_preRollClock.nsecsElapsed()) * 1.0e-9;
         return std::min(m_preRollStartSeconds + elapsed * m_playbackRate, 0.0);
     }
-    if (!m_snapValid || !m_audioPipeline.transportSnapshot().running)
+    const auto graph = m_audioPipeline.transportSnapshot();
+    if (!m_reverse && m_trackLengthSeconds > 0.0
+        && graph.positionSeconds >= m_trackLengthSeconds - kEndEpsilonSeconds)
+        return m_trackLengthSeconds;
+    if (!m_snapValid || !graph.running)
         return positionSeconds();
 
     const double elapsed = static_cast<double>(m_snapClock.nsecsElapsed()) * 1.0e-9

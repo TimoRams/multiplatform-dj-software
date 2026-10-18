@@ -36,6 +36,12 @@ using flx10_protocol::kJogRevolutionSeconds;
 void nativeHidReportLayout()
 {
     using namespace flx10_protocol;
+    for (double latency : {0.0, 0.005, 0.025, 0.1}) {
+        assert(compensatedDisplayPosition(1.0, 1.0, latency, true, false, false) == 1.0);
+        assert(compensatedDisplayPosition(0.0, 1.0, latency, true, false, true) == 0.0);
+    }
+    assert(compensatedDisplayPosition(0.5, 1.0, 0.025, true, false, false) == 0.475);
+    assert(compensatedDisplayPosition(0.5, 1.0, 0.025, true, true, false) == 0.5);
     HidPacketFairness fairness;
     int uploaded = 0;
     int burst = 0;

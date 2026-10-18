@@ -171,6 +171,28 @@ int main(int argc, char** argv)
     ok &= require(transport.setPlaying(false), "pause changes state");
     ok &= require(!transport.setPlaying(false), "identical pause is idempotent");
 
+    transport.seekToSeconds(0.98);
+    transport.setPlaying(true);
+    render(deck.graph, 16);
+    transport.updateControlState({}, false, false);
+    ok &= require(transport.snapshot().atTrackEnd && transport.playRequested(),
+                  "natural EOF preserves play intent");
+    for (int tick = 0; tick < 24; ++tick) {
+        render(deck.graph);
+        transport.updateControlState({}, false, false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        ok &= require(transport.visualPositionSeconds(0.025) == 1.0
+                      && transport.playheadPositionAtomic() == 1.0,
+                      "EOF waveform and controller cursor remain exactly stationary");
+    }
+    transport.seekToSeconds(0.2);
+    render(deck.graph, 2);
+    transport.updateControlState({}, false, false);
+    ok &= require(!transport.snapshot().atTrackEnd && transport.playRequested()
+                  && transport.visualPositionSeconds(0.025) < 0.5,
+                  "seeking back releases EOF display hold without pausing");
+    transport.setPlaying(false);
+
     transport.seekAudioToSeconds(0.2);
     transport.publishScratchPosition(0.6);
     transport.startAudioPreservingScratchPosition();
