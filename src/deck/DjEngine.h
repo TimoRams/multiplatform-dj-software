@@ -104,6 +104,9 @@ class DjEngine : public QObject
     Q_PROPERTY(double filter READ filter WRITE setFilter NOTIFY filterChanged)
     Q_PROPERTY(bool polarityInverted READ polarityInverted WRITE setPolarityInverted NOTIFY polarityInvertedChanged)
     Q_PROPERTY(bool cueEnabled READ cueEnabled WRITE setCueEnabled NOTIFY cueEnabledChanged)
+    // 0 unknown, 1 this computer, 2 another source (other USB port or line).
+    Q_PROPERTY(int inputOwnership READ inputOwnership NOTIFY inputOwnershipChanged)
+    Q_PROPERTY(bool inputExternal READ inputExternal NOTIFY inputOwnershipChanged)
     Q_PROPERTY(bool masterCueEnabled READ masterCueEnabled WRITE setMasterCueEnabled NOTIFY masterCueEnabledChanged)
     Q_PROPERTY(double headphoneMix READ headphoneMix WRITE setHeadphoneMix NOTIFY headphoneMixChanged)
 
@@ -200,7 +203,7 @@ public:
     void requestScratchRelease(double normalizedReleaseSpeed, bool allowInertia = true);
     void submitScratchReleaseSpeed(double normalizedReleaseSpeed);
     // Outer-rim jog nudge: temporarily speeds up/slows down playback without entering scratch mode.
-    Q_INVOKABLE void applyJogNudge(double signedTicks);
+    Q_INVOKABLE void applyJogNudge(double signedTicks, double eventTimestampSeconds = 0.0);
     [[nodiscard]] bool slipPreviewActive() const;
     [[nodiscard]] bool seekPreviewActive() const noexcept { return m_seekPreviewActive; }
     [[nodiscard]] double seekPreviewPosition() const noexcept { return m_seekPreviewPosition; }
@@ -432,6 +435,11 @@ public slots:
     void applyPolarityInverted(bool inverted);
     void setPolarityInverted(bool inverted);
     void setCueEnabled(bool value);
+    // External ownership pauses the deck, silences its master/cue contribution
+    // and refuses further play requests until ownership returns or is unknown.
+    void setInputOwnership(int ownership);
+    [[nodiscard]] int inputOwnership() const noexcept { return m_inputOwnership; }
+    [[nodiscard]] bool inputExternal() const noexcept { return m_inputOwnership == 2; }
     Q_INVOKABLE void setMasterCueEnabled(bool value);
     Q_INVOKABLE void setHeadphoneMix(double value);
     void setQuantizeEnabled(bool enabled);
@@ -506,6 +514,7 @@ signals:
     void filterChanged();
     void polarityInvertedChanged();
     void cueEnabledChanged();
+    void inputOwnershipChanged();
     void masterCueEnabledChanged();
     void headphoneMixChanged();
     void quantizeEnabledChanged();
@@ -668,6 +677,7 @@ private:
     double m_jogNudgePercent = 0.0;
     double m_jogNudgeCommandPercent = 0.0;
     QElapsedTimer m_lastJogNudgeClock;
+    double m_lastJogNudgeEventSeconds = 0.0;
     double m_beatJumpBeats = 4.0;
     std::atomic<bool> m_fastSearchActive { false };
     std::atomic<double> m_fastSearchPublishedPositionSeconds { 0.0 };
@@ -800,6 +810,7 @@ private:
     engine::sync::SyncCoordinator& m_syncCoordinator;
     ControlClock& m_controlClock;
     const int m_deckIndex = 0;
+    int m_inputOwnership = 0;
     std::unique_ptr<engine::sync::DeckSyncController> m_syncController;
     ControlClock::Registration m_controlClockRegistration;
     bool m_lastPublishedSyncEnabled = false;

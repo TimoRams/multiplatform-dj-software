@@ -176,7 +176,9 @@ The only placement types are declared by `FxPlacement`:
 - `PreFaderInsert`: Flanger, Phaser, Crush, Trans, Gate, and filter effects. Dry and wet
   processing remains in the channel before ChannelMeter, PFLTap, and ChannelFader.
 - `PostFaderTail`: Echo, Reverb, Spiral, and Dub Echo. Input is captured before the fader;
-  the wet return is summed after channel and crossfader gains.
+  the wet return follows the same smoothed channel-fader gain as the dry program.
+  The master mixer applies each deck's A/THRU/B crossfader gain to both its dry
+  program and wet return, using the same per-sample ramp.
 - `Master`: effects that process the complete master mix.
 
 An effect produces a dry output and a wet output. The mixer routes the wet output according
@@ -373,7 +375,8 @@ The phased migration must preserve these externally testable outcomes:
 3. Direct, Keylock, and Scratch are modes of one deck pipeline.
 4. ChannelMeter and PFL are pre-fader; PFL works with a closed fader.
 5. Crossfader, MasterGain, and limiter are each applied exactly once.
-6. Post-fader tails survive ChannelFader close, track changes, and `ResetDeck`.
+6. Tail state survives track changes and `ResetDeck`; ChannelFader close mutes
+   both the dry program and the separate wet return without resetting that state.
 7. Recording, Master, and Booth originate at the same MasterTap.
 8. Headphones remain independent of Master and recording.
 9. Master and Booth use separate physical assignments while sharing software MasterGain.

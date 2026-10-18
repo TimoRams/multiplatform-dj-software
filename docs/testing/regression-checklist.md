@@ -32,7 +32,12 @@ real Qt Quick Software-rendered root. They do not open audio/MIDI devices or
 automatically discover storage. Normal startup closes through the QML close
 policy after readiness; early close verifies partial-runtime cleanup. The
 package's `--ci-smoke-test` runs both paths in subprocesses, as well as its
-resource/FX/SQLite checks. Tests-only builds omit these application-dependent
+resource/FX/SQLite checks. The FX preflight dispatches controller commands through
+a hardware-disabled MIDI manager: cold-start ON without prior UI activation,
+OFF/re-engage with a changed knob depth, zero UI depth, Master routing and UI OFF.
+It also exercises every Reverb BEAT percentage step in both directions,
+endpoint clamping and independence from LEVEL/DEPTH and ON/OFF.
+Tests-only builds omit these application-dependent
 CTest entries.
 
 `qml_component` combines source contracts with runtime checks of the shared
@@ -49,7 +54,10 @@ opening hardware ports.
 Inline-panel coverage creates the production performance, enlarged-waveform and
 FX bar hosts with observable deck/FX sinks and a rendering stub. It checks
 separate quick/FX instances, eject gating, beat-jump/grid actions, editor width,
-and real selector mouse/keyboard/Escape behavior. Animation checks wait for
+and real selector mouse/keyboard/Escape behavior. Reverb coverage checks
+percentage selection/readout without changing beat
+division, and recreates the performance host to verify both open and closed
+FX panel restoration. Animation checks wait for
 observed state rather than assuming one event-loop pass completes a transition.
 It does not replace the real scene-graph or hardware rendering tests.
 
@@ -60,6 +68,53 @@ crossfader endpoints; THRU must remain audible at either end. Close the
 development controls, change assignments/position on hardware, restart, and
 check the restored audio routing before opening the controls. Also check
 curve/sharpness retention and quitting immediately after a change.
+
+FLX10 rim nudging preserves isolated/fractional ticks and uses event-time tick
+density to build a stronger temporary bend during faster rotation, capped at
+6%. An isolated tick starts at 0.2%, holds for 20 ms and decays with a 40 ms
+time constant (roughly 0.12 ms of source displacement per tick); closely
+spaced same-direction ticks add acceleration. Reversal starts at the fine
+scale, without inheriting the previous direction's acceleration.
+Check slow turns, fast turns, immediate reversal and return to base speed
+after release with and without keylock. `deck_transport` covers this response
+and decay numerically. Display acceptance must include uncached tracks before
+analysis completes, reanalysis, rapid replacement/eject and reconnect; queued
+and HID-delivered messages alone do not verify the physical LCD.
+
+Beat FX acceptance starts from a fresh application without touching the FX UI:
+select a channel/effect, move LEVEL/DEPTH, then engage once. Repeat after
+disengaging, at zero depth, and after moving the UI mix back to zero.
+At zero, ON must keep the amount at zero; a fine nonzero knob setting must also
+survive OFF/ON unchanged, with no automatic jump to 50%.
+Check channel-to-Master switching, UI/hardware disengage and current BPM
+timing on dynamic imports. The separate hardware Beat FX LCD is not currently
+host-updated: its effect/tempo readout is not proof of the software FX state.
+
+FLX10 transport/Color acceptance: check the TEMPO RESET/RANGE lamp near zero
+(+/-0.05%), and verify it extinguishes outside that band. SHIFT + SLIP REVERSE
+must toggle reverse until pressed again without a slip return; unshifted
+SLIP REVERSE must still restore the previous direction and Slip state on release.
+Sound Color starts unselected with all mode LEDs off. Turn the Color knobs:
+no effect is applied until a mode is selected. Select Filter, switch to Noise,
+then deselect Noise; no previous filter may remain. Repeat for all four decks
+and check UI/hardware mode selection agrees.
+Each hardware ON (`96 nn 7F`) must select on the first report and OFF
+(`96 nn 00`) must deselect immediately, not require a second press.
+Repeated ON must not toggle off; an old mode's OFF following a new mode's ON
+must not clear the new selection.
+
+With deck Reverb/Echo active and a track still playing, close the channel fader:
+both dry and wet outputs must reach silence after the 20 ms smoothing ramp.
+Reopening must restore the effect without resetting its state. PFL remains
+pre-fader; Master-target FX can still decay on the master bus independently.
+`mixer_dsp` checks this for all five deck tail-effect types.
+Crossfader A/B endpoints must also silence the assigned deck's wet return;
+THRU must preserve it at either endpoint. `master_bus` checks dry and wet-only
+signals on all four channels with every crossfader curve, including returns
+without a dry program buffer.
+`time_stretch` checks repeated short/long pauses with both keylock backends,
+requiring re-engagement without replaying paused silence (512-sample tone RMS
+windows >= 0.04 after the initial transition).
 
 The performance sidebar regression resizes already-created panels through
 180/240/320/420 px and large heights at 800/1280/1920 px widths, down and up again.
@@ -572,3 +627,8 @@ For AIO/desktop-sensitive UI changes also run:
 ```bash
 ./scripts/desktop-regression-checklist.sh
 ```
+
+FLX10 input ownership (hardware): with the USB port set, move each channel's
+INPUT SELECT between PC-A, LINE and PC-B. Verify the deck pauses, dims and is
+silent in master/cue when it is not ours, that Unknown leaves all decks alone,
+and that the configured port matches the physically used one.

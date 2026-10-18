@@ -55,6 +55,7 @@ void MasterMixer::prepare(double sampleRate, int maximumBlockSize)
 void MasterMixer::reset() noexcept
 {
     m_crossfaderGain.fill(1.0f);
+    m_inputGain.fill(1.0f);
     for (auto& gain : m_publishedCrossfaderGain)
         gain.store(1.0f, std::memory_order_release);
     m_masterGain = 1.0f;
@@ -96,36 +97,42 @@ void MasterMixer::mixPrograms(
         std::max(1, static_cast<int>(m_sampleRate * 0.005)));
     for (std::size_t deck = 0; deck < programs.size(); ++deck) {
         const auto* program = programs[deck];
-        if (!program || program->getNumChannels() < 1 || program->getNumSamples() < samples)
-            continue;
+        const auto* tail = tailReturns[deck];
+        const bool hasProgram = program && program->getNumChannels() > 0
+            && program->getNumSamples() >= samples;
+        const bool hasTail = tail && tail->getNumChannels() > 0
+            && tail->getNumSamples() >= samples;
 
         const float target = crossfaderTarget(parameters.crossfaderPosition,
                                               parameters.crossfaderAssignments[deck],
                                               parameters.crossfaderCurve);
         const float startGain = m_crossfaderGain[deck];
         const bool fastCut = parameters.crossfaderCurve == CrossfaderCurve::Scratch;
-        const int right = std::min(1, program->getNumChannels() - 1);
-        const float* sourceL = program->getReadPointer(0);
-        const float* sourceR = program->getReadPointer(right);
+        const float* sourceL = hasProgram ? program->getReadPointer(0) : nullptr;
+        const float* sourceR = hasProgram
+            ? program->getReadPointer(std::min(1, program->getNumChannels() - 1)) : nullptr;
+        const float* tailL = hasTail ? tail->getReadPointer(0) : nullptr;
+        const float* tailR = hasTail
+            ? tail->getReadPointer(std::min(1, tail->getNumChannels() - 1)) : nullptr;
         float* masterL = master.getWritePointer(0);
         float* masterR = master.getWritePointer(1);
         float gain = fastCut ? target : startGain;
+        const float inputTarget = parameters.deckInputSuppressed[deck] ? 0.0f : 1.0f;
+        float inputGain = m_inputGain[deck];
         for (int sample = 0; sample < samples; ++sample) {
             if (!fastCut)
                 gain = std::clamp(target, gain - smoothStep, gain + smoothStep);
-            masterL[sample] += sourceL[sample] * gain;
-            masterR[sample] += sourceR[sample] * gain;
+            inputGain = std::clamp(inputTarget, inputGain - smoothStep, inputGain + smoothStep);
+            const float left = (sourceL ? sourceL[sample] : 0.0f)
+                + (tailL ? tailL[sample] : 0.0f);
+            const float right = (sourceR ? sourceR[sample] : 0.0f)
+                + (tailR ? tailR[sample] : 0.0f);
+            masterL[sample] += left * gain * inputGain;
+            masterR[sample] += right * gain * inputGain;
         }
+        m_inputGain[deck] = inputGain;
         m_crossfaderGain[deck] = gain;
         m_publishedCrossfaderGain[deck].store(gain, std::memory_order_release);
-    }
-
-    for (const auto* tail : tailReturns) {
-        if (!tail || tail->getNumChannels() < 1 || tail->getNumSamples() < samples)
-            continue;
-        master.addFrom(0, 0, *tail, 0, 0, samples);
-        master.addFrom(1, 0, *tail, std::min(1, tail->getNumChannels() - 1),
-                       0, samples);
     }
 }
 
@@ -234,7 +241,8 @@ void HeadphoneBus::mix(
             continue;
         }
 
-        const float target = parameters.pflEnabled[deck] ? cueGain : 0.0f;
+        const float target = parameters.pflEnabled[deck]
+            && !parameters.deckInputSuppressed[deck] ? cueGain : 0.0f;
         if (target <= 0.0f && m_deckGain[deck] <= 0.0f)
             continue;
 

@@ -28,8 +28,9 @@ void FxManager::registerEngines(DjEngine* deckA, DjEngine* deckB,
 
     const auto registerEngine = [this](QPointer<DjEngine>& engine, double& cachedBpm) {
         if (!engine) return;
+        cachedBpm = engine->getCurrentBpm();
         const QPointer<DjEngine> guardedEngine = engine;
-        connect(engine.data(), &DjEngine::tempoChanged, this, [this, guardedEngine, &cachedBpm]() {
+        connect(engine.data(), &DjEngine::currentBpmChanged, this, [this, guardedEngine, &cachedBpm]() {
             if (!guardedEngine) return;
             const double bpm = guardedEngine->getCurrentBpm();
             if (qFuzzyCompare(bpm, cachedBpm)) return;
@@ -44,6 +45,14 @@ void FxManager::registerEngines(DjEngine* deckA, DjEngine* deckB,
     registerEngine(m_engineB, m_cachedBpmB);
     registerEngine(m_engineC, m_cachedBpmC);
     registerEngine(m_engineD, m_cachedBpmD);
+    emit displayBpm1Changed();
+    emit displayBpm2Changed();
+    pushSyncedDelay(1);
+    pushSyncedDelay(2);
+    applySoundColorToEngine(m_engineA, m_soundColorMode, m_soundColorValueA);
+    applySoundColorToEngine(m_engineB, m_soundColorMode, m_soundColorValueB);
+    applySoundColorToEngine(m_engineC, m_soundColorMode, m_soundColorValueC);
+    applySoundColorToEngine(m_engineD, m_soundColorMode, m_soundColorValueD);
 
     qDebug() << "[FxManager] engines registered";
 }
@@ -153,17 +162,6 @@ void FxManager::setUnitEnabled(int unitId, bool enabled)
 
     m_unitEnabled[idx] = enabled;
 
-    // Engaging a unit whose mix is still at zero would be inaudible, and an
-    // effect you cannot hear reads as a switch that did not take. Lift it to a
-    // usable amount; the mix knob (on screen or on the controller) overrides
-    // this the moment it is touched.
-    float& amount = (unitId == 1) ? m_wetDry1 : m_wetDry2;
-    if (enabled && amount <= kAudibleWetDryEpsilon) {
-        amount = kDefaultEngagedWetDry;
-        if (unitId == 1) emit wetDry1Changed();
-        else             emit wetDry2Changed();
-    }
-
     if (unitId == 1) emit enabled1Changed();
     else             emit enabled2Changed();
 
@@ -227,25 +225,13 @@ void FxManager::setSoundColorMode(const QString& mode)
 {
     if (m_soundColorMode == mode) return;
 
-    // When switching AWAY from Filter mode, reset engine filters to neutral
-    if (m_soundColorMode == "Filter" && mode != "Filter")
-    {
-        if (m_engineA) m_engineA->applyFilter(0.0);
-        if (m_engineB) m_engineB->applyFilter(0.0);
-    }
-
     m_soundColorMode = mode;
     emit soundColorModeChanged();
     // Re-apply current values with the new mode
     applySoundColorToEngine(m_engineA, mode, m_soundColorValueA);
     applySoundColorToEngine(m_engineB, mode, m_soundColorValueB);
-
-    // When switching TO Filter mode, apply current knob values as filter
-    if (mode == "Filter")
-    {
-        if (m_engineA) m_engineA->applyFilter(static_cast<double>(m_soundColorValueA));
-        if (m_engineB) m_engineB->applyFilter(static_cast<double>(m_soundColorValueB));
-    }
+    applySoundColorToEngine(m_engineC, mode, m_soundColorValueC);
+    applySoundColorToEngine(m_engineD, mode, m_soundColorValueD);
 
     qDebug() << "[FxManager] SoundColor mode ->" << mode;
 }
@@ -261,6 +247,8 @@ void FxManager::setSoundColorParam(float param)
 
     if (m_engineA) m_engineA->setFxSCParam(m_soundColorParam);
     if (m_engineB) m_engineB->setFxSCParam(m_soundColorParam);
+    if (m_engineC) m_engineC->setFxSCParam(m_soundColorParam);
+    if (m_engineD) m_engineD->setFxSCParam(m_soundColorParam);
 }
 
 void FxManager::setSoundColor(const QString& mode, float value)
@@ -269,17 +257,12 @@ void FxManager::setSoundColor(const QString& mode, float value)
     // value 0.0 = full left (wet A, dry B)
     // value 0.5 = centre   (both dry)
     // value 1.0 = full right (dry A, wet B)
-    if (m_soundColorMode != mode)
-    {
-        m_soundColorMode = mode;
-        emit soundColorModeChanged();
-    }
-
     const float wetA = (value < 0.5f) ? (0.5f - value) * 2.0f : 0.0f;
     const float wetB = (value > 0.5f) ? (value - 0.5f) * 2.0f : 0.0f;
 
-    m_soundColorValueA = 0.5f + wetA * 0.5f;  // remap back to 0-1 for applySoundColor
-    m_soundColorValueB = 0.5f + wetB * 0.5f;
+    m_soundColorValueA = wetA;
+    m_soundColorValueB = wetB;
+    setSoundColorMode(mode);
 
     applySoundColorToEngine(m_engineA, mode, m_soundColorValueA);
     applySoundColorToEngine(m_engineB, mode, m_soundColorValueB);
@@ -289,16 +272,8 @@ void FxManager::setSoundColorDeck(int deck, float value)
 {
     // value is bipolar -1..+1
     value = std::clamp(value, -1.0f, 1.0f);
-    if (deck == 1)
-    {
-        m_soundColorValueA = value;
-        applySoundColorToEngine(m_engineA, m_soundColorMode, value);
-    }
-    else if (deck == 2)
-    {
-        m_soundColorValueB = value;
-        applySoundColorToEngine(m_engineB, m_soundColorMode, value);
-    }
+    if (deck >= 1 && deck <= 4)
+        setSoundColorChannel(QStringLiteral("deck%1").arg(QChar('A' + deck - 1)), value);
 }
 
 void FxManager::setSoundColorChannel(const QString& channelId, float value)
@@ -309,6 +284,8 @@ void FxManager::setSoundColorChannel(const QString& channelId, float value)
 
     if (channelId == QLatin1String("deckA")) m_soundColorValueA = value;
     else if (channelId == QLatin1String("deckB")) m_soundColorValueB = value;
+    else if (channelId == QLatin1String("deckC")) m_soundColorValueC = value;
+    else if (channelId == QLatin1String("deckD")) m_soundColorValueD = value;
 }
 
 DjEngine* FxManager::engineForChannelId(const QString& channelId) const
@@ -334,9 +311,10 @@ void FxManager::applySoundColorToEngine(DjEngine* engine, const QString& mode, f
         engine->applyFilter(static_cast<double>(value));
         return;
     }
+    engine->applyFilter(0.0);
 
     // value is bipolar -1..+1.  At 0.0 (centre) = bypass.
-    if (std::abs(value) < 0.01f)
+    if (mode == "None" || std::abs(value) < 0.01f)
     {
         engine->setFxEffectType(EffectType::None);
         engine->setFxWetDry(0.0f);
@@ -411,6 +389,27 @@ void FxManager::setBeatDivision(int unitId, float div)
     if (unitId == 1) emit beatDiv1Changed();
     else             emit beatDiv2Changed();
     pushSyncedDelay(unitId);
+}
+
+QVariantList FxManager::reverbSizeSteps()
+{
+    return {0.01, 0.10, 0.25, 0.50, 0.75, 0.90, 1.00};
+}
+
+void FxManager::stepReverbSize(int unitId, int direction)
+{
+    if ((unitId != 1 && unitId != 2) || direction == 0)
+        return;
+    const auto steps = reverbSizeSteps();
+    const float current = m_primaryParam[unitId - 1];
+    const auto nearest = std::min_element(steps.begin(), steps.end(),
+        [current](const QVariant& a, const QVariant& b) {
+            return std::abs(a.toFloat() - current) < std::abs(b.toFloat() - current);
+        });
+    const int index = std::clamp(static_cast<int>(std::distance(steps.begin(), nearest))
+                                     + (direction > 0 ? 1 : -1),
+                                 0, static_cast<int>(steps.size()) - 1);
+    setPrimaryParam(unitId, steps[index].toFloat());
 }
 
 void FxManager::setPrimaryParam(int unitId, float v)

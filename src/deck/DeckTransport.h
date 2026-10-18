@@ -165,17 +165,42 @@ private:
 
 namespace engine::deck {
 
-constexpr double kJogNudgePercentPerTick = 0.625;
+constexpr double kJogNudgePercentPerTick = 0.2;
 constexpr double kJogNudgeMaxPercent = 6.0;
-constexpr double kJogNudgeHoldSeconds = 0.080;
-constexpr double kJogNudgeDecayTauSeconds = 0.080;
-constexpr double kJogNudgeStopPercent = 0.05;
+constexpr double kJogNudgeHoldSeconds = 0.020;
+constexpr double kJogNudgeDecayTauSeconds = 0.040;
+constexpr double kJogNudgeAccumulationSeconds = 0.080;
+constexpr double kJogNudgeAccelerationSeconds = 0.020;
+constexpr double kJogNudgeStopPercent = 0.001;
 
 inline double jogNudgeCommandPercent(double signedTicks) noexcept
 {
+    if (!std::isfinite(signedTicks))
+        return 0.0;
     return std::clamp(signedTicks * kJogNudgePercentPerTick,
                       -kJogNudgeMaxPercent,
                       kJogNudgeMaxPercent);
+}
+
+inline double accumulatedJogNudgePercent(double previousCommand, double signedTicks,
+                                          double intervalSeconds) noexcept
+{
+    if (!std::isfinite(signedTicks) || signedTicks == 0.0)
+        return previousCommand;
+    // Tick density estimates rim speed. Preserve isolated fine ticks, but let
+    // closely spaced ticks build a stronger bend even in one-tick packets.
+    const bool validInterval = std::isfinite(intervalSeconds) && intervalSeconds >= 0.0;
+    const bool sameDirection = previousCommand * signedTicks > 0.0;
+    const double retained = sameDirection && validInterval
+        ? previousCommand * std::exp(-intervalSeconds / kJogNudgeAccumulationSeconds)
+        : 0.0;
+    // Reversing starts with a fine correction rather than inheriting the
+    // previous direction's acceleration.
+    const double acceleration = sameDirection && validInterval
+        ? 1.0 + 2.0 * std::exp(-intervalSeconds / kJogNudgeAccelerationSeconds)
+        : 1.0;
+    return std::clamp(retained + signedTicks * kJogNudgePercentPerTick * acceleration,
+                      -kJogNudgeMaxPercent, kJogNudgeMaxPercent);
 }
 
 inline double decayedJogNudgePercent(double commandPercent, double idleSeconds) noexcept

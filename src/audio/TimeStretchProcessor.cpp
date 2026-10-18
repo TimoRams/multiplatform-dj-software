@@ -171,6 +171,8 @@ void TimeStretchProcessor::prepareToPlay(int blockSize, double sr)
     m_seedHistoryEnd = 0;
     m_historyWrite = 0;
     m_historySamples = 0;
+    m_playbackHistoryStart = 0;
+    m_requireFreshPlaybackHistory = false;
 
     auto initial = desiredConfiguration();
     initial.configurationGeneration = 1;
@@ -414,6 +416,12 @@ bool TimeStretchProcessor::requestKeylockSeed(int slot, std::uint64_t catchupSam
                                   m_seedSnapshot.getNumSamples(),
                                   m_outputHistory.getNumSamples() });
     if (length <= 0) return false;
+    // After pause, the history ring still contains silence and the previous
+    // playback segment. Wait for a complete fresh pre-roll before handing it
+    // to the worker; otherwise that silence emerges after the vocoder latency.
+    if (m_requireFreshPlaybackHistory
+        && m_historySamples - m_playbackHistoryStart < static_cast<std::uint64_t>(length))
+        return false;
     // Hand the worker a private copy so the audio thread stays free to keep
     // writing history while the seed runs.
     readOutputHistory(m_seedSnapshot, length);
@@ -508,6 +516,10 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
         auto stale = SeedState::Ready;
         m_seedState.compare_exchange_strong(stale, SeedState::Idle, std::memory_order_acq_rel);
         renderDirect();
+        if (!m_inputPlaybackActive.load(std::memory_order_acquire)) {
+            m_playbackHistoryStart = m_historySamples;
+            m_requireFreshPlaybackHistory = true;
+        }
         return;
     }
 

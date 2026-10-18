@@ -535,6 +535,23 @@ bool AudioEngine::pflEnabled(int deckIndex)
         static_cast<std::size_t>(deckIndex)];
 }
 
+void AudioEngine::setDeckInputSuppressed(int deckIndex, bool suppressed)
+{
+    if (deckIndex < 0 || deckIndex >= static_cast<int>(kMaximumDecks))
+        return;
+    s_parameterStore.update([deckIndex, suppressed](AudioParameters& p) {
+        p.deckInputSuppressed[static_cast<std::size_t>(deckIndex)] = suppressed;
+    });
+}
+
+bool AudioEngine::deckInputSuppressed(int deckIndex)
+{
+    if (deckIndex < 0 || deckIndex >= static_cast<int>(kMaximumDecks))
+        return false;
+    return s_parameterStore.controlSnapshot().deckInputSuppressed[
+        static_cast<std::size_t>(deckIndex)];
+}
+
 void AudioEngine::setCrossfaderPosition(float position)
 {
     s_parameterStore.update([position](AudioParameters& p) {

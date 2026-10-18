@@ -286,6 +286,8 @@ void DjEngine::togglePlay()
 
 void DjEngine::play()
 {
+    if (inputExternal())
+        return;
     const bool scratchActive = m_scratch.scrubbing() || m_scratch.releaseGlide();
     const bool changed = scratchActive
         ? m_transport->setPlayingDuringScratch(true)
@@ -629,6 +631,18 @@ void DjEngine::setCueEnabled(bool value)
     AudioEngine::setPflEnabled(m_deckIndex, value);
     if (previous != value)
         emit cueEnabledChanged();
+}
+
+void DjEngine::setInputOwnership(int ownership)
+{
+    ownership = std::clamp(ownership, 0, 2);
+    if (ownership == m_inputOwnership)
+        return;
+    m_inputOwnership = ownership;
+    if (ownership == 2)
+        pause();
+    AudioEngine::setDeckInputSuppressed(m_deckIndex, ownership == 2);
+    emit inputOwnershipChanged();
 }
 
 bool DjEngine::cueEnabled() const

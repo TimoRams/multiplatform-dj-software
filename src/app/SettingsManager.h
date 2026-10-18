@@ -26,6 +26,7 @@ class SettingsManager : public QObject
     Q_PROPERTY(int audioSampleRate READ getAudioSampleRate WRITE setAudioSampleRate NOTIFY audioSettingsChanged)
     Q_PROPERTY(int audioBufferSize READ getAudioBufferSize WRITE setAudioBufferSize NOTIFY audioSettingsChanged)
     Q_PROPERTY(bool flx10ControllerSupportEnabled READ flx10ControllerSupportEnabled WRITE setFlx10ControllerSupportEnabled NOTIFY controllerSettingsChanged)
+    Q_PROPERTY(int flx10HostUsbPort READ flx10HostUsbPort WRITE setFlx10HostUsbPort NOTIFY controllerSettingsChanged)
     Q_PROPERTY(bool tightDoubleSync READ tightDoubleSync WRITE setTightDoubleSync NOTIFY tightDoubleSyncChanged)
     Q_PROPERTY(QString timeStretchBackend READ timeStretchBackend WRITE setTimeStretchBackend NOTIFY timeStretchBackendChanged)
     Q_PROPERTY(int waveformRenderStyle READ waveformRenderStyle WRITE setWaveformRenderStyle
@@ -122,6 +123,9 @@ public:
 
     bool flx10ControllerSupportEnabled() const;
     void setFlx10ControllerSupportEnabled(bool enabled);
+    // USB port of the DDJ-FLX10 this computer uses: 0 unknown, 1 A, 2 B.
+    int flx10HostUsbPort() const;
+    void setFlx10HostUsbPort(int port);
 
     bool tightDoubleSync() const;
     void setTightDoubleSync(bool enabled);

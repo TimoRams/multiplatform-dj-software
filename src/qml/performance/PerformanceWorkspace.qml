@@ -29,6 +29,9 @@ Item {
         required property string deckLabel
         required property color accent
         property var heldCueEngine: null
+        readonly property bool inputExternal: engine ? engine.inputExternal : false
+        enabled: !inputExternal
+        opacity: inputExternal ? 0.35 : 1.0
         spacing: 4
 
         function releaseCue() {
@@ -40,6 +43,7 @@ Item {
         }
 
         onVisibleChanged: if (!visible) releaseCue()
+        onInputExternalChanged: if (inputExternal) releaseCue()
         onEngineChanged: releaseCue()
         Component.onDestruction: releaseCue()
 

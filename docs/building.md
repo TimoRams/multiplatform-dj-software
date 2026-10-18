@@ -283,6 +283,69 @@ The official chart's M11 channel column prints only `1`; the per-channel
 expansion is corroborated by that community mapping, not by hardware captures.
 Real-device switch behavior still requires hardware acceptance testing.
 
+The TEMPO RESET lamp (the physical button also used for shifted TEMPO RANGE)
+lights within +/-0.05 percentage points of zero tempo, rather than requiring
+an exact floating-point zero. SHIFT + SLIP REVERSE uses dedicated note `38`
+on deck channels 1-4 to toggle persistent reverse with Slip disabled; ordinary
+SLIP REVERSE remains momentary. A custom mapping sending SHIFT plus ordinary
+SLIP REVERSE on decks A/B is also supported.
+
+### FLX10 dual-computer channel input ownership
+
+The official MIDI message list defines INPUT SELECT (M17) per channel on
+`9n 55/56/57` (n = 0-3): `55`=7F is PC-A, `56`=7F is LINE/PHONO, `57`=7F is
+PC-B. It defines **no** message that tells a computer which USB port (A or B)
+it is plugged into, and neither the official list nor the public
+Loui1979/MIXXX-FLX10 mapping contains one. BrockDJ therefore never guesses:
+
+- Settings > Controllers > "This computer is on" (Unknown / USB A / USB B,
+  default Unknown) states the port.
+- LINE/PHONO always means another source. PC-A/PC-B is resolved only when the
+  port is configured; with Unknown the channel is left completely untouched.
+- A channel on another source is paused, refuses play, is removed from master
+  and cue (5 ms ramp, FX tails included) and its deck is dimmed with an
+  EXTERNAL INPUT overlay. Returning to our computer restores audio but does
+  not resume playback.
+- Selector positions are learned only from reports (no documented query), so
+  each channel is unknown until its switch is moved once after connecting;
+  they reset to unknown when the MIDI input closes.
+
+Sound Color starts with no effect selected. Turning a Color knob alone cannot
+activate a filter or another Color effect. Pressing a mode selects only that
+mode; pressing it again deselects it. Mode changes retain each deck's bipolar
+knob position, clear the previous native filter, and update all four engines.
+The hardware mode notes (`96 00` through `96 05`) carry latched selection
+state: velocity `7F` selects, velocity `00` deselects that mode. OFF for a
+previous mode never clears a newer selection; repeated ON reports are idempotent.
+LEVEL/DEPTH and Beat FX remain independent of this selection.
+All four FLX10 Color knobs use MIDI status `B6`, with MSB/LSB pairs
+`17/37`, `18/38`, `19/39`, and `1A/3A` for channels 1-4 respectively.
+
+Beat FX ON uses the unit's enabled state independently of LEVEL/DEPTH.
+Engaging preserves the mix amount exactly, including zero and near-zero values;
+only the mix control changes the depth, never the ON button.
+Applying a hardware command suppresses intermediate mixer-state feedback until
+routing, amount and enable have been applied, so the first ON does not get
+cancelled by the previous disabled state. Beat timing follows current track
+BPM (including imported tempo changes), not just tempo-fader movement.
+For Master, timing uses the first playing deck, then the first loaded deck.
+Reverb is not a beat-duration effect: BEAT minus/plus and the software FX
+selectors use room-character steps of 1, 10, 25, 50, 75, 90 and 100 percent.
+The percentage controls BrockDJ's reverb room size/damping/width, not the
+wet/dry amount or a calibrated duration in seconds. LEVEL/DEPTH remains
+independent. The performance FX panel shows percent instead of milliseconds
+and restores its open/closed state from the UI settings across launches.
+
+The official MIDI chart does not document host output for the separate Beat
+FX LCD's numeric BPM, beat division, effect name or parameter/time fields.
+Input-only effect/channel selector notes are not echoed as supposed LCD
+commands. Jog-display BPM messages are a separate protocol and must not be
+used for that LCD. This does not establish that LCD feedback is impossible;
+it remains unsupported until a verified protocol is available.
+The built-in mapping retains the previously hardware-observed ON/OFF note
+`94 46` and its latched 127/0 reports; the official chart instead lists
+`94 47`, so that discrepancy still needs device/firmware-level verification.
+
 Only VID:PID `2B73:0041`, USB interface **5**, with the expected unnumbered
 128-byte output descriptor is accepted. The interface number is also checked
 on registry parents for macOS versions which omit it from IOHID properties.
@@ -304,6 +367,14 @@ session; the report buffer remains alive until the device is closed. Shutdown
 unschedules on the writer, joins it, then closes the HID service. Repeated
 timeouts and disconnects release the session so reconnect can retry.
 `BROCKDJ_FLX10_DIAGNOSTICS=1` enables its existing transfer counters.
+
+Track-load initialization no longer waits for waveform analysis. A temporary
+analysis reset keeps the loaded display alive; track/session epochs reject
+late worker output after replacement, eject or reconnect. Initialization waits
+for enough queue space for the entire header/cover sequence and retries on
+the state timer. The log distinguishes an initialization being **queued**
+from a track-load report or complete cover actually **delivered** by HID;
+neither is a firmware acknowledgement.
 
 **Limitations:** native macOS builds and packet/descriptor tests do not verify
 real screen rendering. A successful output completion is not a firmware-level

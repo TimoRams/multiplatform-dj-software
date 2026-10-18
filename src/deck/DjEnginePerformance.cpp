@@ -452,15 +452,21 @@ void DjEngine::finishScrubWithoutInertia()
 }
 
 
-void DjEngine::applyJogNudge(double signedTicks)
+void DjEngine::applyJogNudge(double signedTicks, double eventTimestampSeconds)
 {
-    if (m_scratch.scrubbing() || m_scratch.releaseGlide())
+    if (m_scratch.scrubbing() || m_scratch.releaseGlide()
+        || !std::isfinite(signedTicks) || signedTicks == 0.0)
         return;
 
-    // Mixxx's FLX10 mapping divides jog ticks by 16; its 0.1 jog sensitivity
-    // corresponds to a 0.625% temporary rate change per controller tick.
-    m_jogNudgeCommandPercent = engine::deck::jogNudgeCommandPercent(signedTicks);
+    const double timestamp = std::isfinite(eventTimestampSeconds) && eventTimestampSeconds > 0.0
+        ? eventTimestampSeconds : juce::Time::getMillisecondCounterHiRes() * 0.001;
+    const double interval = m_lastJogNudgeEventSeconds > 0.0
+        && timestamp >= m_lastJogNudgeEventSeconds
+        ? timestamp - m_lastJogNudgeEventSeconds : 1.0;
+    m_jogNudgeCommandPercent = engine::deck::accumulatedJogNudgePercent(
+        m_jogNudgeCommandPercent, signedTicks, interval);
     m_jogNudgePercent = m_jogNudgeCommandPercent;
+    m_lastJogNudgeEventSeconds = timestamp;
     m_lastJogNudgeClock.restart();
     updateSpeedAndPitch();
 }

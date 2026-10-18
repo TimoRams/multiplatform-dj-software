@@ -726,6 +726,14 @@ int runApplication(int argc, char *argv[])
                                  });
                 runtime.controllerManager->setFlx10Enabled(
                     settingsManager.flx10ControllerSupportEnabled());
+                QObject::connect(&settingsManager,
+                                 &SettingsManager::controllerSettingsChanged,
+                                 midi,
+                                 [&settingsManager, midi] {
+                                     midi->setFlx10HostUsbPort(
+                                         settingsManager.flx10HostUsbPort());
+                                 });
+                midi->setFlx10HostUsbPort(settingsManager.flx10HostUsbPort());
             } else {
                 qInfo() << "[startup-smoke] MIDI and controller hardware discovery skipped";
             }

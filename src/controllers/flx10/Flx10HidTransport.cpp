@@ -369,6 +369,13 @@ void DDJFLX10Controller::hidWriterLoop()
 
         if (result == 0 && transferred == packetBytes.size()) {
             consecutiveDroppedPackets = 0;
+            if (packetBytes.at(1) == char(0x30)
+                || (packetBytes.at(1) == char(0x33)
+                    && packetBytes.at(2) == packetBytes.at(4))) {
+                qInfo() << "[DDJ-FLX10] HID delivered"
+                        << (packetBytes.at(1) == char(0x30) ? "track-load report" : "complete cover")
+                        << "deck byte" << static_cast<unsigned char>(packetBytes.at(0));
+            }
             if (displaySequence != 0) {
                 m_displayFramesSent.fetch_add(1, std::memory_order_relaxed);
                 m_lastDisplaySequence.store(displaySequence, std::memory_order_relaxed);

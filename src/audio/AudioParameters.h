@@ -52,6 +52,9 @@ struct AudioParameters {
     float headphoneGain = 1.0f;
     bool masterCueEnabled = false;
     std::array<bool, 4> pflEnabled { false, false, false, false };
+    // The channel's hardware input belongs to another source (other computer or
+    // line). Its program, tail and cue contribution are ramped to silence.
+    std::array<bool, 4> deckInputSuppressed { false, false, false, false };
 
     int masterFirstChannel = 1;
     int headphonesFirstChannel = -1;

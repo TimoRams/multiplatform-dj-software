@@ -121,11 +121,13 @@ private:
         std::shared_ptr<const WaveformLineStoreSnapshot> snapshot;
         int targetEntries = 0;
         std::uint64_t trackGeneration = 0;
+        std::uint64_t requestEpoch = 0;
     };
     std::mutex m_waveformJobMutex;
     std::condition_variable m_waveformJobCondition;
     // Latest-wins per deck: an newer analysis state supersedes a queued job.
     std::array<std::optional<PendingWaveformJob>, 5> m_pendingWaveformJobs;
+    std::array<std::uint64_t, 5> m_waveformRequestEpoch {};
     std::thread m_waveformWorker;
     bool m_waveformWorkerStopping = false;
     int currentWaveformEntry(int deck) const;
@@ -228,6 +230,7 @@ private:
     // blank waveform regions after the cursor.
     std::array<int, 5> m_uploadStartWindows = {0, 0, 0, 0, 0};
     std::array<bool, 5> m_uploadActive = {false, false, false, false, false};
+    std::array<bool, 5> m_deckInitialised {};
     // Set when better waveform data arrived while a transfer was already in
     // flight. Windows sent before that point still carry the old samples, so
     // the sweep is repeated once it reaches the end instead of being rewound

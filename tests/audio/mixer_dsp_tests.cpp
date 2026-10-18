@@ -145,10 +145,36 @@ int main(){bool ok=true;
          render(*tailMixer, 512);
 
      tailTone.setAmplitude(0.0f);
-     tailMixer->setFader(0.0f);
      render(*tailMixer, 512);
      ok &= require(tailMixer->getPostFaderTailBuffer().getMagnitude(0, 0, 512) > 0.0001f,
                    "post-fader echo tail survives silent/reset deck input");
+ }
+ for (const auto type : {EffectType::Reverb, EffectType::Echo, EffectType::LowCutEcho,
+                         EffectType::MtDelay, EffectType::Spiral}) {
+     Sine effectTone(900);
+     auto effectMixer = std::make_unique<DeckChannelProcessor>(&effectTone);
+     effectMixer->prepareToPlay(512, 48000);
+     effectMixer->setFxSlotEffectType(1, type);
+     effectMixer->setFxSlotAmount(1, 0.8f);
+     effectMixer->setFxSlotExternalDelayTime(1, 0.005f);
+     float wetPeak = 0.0f;
+     for (int i = 0; i < 80; ++i) {
+         render(*effectMixer, 512);
+         wetPeak = std::max(wetPeak,
+             effectMixer->getPostFaderTailBuffer().getMagnitude(0, 0, 512));
+     }
+     ok &= require(wetPeak > 0.0001f, "tail effect produces wet audio with open fader");
+     effectMixer->setFader(0.0f);
+     for (int i = 0; i < 8; ++i)
+         render(*effectMixer, 512);
+     ok &= require(effectMixer->getPostFaderTailBuffer().getMagnitude(0, 0, 512) == 0.0f
+                       && effectMixer->m_peakL.load() < 0.0001f,
+                   "closed channel fader mutes dry audio and effect returns with live input");
+     effectMixer->setFader(1.0f);
+     for (int i = 0; i < 8; ++i)
+         render(*effectMixer, 512);
+     ok &= require(effectMixer->getPostFaderTailBuffer().getMagnitude(0, 0, 512) > 0.0001f,
+                   "opening fader restores wet audio without resetting the effect");
  }
  {
      Sine stereoTone(700);

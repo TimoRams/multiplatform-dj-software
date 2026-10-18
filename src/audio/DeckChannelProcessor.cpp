@@ -564,8 +564,8 @@ void DeckChannelProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
         }
 
         // Deck inserts process in the canonical pre-fader chain. Time-based tail
-        // effects produce a separate wet return so closing/resetting the deck does
-        // not cut their delay/reverb state.
+        // effects produce a separate wet return so resetting the deck does not
+        // cut their delay/reverb state. Both paths follow the channel fader below.
         m_postFaderTailReturn.clear(0, 0, bufferToFill.numSamples);
         m_postFaderTailReturn.clear(1, 0, bufferToFill.numSamples);
         if (!FxProcessor::isColorFxType(m_colorFx.getEffectType())) {
@@ -655,6 +655,8 @@ void DeckChannelProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
                 const float g = m_faderSmooth.getNextValue();
                 for (size_t ch = 0; ch < nc; ++ch)
                     slicedBlock.getChannelPointer(ch)[i] *= g;
+                for (int ch = 0; ch < m_postFaderTailReturn.getNumChannels(); ++ch)
+                    m_postFaderTailReturn.getWritePointer(ch)[i] *= g;
             }
         }
         m_channelFaderGain.store(m_faderSmooth.getCurrentValue(), std::memory_order_release);

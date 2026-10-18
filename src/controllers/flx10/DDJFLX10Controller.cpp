@@ -127,6 +127,8 @@ bool DDJFLX10Controller::start()
     for (int deck = flx10::kFirstNativeDeckNumber;
          deck <= flx10::kLastNativeDeckNumber; ++deck) {
         m_uploadActive[deck] = false;
+        m_deckInitialised[deck] = false;
+        ++m_waveformRequestEpoch[deck];
         m_uploadWindowsSent[deck] = 0;
         resetDisplayPacketState(deck);
 
@@ -367,6 +369,7 @@ void DDJFLX10Controller::connectDeckSignals()
                 return;
             if (DjEngine* eng = deckEngine(deck); !eng || !eng->hasTrack())
                 return;
+            invalidateDeckSnapshot(deck, deckEngine(deck)->trackFilePath(), true);
             refreshDeckFromEngine(deck);
         });
         m_trackEjectedConnections[deck] = connect(engine, &DjEngine::trackEjected, this, [this, deck] {
@@ -438,19 +441,9 @@ void DDJFLX10Controller::connectDeckSignals()
                     return;
                 if (DjEngine* eng = deckEngine(deck); !eng || !eng->hasTrack())
                     return;
-                // Analysis clears full-resolution spectral data but keeps the instant overview; do not
-                // wipe the controller display while a preview waveform is still available.
-                if (DjEngine* engine = deckEngine(deck)) {
-                    if (TrackData* td = engine->getTrackData()) {
-                        if (!td->getOverviewRgbData().isEmpty()
-                            || !td->getProgressiveOvrData().isEmpty()) {
-                            refreshDeckFromEngine(deck);
-                            return;
-                        }
-                    }
-                }
-
-                resetDeckWaveformOutput(deck);
+                // Analysis may temporarily have no waveform. The track is
+                // still loaded, so retain its display and await fresh columns.
+                refreshDeckFromEngine(deck);
             });
             m_keyAnalyzedConnections[deck] = connect(trackData, &TrackData::keyAnalyzed, this, [this, deck] {
                 if (m_shuttingDown.load(std::memory_order_acquire))
@@ -528,6 +521,8 @@ void DDJFLX10Controller::invalidateDeckSnapshot(int deck, const QString& trackPa
         return;
 
     m_waveforms[deck].clear();
+    ++m_waveformRequestEpoch[deck];
+    m_deckInitialised[deck] = false;
     m_baseWaveforms[deck].clear();
     m_waveformTrackPaths[deck] = trackPath;
     m_waveformDurations[deck] = kPreviewDurationSeconds;
@@ -623,9 +618,12 @@ void DDJFLX10Controller::waveformWorkerLoop()
         const int deck = job.deck;
         const auto generation = job.trackGeneration;
         const auto generated = static_cast<std::uint32_t>(job.targetEntries);
+        const auto epoch = job.requestEpoch;
         QMetaObject::invokeMethod(
             this,
-            [this, deck, out, generation, generated, completeColumns] {
+            [this, deck, out, generation, generated, completeColumns, epoch] {
+                if (epoch != m_waveformRequestEpoch[deck])
+                    return;
                 onPreviewWaveformReady(deck, out, generation, generated,
                                        completeColumns);
             },
@@ -646,6 +644,8 @@ void DDJFLX10Controller::refreshDeckFromEngine(int deck)
     if (trackPath != m_waveformTrackPaths[deck])
         invalidateDeckSnapshot(deck, trackPath, true);
     m_cachedDeckKeyBytes[deck] = deckKeyByte(deck);
+    if (m_connected && !m_deckInitialised[deck])
+        uploadDeck(deck, false);
 
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     if (m_lastWaveformRefreshMs[deck] > 0 && now - m_lastWaveformRefreshMs[deck] < 250)
@@ -716,6 +716,7 @@ void DDJFLX10Controller::requestPreviewWaveform(int deck)
     job.snapshot = std::move(snapshot);
     job.targetEntries = targetEntries;
     job.trackGeneration = job.snapshot->trackGeneration;
+    job.requestEpoch = m_waveformRequestEpoch[deck];
     {
         std::lock_guard lock(m_waveformJobMutex);
         m_pendingWaveformJobs[deck] = std::move(job);
@@ -728,6 +729,12 @@ void DDJFLX10Controller::onPreviewWaveformReady(
     std::uint32_t generatedColumns, std::uint32_t completeColumns)
 {
     if (m_shuttingDown.load(std::memory_order_acquire) || incoming.isEmpty())
+        return;
+    const auto* engine = deckEngine(deck);
+    const auto* data = engine ? engine->getTrackData() : nullptr;
+    const auto current = data ? data->getWaveformLineStoreSnapshot() : nullptr;
+    if (!engine || !engine->hasTrack() || !current
+        || current->trackGeneration != trackGeneration)
         return;
     QByteArray waveform = incoming;
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
@@ -1102,8 +1109,13 @@ void DDJFLX10Controller::sendStateTick()
     }
 #endif
 
-    for (int deck = 1; deck <= 2; ++deck)
+    for (int deck = 1; deck <= 2; ++deck) {
+        if (!m_deckInitialised[deck]) {
+            if (const auto* engine = deckEngine(deck); engine && engine->hasTrack())
+                uploadDeck(deck, m_waveformUploadQualityPermille[deck] > 0);
+        }
         pushDeckJogDisplay(deck);
+    }
 }
 
 void DDJFLX10Controller::sendWaveformTick()
@@ -1117,7 +1129,7 @@ void DDJFLX10Controller::sendWaveformTick()
     // previously divided that rate between two decks, and the moving-only gate
     // made a cached waveform disappear shortly after it was first displayed.
     for (int deck = 1; deck <= 2; ++deck) {
-        if (m_waveforms[deck].isEmpty())
+        if (!m_deckInitialised[deck] || m_waveforms[deck].isEmpty())
             continue;
         if (nowMs - m_lastXx36SentMs[deck] < kXx36TrickleIntervalMs)
             continue;
@@ -1149,7 +1161,7 @@ void DDJFLX10Controller::sendUploadChunk()
     // the sweep; throttle the burst during playback instead of stopping it.
     for (int offset = 0; offset < 2; ++offset) {
         const int deck = 1 + ((m_nextUploadDeck - 1 + offset) % 2);
-        if (!m_uploadActive[deck] || m_waveforms[deck].isEmpty())
+        if (!m_deckInitialised[deck] || !m_uploadActive[deck] || m_waveforms[deck].isEmpty())
             continue;
         const DjEngine* deckEngineForRate = deckEngine(deck);
         const bool deckIsBusy = deckEngineForRate

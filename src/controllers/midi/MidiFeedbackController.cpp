@@ -1,6 +1,7 @@
 #include "MidiFeedbackController.h"
 
 #include "deck/DjEngine.h"
+#include "controllers/flx10/Flx10TransportControls.h"
 
 #include <QVariantList>
 #include <QVariantMap>
@@ -175,7 +176,7 @@ void MidiFeedbackController::refreshDeckLeds(int deck)
         sendDeckLed(deck, m_mapping.loop4BeatNote, isFourBeatLoop);
         sendDeckLed(deck, m_mapping.loopReloopNote, engine->loopActive());
     }
-    sendDeckLed(deck, m_mapping.tempoResetNote, qFuzzyIsNull(engine->getTempoPercent()));
+    sendDeckLed(deck, m_mapping.tempoResetNote, flx10::tempoNearZero(engine->getTempoPercent()));
     // FLX10 uses the BEAT SYNC lamp for both follower and master state. A
     // master deck is not necessarily syncEnabled(), so include it explicitly.
     sendDeckLed(deck, m_mapping.beatSyncNote,

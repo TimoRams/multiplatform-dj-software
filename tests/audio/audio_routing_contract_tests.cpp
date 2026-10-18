@@ -131,7 +131,7 @@ int main()
     fill(fixture.tail0, 0.2f);
     fixture.render();
     ok &= require(close(averageTail(fixture.master, 0), 0.2f),
-                  "post-fader tail continues after deck reset/fader close");
+                  "master sums already-fader-scaled wet returns independently of dry programs");
     ok &= require(close(averageTail(fixture.hardware, 0),
                         averageTail(fixture.hardware, 2)),
                   "Booth and Master are the same canonical Master Tap");

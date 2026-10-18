@@ -50,6 +50,7 @@ private:
     BrickwallLimiter m_limiter;
     FxProcessor m_masterFx;
     std::array<float, kDeckCount> m_crossfaderGain { 1.0f, 1.0f, 1.0f, 1.0f };
+    std::array<float, kDeckCount> m_inputGain { 1.0f, 1.0f, 1.0f, 1.0f };
     std::array<std::atomic<float>, kDeckCount> m_publishedCrossfaderGain {};
     float m_masterGain = 1.0f;
     double m_sampleRate = 48000.0;

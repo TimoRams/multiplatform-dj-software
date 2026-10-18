@@ -465,6 +465,16 @@ Window {
                         visible: mappingEditorWindow.catVisible([["Trim","deckB_gain"],["EQ High","deckB_eqHigh"],["EQ Mid","deckB_eqMid"],["EQ Low","deckB_eqLow"],["Filter","deckB_filter"]]) }
 
                     // ── TEMPO ───────────────────────────────────────────────
+                    Repeater {
+                        model: ["A", "B", "C", "D"]
+                        delegate: MappingRow {
+                            required property string modelData
+                            width: parent.width
+                            labelStr: "Deck " + modelData + " - Reverse"
+                            paramId: "deck" + modelData + "_reverse"
+                            visible: mappingEditorWindow.rowVisible(labelStr, paramId)
+                        }
+                    }
                     Item {
                         width: parent.width; height: visible ? 30 : 0
                         visible: mappingEditorWindow.catVisible([["Tempo A","deckA_tempo"],["Tempo B","deckB_tempo"]])

@@ -684,6 +684,12 @@ target_include_directories(BrockDJ_flx10_jog_routing_tests PRIVATE src src/deck)
 target_compile_features(BrockDJ_flx10_jog_routing_tests PRIVATE cxx_std_23)
 add_test(NAME flx10_jog_routing COMMAND BrockDJ_flx10_jog_routing_tests)
 
+add_executable(BrockDJ_flx10_input_ownership_tests
+    tests/controllers/flx10_input_ownership_tests.cpp)
+target_include_directories(BrockDJ_flx10_input_ownership_tests PRIVATE src)
+target_compile_features(BrockDJ_flx10_input_ownership_tests PRIVATE cxx_std_23)
+add_test(NAME flx10_input_ownership COMMAND BrockDJ_flx10_input_ownership_tests)
+
 add_executable(BrockDJ_alsa_midi_line_parser_tests
     tests/controllers/alsa_midi_line_parser_tests.cpp)
 target_include_directories(BrockDJ_alsa_midi_line_parser_tests PRIVATE src)
@@ -1194,6 +1200,7 @@ set(_brockdj_executable_targets
     BrockDJ_deck_audio_graph_tests
     BrockDJ_deck_transport_tests
     BrockDJ_flx10_jog_routing_tests
+    BrockDJ_flx10_input_ownership_tests
     BrockDJ_midi_feedback_meter_tests
     BrockDJ_sync_coordinator_tests
     BrockDJ_control_clock_tests

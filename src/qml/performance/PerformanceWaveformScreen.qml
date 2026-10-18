@@ -13,6 +13,16 @@ Item {
     property string selectedDeck: "A"
     property string leftPanel: "deck" // closed | deck | grid
     property bool rightPanelOpen: false
+    property bool panelStateReady: false
+    Component.onCompleted: {
+        if (typeof settingsManager !== "undefined" && settingsManager)
+            rightPanelOpen = settingsManager.getUiState("performanceFxPanelOpen", "0") === "1"
+        panelStateReady = true
+    }
+    onRightPanelOpenChanged: {
+        if (panelStateReady && typeof settingsManager !== "undefined" && settingsManager)
+            settingsManager.setUiState("performanceFxPanelOpen", rightPanelOpen ? "1" : "0")
+    }
 
     readonly property real panelWidth: Math.min(230, Math.max(176, width * 0.155))
     readonly property real handleWidth: 22
@@ -541,12 +551,18 @@ Item {
         readonly property color activeColor: UiTheme.blue
         readonly property color accentColor: UiTheme.blue
 
-        readonly property var divisions: [
+        readonly property bool percentParameter: fx && fx.effectType1 === "Reverb"
+        readonly property var beatDivisions: [
             { label: "1/16", value: 0.0625 }, { label: "1/8", value: 0.125 },
             { label: "1/4", value: 0.25 }, { label: "1/2", value: 0.5 },
             { label: "1", value: 1.0 }, { label: "2", value: 2.0 }, { label: "4", value: 4.0 }
         ]
-        readonly property real currentDiv: fx ? fx.beatDiv1 : 0.25
+        readonly property var divisions: percentParameter
+            ? fx.reverbSizeSteps.map(function(value) {
+                return { label: Math.round(value * 100) + "%", value: value }
+            }) : beatDivisions
+        readonly property real currentDiv: fx
+            ? (percentParameter ? fx.primaryParam1 : fx.beatDiv1) : 0.25
         readonly property int currentDivIndex: {
             var index = 0
             var nearest = Number.MAX_VALUE
@@ -598,7 +614,10 @@ Item {
         function setDivisionIndex(index) {
             if (!fx) return
             index = Math.max(0, Math.min(divisions.length - 1, index))
-            fx.setBeatDivision(1, divisions[index].value)
+            if (percentParameter)
+                fx.setPrimaryParam(1, divisions[index].value)
+            else
+                fx.setBeatDivision(1, divisions[index].value)
         }
 
         // Dragging the mix is a request to hear the effect, so it engages the unit
@@ -652,6 +671,7 @@ Item {
             Rectangle {
                 Layout.fillWidth: true; Layout.preferredHeight: 44
                 Layout.minimumHeight: 44
+                visible: !root.percentParameter
                 color: root.rowColor
 
                 PerformanceText {
@@ -769,20 +789,22 @@ Item {
                 PerformanceText {
                     anchors.left: parent.left; anchors.leftMargin: 9
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "TIME"; color: UiTheme.textLabel
+                    text: root.percentParameter ? "ROOM SIZE" : "TIME"; color: UiTheme.textLabel
                     font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.6
                 }
                 PerformanceText {
                     id: timeUnit
                     anchors.right: parent.right; anchors.rightMargin: 9
                     anchors.baseline: timeValue.baseline
-                    text: "ms"; color: root.mutedText; font.pixelSize: 10
+                    text: root.percentParameter ? "%" : "ms"; color: root.mutedText; font.pixelSize: 10
                 }
                 PerformanceText {
                     id: timeValue
+                    objectName: "fxParameterValue"
                     anchors.right: timeUnit.left; anchors.rightMargin: 3
                     anchors.verticalCenter: parent.verticalCenter
-                    text: root.effectMs > 0 ? Math.round(root.effectMs).toString() : "---"
+                    text: root.percentParameter ? Math.round(root.currentDiv * 100).toString()
+                          : (root.effectMs > 0 ? Math.round(root.effectMs).toString() : "---")
                     color: root.panelText; font.pixelSize: 17
                 }
             }

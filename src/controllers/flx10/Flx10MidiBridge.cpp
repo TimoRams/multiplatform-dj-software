@@ -11,9 +11,11 @@ using namespace midi;
 #include "controllers/midi/ParameterStore.h"
 #include "app/SettingsManager.h"
 #include "controllers/flx10/Flx10JogRouter.h"
+#include "controllers/flx10/Flx10TransportControls.h"
 
 #include <QDebug>
 #include <QMetaObject>
+#include <QScopedValueRollback>
 #include <QtGlobal>
 #include <algorithm>
 #include <cmath>
@@ -388,6 +390,9 @@ void MidiControllerManager::testFlx10LedOutput()
 }
 bool MidiControllerManager::shouldUseFlx10Feedback() const
 {
+    if (m_hardwareAccess == HardwareAccess::Disabled)
+        return false;
+
     if (isSelectedFlx10Controller()
         || flx10::isBuiltInMapping(getSelectedMapping())) {
         return true;
@@ -800,6 +805,8 @@ void MidiControllerManager::refreshTransportAndLoopLeds(QChar deck, DjEngine* en
     sendMappedNoteLed(prefix + QStringLiteral("quantize"), engine->quantizeEnabled());
     sendMappedNoteLed(prefix + QStringLiteral("slip"), engine->slipActive());
     sendMappedNoteLed(prefix + QStringLiteral("slip_reverse"), engine->isReverse());
+    sendMappedNoteLed(prefix + QStringLiteral("tempo_reset"),
+                      flx10::tempoNearZero(engine->getTempoPercent()));
 }
 
 void MidiControllerManager::refreshPadModeLeds(QChar deck)
@@ -1127,11 +1134,10 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
 
     auto syncBeatFxState = [this]
     {
-        if (!m_fxManager)
+        if (!m_fxManager || m_applyingBeatFxState)
             return;
         const float currentWet = std::clamp(m_fxManager->wetDry1(), 0.0f, 1.0f);
-        if (currentWet > 0.001f)
-            m_beatFxLevelDepth = currentWet;
+        m_beatFxLevelDepth = currentWet;
         // The unit's own engage flag, never the mix amount. Inferring the
         // on-state from a non-zero amount meant that any path which legitimately
         // wrote zero — the knob at rest, a sweep through the bottom of the mix
@@ -1141,6 +1147,7 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
             m_beatFxActive = active;
             emit beatFxActiveChanged();
         }
+        pushBeatFxTiming();
         refreshFxLeds();
     };
 
@@ -1153,7 +1160,10 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
         const int position = beatFxPositionForName(m_fxManager->effectType1());
         if (position > 0)
             m_beatFxPosition = position;
-        refreshFxLeds();
+        if (!m_applyingBeatFxState) {
+            pushBeatFxTiming();
+            refreshFxLeds();
+        }
     });
     auto syncBeatFxDeck = [this]
     {
@@ -1164,13 +1174,14 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
             m_fxManager->deck1C(), m_fxManager->deck1D()
         };
         const int assignedCount = static_cast<int>(std::count(assigned.begin(), assigned.end(), true));
-        if (assignedCount == 4) {
-            m_beatFxTarget = MidiBeatFxTarget::Master;
-        } else if (assignedCount == 1) {
+        // Several per-deck instances are not a master-bus effect: adding a
+        // master instance here would process the same audio a second time.
+        if (assignedCount > 0) {
             const auto selected = std::find(assigned.begin(), assigned.end(), true);
             m_beatFxTarget = static_cast<MidiBeatFxTarget>(
                 std::distance(assigned.begin(), selected));
         }
+        pushBeatFxTiming();
         refreshFxLeds();
     };
     QObject::connect(m_fxManager, &FxManager::deck1AChanged, this, syncBeatFxDeck);
@@ -1190,6 +1201,8 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
     });
     QObject::connect(m_fxManager, &FxManager::displayBpm1Changed,
                      this, &MidiControllerManager::pushBeatFxTiming);
+    QObject::connect(m_fxManager, &FxManager::primaryParam1Changed,
+                     this, &MidiControllerManager::pushBeatFxTiming);
     syncBeatFxState();
     syncBeatFxDeck();
     pushBeatFxTiming();
@@ -1197,6 +1210,7 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
 
 void MidiControllerManager::applyBeatFxState(BeatFxEngage engage)
 {
+    QScopedValueRollback<bool> applyingState(m_applyingBeatFxState, true);
     // Picking an effect, a routing channel or a beat division says nothing about
     // whether FX should be on. The FX selector and the channel selector are
     // physical switches, so the controller reports their resting position on its
@@ -1214,7 +1228,10 @@ void MidiControllerManager::applyBeatFxState(BeatFxEngage engage)
     }
 
     const EffectType type = beatFxTypeForPosition(m_beatFxPosition);
-    const float wet = m_beatFxActive ? m_beatFxLevelDepth : 0.0f;
+    // Wet/routing setters synchronously notify observers before enabled is
+    // written. Keep this command independent of that intermediate state.
+    const bool requestedActive = m_beatFxActive;
+    const float wet = requestedActive ? m_beatFxLevelDepth : 0.0f;
 
     if (m_fxManager) {
         const MidiBeatFxTarget target = m_beatFxTarget;
@@ -1228,21 +1245,23 @@ void MidiControllerManager::applyBeatFxState(BeatFxEngage engage)
         m_applyingBeatFxRouting = false;
         // Engage state and mix amount are pushed separately. Only a knob that
         // has actually reported a position gets to dictate the amount; before
-        // that the manager's own amount stands, so switching on never lands on
-        // an inaudible zero.
+        // that the manager's own amount stands, including zero.
         if (m_beatFxDepthFromKnob)
             m_fxManager->setWetDry1(m_beatFxLevelDepth);
         if (engage == BeatFxEngage::Write)
-            m_fxManager->setUnitEnabled(1, m_beatFxActive);
+            m_fxManager->setUnitEnabled(1, requestedActive);
+        const bool appliedActive = m_fxManager->enabled1();
+        if (m_beatFxActive != appliedActive) {
+            m_beatFxActive = appliedActive;
+            emit beatFxActiveChanged();
+        }
         if (m_beatFxActive)
             m_beatFxLevelDepth = std::clamp(m_fxManager->wetDry1(), 0.0f, 1.0f);
-        const float appliedWet = m_beatFxActive ? m_beatFxLevelDepth : 0.0f;
-        AudioEngine::setMasterFx(target == MidiBeatFxTarget::Master ? type : EffectType::None,
-                                 target == MidiBeatFxTarget::Master ? appliedWet : 0.0f);
-        m_fxManager->setPrimaryParam(1, m_beatFxLevelDepth);
+        if (type != EffectType::Reverb)
+            m_fxManager->setPrimaryParam(1, m_beatFxLevelDepth);
         // The hardware FX unit is beat-locked: BEAT ◄ / ► picks a division and
         // the echo/delay length follows the assigned channel's tempo.
-        m_fxManager->setSyncEnabled(1, true);
+        m_fxManager->setSyncEnabled(1, type != EffectType::Reverb);
     } else {
         AudioEngine::setMasterFx(m_beatFxTarget == MidiBeatFxTarget::Master
                                      ? type : EffectType::None,
@@ -1270,18 +1289,48 @@ void MidiControllerManager::pushBeatFxTiming()
     float seconds = -1.0f;
     if (m_fxManager) {
         m_fxManager->setBeatDivision(1, m_beatFxDivision);
-        const double bpm = m_fxManager->displayBpm1();
+        double bpm = m_fxManager->displayBpm1();
+        if (m_beatFxTarget == MidiBeatFxTarget::Master) {
+            // Master has no per-deck assignments. Use the first playing deck,
+            // then a loaded deck, rather than retaining the old channel time.
+            bpm = 0.0;
+            for (const bool playingOnly : {true, false}) {
+                for (const auto* engine : {m_deckA, m_deckB, m_deckC, m_deckD}) {
+                    if (engine && engine->hasTrack()
+                        && (!playingOnly || engine->isPlaying())
+                        && engine->getCurrentBpm() > 0.0) {
+                        bpm = engine->getCurrentBpm();
+                        break;
+                    }
+                }
+                if (bpm > 0.0)
+                    break;
+            }
+        }
         if (m_fxManager->syncEnabled1() && bpm > 0.0)
             seconds = static_cast<float>((60.0 / bpm) * static_cast<double>(m_beatFxDivision));
+        const int position = beatFxPositionForName(m_fxManager->effectType1());
+        AudioEngine::setMasterFx(
+            m_beatFxTarget == MidiBeatFxTarget::Master && m_fxManager->enabled1()
+                && position > 0 ? beatFxTypeForPosition(position) : EffectType::None,
+            m_beatFxTarget == MidiBeatFxTarget::Master && m_fxManager->enabled1()
+                ? m_fxManager->wetDry1() : 0.0f);
     }
 
     // The master bus keeps its own copy of the timing — pushSyncedDelay only
     // reaches the per-channel FX slots.
-    AudioEngine::setMasterFxTiming(seconds, m_beatFxLevelDepth);
+    AudioEngine::setMasterFxTiming(seconds,
+        m_fxManager && m_fxManager->effectType1() == QStringLiteral("Reverb")
+            ? m_fxManager->primaryParam1() : m_beatFxLevelDepth);
 }
 
 void MidiControllerManager::stepBeatFxDivision(int direction)
 {
+    if (m_fxManager && m_fxManager->effectType1() == QStringLiteral("Reverb")) {
+        m_fxManager->stepReverbSize(1, direction);
+        return;
+    }
+
     // Reaching for BEAT ◄ / ► is a request for a beat-locked effect length.
     if (m_fxManager)
         m_fxManager->setSyncEnabled(1, true);
@@ -1308,16 +1357,12 @@ void MidiControllerManager::updateBeatFxBlink()
 void MidiControllerManager::refreshFxLeds()
 {
     updateBeatFxBlink();
-    for (const auto& [paramId, target] : kBeatFxChannels)
-        sendMappedNoteLed(QString::fromLatin1(paramId), m_beatFxTarget == target);
-    for (int position = 1; position <= 14; ++position) {
-        sendMappedNoteLed(QStringLiteral("beat_fx_select_%1").arg(position),
-                          position == m_beatFxPosition);
-    }
+    // The Beat FX channel/effect selector notes are input-only in the MIDI
+    // chart. Echoing them is not a supported way to update the FX LCD.
 
     const QString soundColorMode = m_fxManager
         ? m_fxManager->soundColorMode()
-        : QStringLiteral("Filter");
+        : QStringLiteral("None");
     for (const auto& [paramId, mode] : kSoundColorModes) {
         sendMappedNoteLed(QString::fromLatin1(paramId),
                           soundColorMode == QLatin1String(mode));
@@ -1735,7 +1780,7 @@ bool MidiControllerManager::dispatchFlx10JogAction(const QString& paramId,
         engine->submitScratchReleaseSpeed(route.estimatedRate);
         break;
     case flx10::JogRouteAction::Nudge:
-        engine->applyJogNudge(route.ticks);
+        engine->applyJogNudge(route.ticks, timestamp);
         break;
     case flx10::JogRouteAction::Ignore:
         break;
@@ -2113,14 +2158,12 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             return;
         }
 
-        if (id == QStringLiteral("deckA_sound_color")
-            || id == QStringLiteral("deckB_sound_color")) {
+        QChar colorDeck;
+        if (parseDeckButtonParam(id, QStringLiteral("sound_color"), colorDeck)) {
             if (m_fxManager) {
                 const float bipolar = std::clamp(value * 2.0f - 1.0f, -1.0f, 1.0f);
                 m_fxManager->setSoundColorChannel(
-                    id.startsWith(QStringLiteral("deckA_"))
-                        ? QStringLiteral("deckA")
-                        : QStringLiteral("deckB"),
+                    QStringLiteral("deck%1").arg(colorDeck),
                     std::abs(bipolar) < 0.01f ? 0.0f : bipolar);
             }
             return;
@@ -2128,8 +2171,12 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
 
         for (const auto& [paramId, mode] : kSoundColorModes) {
             if (id == QLatin1String(paramId)) {
-                if (value >= 0.5f && m_fxManager)
-                    m_fxManager->setSoundColorMode(QString::fromLatin1(mode));
+                if (m_fxManager) {
+                    if (value >= 0.5f)
+                        m_fxManager->setSoundColorMode(QString::fromLatin1(mode));
+                    else if (m_fxManager->soundColorMode() == QLatin1String(mode))
+                        m_fxManager->setSoundColorMode(QStringLiteral("None"));
+                }
                 return;
             }
         }
@@ -2424,6 +2471,15 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             }
             return;
         }
+        if (parseDeckButtonParam(id, QStringLiteral("reverse"), directDeck)) {
+            if (value >= 0.5f) {
+                if (auto* engine = engineForDeck(directDeck)) {
+                    engine->setSlip(false);
+                    engine->setReverse(!engine->isReverse());
+                }
+            }
+            return;
+        }
         if (parseDeckButtonParam(id, QStringLiteral("slip_reverse"), directDeck)) {
             DjEngine* const engine = engineForDeck(directDeck);
             bool& held = directDeck == QLatin1Char('A')
@@ -2436,6 +2492,15 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
                 ? m_deckASlipBeforeReverse
                 : m_deckBSlipBeforeReverse;
             const bool pressed = value >= 0.5f;
+            const bool shiftHeld = directDeck == QLatin1Char('A')
+                ? m_deckAShiftHeld : m_deckBShiftHeld;
+            if (pressed && !held && shiftHeld) {
+                if (engine) {
+                    engine->setSlip(false);
+                    engine->setReverse(!engine->isReverse());
+                }
+                return;
+            }
             if (pressed && !held) {
                 previousReverse = engine && engine->isReverse();
                 previousSlip = engine && engine->slipActive();

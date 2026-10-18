@@ -1,4 +1,5 @@
 #include "controllers/midi/LevelMeterBallistics.h"
+#include "controllers/flx10/Flx10TransportControls.h"
 
 #include <cassert>
 #include <cmath>
@@ -6,6 +7,10 @@
 
 int main()
 {
+    for (const double value : {-0.05, -0.01, 0.0, 0.01, 0.05})
+        assert(flx10::tempoNearZero(value));
+    for (const double value : {-8.0, -0.051, 0.051, 8.0})
+        assert(!flx10::tempoNearZero(value));
     assert(std::abs(LevelMeterBallistics::linearPeakToDb(1.0f)) < 0.001f);
     assert(std::abs(LevelMeterBallistics::linearPeakToDb(0.1f) + 20.0f) < 0.001f);
 

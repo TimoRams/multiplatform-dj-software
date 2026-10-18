@@ -75,6 +75,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     controllers/flx10/Flx10MacHidTransport.h
     controllers/flx10/Flx10Display.cpp
     controllers/flx10/Flx10MidiBridge.cpp
+    controllers/flx10/Flx10InputOwnershipBridge.cpp
 
     # Decks
     deck/DjEngine.h

@@ -627,7 +627,7 @@ void FxProcessor::updateReverbParams()
 {
     // m_primaryParamAtomic (0..1) controls room character.
     // amount (large knob) controls wet/dry through the outer SmoothedValue mixer.
-    const float size = std::clamp(m_primaryParamAtomic.load(std::memory_order_relaxed), 0.05f, 1.0f);
+    const float size = std::clamp(m_primaryParamAtomic.load(std::memory_order_relaxed), 0.01f, 1.0f);
     juce::dsp::Reverb::Parameters p;
     p.roomSize   = 0.15f + size * 0.80f;   // 0.15 (tiny) … 0.95 (hall)
     p.damping    = 0.75f - size * 0.45f;   // 0.75 (bright short) … 0.30 (dark long)

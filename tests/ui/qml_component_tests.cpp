@@ -1947,6 +1947,7 @@ bool qmlMergeRuntimeTests()
             property real displayBpm2: 120
             property real primaryParam1: 0.5
             property real primaryParam2: 0.5
+            readonly property var reverbSizeSteps: [0.01, 0.10, 0.25, 0.50, 0.75, 0.90, 1.00]
             property bool enabled1: false
             property bool enabled2: false
             property string effectType1: "---"
@@ -2060,6 +2061,11 @@ bool qmlMergeRuntimeTests()
         QtObject {
             property int waveformRenderStyle: 0
             property real waveformPlayheadPosition: 0.5
+            property var uiState: ({})
+            function getUiState(key, fallback) {
+                return uiState[key] === undefined ? fallback : uiState[key]
+            }
+            function setUiState(key, value) { uiState[key] = value }
         }
     )"), "waveform settings context instantiates");
     auto pressure = createQmlObject(engine, QStringLiteral(R"(
@@ -2168,6 +2174,34 @@ bool qmlMergeRuntimeTests()
                       return beatFxPanel->property("visible").toBool();
                   }),
                   "the right-side Beat FX panel remains host-controlled");
+    if (beatFxPanel) {
+        fxManager->setProperty("effectType1", QStringLiteral("Reverb"));
+        const double beatDivision = fxManager->property("beatDiv1").toDouble();
+        const QList<double> percentages {0.01, 0.10, 0.25, 0.50, 0.75, 0.90, 1.0};
+        for (int index = 0; index < percentages.size(); ++index) {
+            ok &= require(QMetaObject::invokeMethod(beatFxPanel, "setDivisionIndex",
+                              Q_ARG(QVariant, QVariant(index))),
+                          "Reverb percentage can be selected in the performance panel");
+            QCoreApplication::processEvents();
+            auto* value = beatFxPanel->findChild<QObject*>(QStringLiteral("fxParameterValue"));
+            ok &= require(std::abs(fxManager->property("primaryParam1").toDouble()
+                                      - percentages[index]) < 1e-6
+                              && fxManager->property("beatDiv1").toDouble() == beatDivision
+                              && value && value->property("text").toString()
+                                  == QString::number(qRound(percentages[index] * 100)),
+                          "Reverb displays and changes percentage, not beat duration");
+        }
+        fxManager->setProperty("effectType1", QStringLiteral("Echo"));
+        QMetaObject::invokeMethod(beatFxPanel, "setDivisionIndex", Q_ARG(QVariant, QVariant(2)));
+        ok &= require(fxManager->property("beatDiv1").toDouble() == 0.25,
+                      "timed effects retain beat-division selection");
+    }
+    for (const bool open : {false, true}) {
+        performance->setProperty("rightPanelOpen", open);
+        std::unique_ptr<QObject> restored(performanceComponent.create(&context));
+        ok &= require(restored && restored->property("rightPanelOpen").toBool() == open,
+                      "FX panel open and closed state survives component recreation");
+    }
     for (auto* panel : {quickA, quickB, gridPanel, beatFxPanel}) {
         auto* visualPanel = qobject_cast<QQuickItem*>(panel);
         auto* scroll = panel ? panel->findChild<QQuickItem*>(
@@ -2555,6 +2589,22 @@ bool qmlMergeRuntimeTests()
     ok &= require(fxBarItem->isVisible()
                       && std::abs(fxBarItem->height() - 96.0) < 1e-6,
                   "the real FX bar host is visible at its configured height");
+    fxManager->setProperty("soundColorMode", QStringLiteral("None"));
+    auto* filterMode = findVisualItem(fxBarItem, QStringLiteral("soundColorMode_Filter"));
+    auto* noiseMode = findVisualItem(fxBarItem, QStringLiteral("soundColorMode_Noise"));
+    ok &= require(filterMode && !filterMode->property("isActive").toBool()
+                      && noiseMode && !noiseMode->property("isActive").toBool(),
+                  "Sound Color can have no active selection");
+    ok &= clickItem(fxWindow, filterMode, "Sound Color Filter button is clickable");
+    ok &= require(fxManager->property("soundColorMode").toString() == QStringLiteral("Filter"),
+                  "Sound Color UI selects the requested mode");
+    ok &= clickItem(fxWindow, noiseMode, "Sound Color Noise button is clickable");
+    ok &= require(fxManager->property("soundColorMode").toString() == QStringLiteral("Noise")
+                      && filterMode && !filterMode->property("isActive").toBool(),
+                  "Sound Color UI replaces the previous selection");
+    ok &= clickItem(fxWindow, noiseMode, "Sound Color active mode can be clicked again");
+    ok &= require(fxManager->property("soundColorMode").toString() == QStringLiteral("None"),
+                  "Sound Color UI deselects the active mode");
     QObject* unit1 = fxBar->findChild<QObject*>(QStringLiteral("fxUnit1"));
     QObject* unit2 = fxBar->findChild<QObject*>(QStringLiteral("fxUnit2"));
     ok &= require(unit1 && unit2
@@ -2648,6 +2698,16 @@ int main(int argc, char** argv)
     const auto applicationLifecycleHeader = read("src/app/ApplicationLifecycle.h");
     const auto applicationLifecycle = read("src/app/ApplicationLifecycle.cpp");
     ok &= audioRoleTests(settingsPanel);
+    ok &= require(read("src/qml/waveform/EnlargedWaveform.qml").find("inputExternalWaveformOverlay")
+                      != std::string::npos
+                      && read("src/qml/performance/PerformanceWorkspace.qml")
+                             .find("enabled: !inputExternal") != std::string::npos,
+                  "waveforms and AIO deck controls dim and disable on external FLX10 input");
+    ok &= require(deckControl.find("inputExternalOverlay") != std::string::npos
+                      && deckControl.find("deck.engine.inputExternal") != std::string::npos
+                      && settingsPanel.find("flx10HostPortCombo") != std::string::npos
+                      && settingsPanel.find("settingsManager.flx10HostUsbPort") != std::string::npos,
+                  "deck dims on external FLX10 input and the USB port is configurable");
     ok &= qmlMergeRuntimeTests();
     const auto applicationBootstrap = read("src/app/ApplicationBootstrap.cpp");
     ok &= require(applicationLifecycleHeader.find("bool exitTeardownStarted = false;")

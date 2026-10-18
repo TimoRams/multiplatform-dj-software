@@ -198,7 +198,10 @@ applies to Key Shift pitch changes as to keylock ones.
 A loaded but paused deck sets `TimeStretchProcessor::setInputPlaybackActive(false)`.
 Keylock then renders the direct router path once, which preserves scratch and FX
 tail semantics without running a phase vocoder over silence. Resuming marks the
-next keylock entry for the existing bounded seed/crossfade handshake.
+next keylock entry for the existing bounded seed/crossfade handshake. After a
+paused callback, the worker must receive a complete pre-roll of fresh playback
+history: paused silence and the previous playback segment are not valid seed
+material. Until then the callback continues the direct bridge without blocking.
 
 `TimeStretchProcessor` pulls its input directly from `RenderModeRouter`
 (`TimeStretchProcessor(renderModeRouter.get())`), so `setInputPlaybackActive()`
@@ -219,6 +222,11 @@ generation into the inactive preallocated filter bank and crossfade, but may
 not call coefficient factories, allocate, prepare, lock, or construct DSP
 objects. Its coefficient-build, prepare, growth, lock, and construction
 counters must remain zero.
+
+The separate deck delay/reverb wet returns use the same per-sample smoothed
+channel-fader gain as the dry program. A closed channel fader silences both;
+the DSP tail state remains intact, and PFL remains pre-fader. Master-bus FX
+remain downstream and can have their own decay after channel input stops.
 
 `FxProcessor` effect-type changes use a bounded generation-tagged command
 handoff and are applied once at a block boundary. Effect storage is prepared

@@ -156,7 +156,8 @@ void MidiControllerManager::selectMapping(const QString& mappingFileName)
 {
     cancelBeatJumpSearch();
     m_selectedMappingFile = mappingFileName;
-    SettingsManager::getInstance().setSelectedMappingFile(mappingFileName);
+    if (m_hardwareAccess == HardwareAccess::Enabled)
+        SettingsManager::getInstance().setSelectedMappingFile(mappingFileName);
 
     m_midiToParam.clear();
     m_paramToMidi.clear();

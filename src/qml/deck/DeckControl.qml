@@ -1204,6 +1204,30 @@ Item {
                 }
         }
 
+        // Channel input belongs to another source: dim the deck and swallow input.
+        Rectangle {
+            objectName: "inputExternalOverlay"
+            anchors.fill: parent
+            z: 6
+            visible: deck.engine ? deck.engine.inputExternal : false
+            color: "#99101214"
+
+            MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                acceptedButtons: Qt.AllButtons
+                onWheel: (wheel) => wheel.accepted = true
+            }
+
+            Text {
+                anchors.centerIn: parent
+                text: "EXTERNAL INPUT"
+                color: UiTheme.textLabel
+                font.pixelSize: 11
+                font.bold: true
+            }
+        }
+
         // ── Drop-hover overlay (must be above all content) ────────────────
         Rectangle {
             anchors.fill: parent

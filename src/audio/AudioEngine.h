@@ -107,6 +107,8 @@ public:
     static float headphoneGain();
     static void setPflEnabled(int deckIndex, bool enabled);
     static bool pflEnabled(int deckIndex);
+    static void setDeckInputSuppressed(int deckIndex, bool suppressed);
+    static bool deckInputSuppressed(int deckIndex);
 
     static void setCrossfaderPosition(float position);
     static void setCrossfaderCurve(CrossfaderCurve curve);

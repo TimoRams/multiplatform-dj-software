@@ -592,4 +592,18 @@ Item {
         border.width: 2
         visible: root.dropHovered
     }
+
+    Rectangle {
+        objectName: "inputExternalWaveformOverlay"
+        anchors.fill: parent
+        z: 50
+        visible: root.engine ? root.engine.inputExternal : false
+        color: "#99101214"
+
+        MouseArea {
+            anchors.fill: parent
+            acceptedButtons: Qt.AllButtons
+            onWheel: (wheel) => wheel.accepted = true
+        }
+    }
 }

@@ -177,6 +177,9 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
         return;
     }
 
+    if (handleFlx10InputSelect(msgId, value, isNoteOff))
+        return;
+
     if (!m_parameterStore)
         return;
 
@@ -360,7 +363,9 @@ void MidiControllerManager::processDecodedMidiEvent(int msgId, float value, bool
     if (midi::isButtonInteraction(interactionType)) {
         const int rawMidiValue = static_cast<int>(std::round(value * 127.0f));
 
-        if (interactionType == MidiInteractionType::Toggle && !pressed) {
+        // Color selectors report latched ON/OFF state, not a press/release pair.
+        if (interactionType == MidiInteractionType::Toggle && !pressed
+            && !paramId.startsWith(QStringLiteral("sound_color_fx_"))) {
             if (m_midiTraceEnabled) qDebug() << "[MIDI MAP]" << midiControlLabel(msgId)
                      << "value:" << rawMidiValue
                      << "interpreted:released"

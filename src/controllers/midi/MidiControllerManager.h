@@ -9,6 +9,7 @@
 
 #include "MidiFeedbackController.h"
 #include "app/ControlClock.h"
+#include "controllers/flx10/Flx10InputOwnership.h"
 #include "controllers/flx10/Flx10JogRouter.h"
 #include "controllers/flx10/Flx10RealtimeScratchIngress.h"
 #include "MidiInputState.h"
@@ -80,8 +81,10 @@ class MidiControllerManager : public QObject, public juce::MidiInputCallback
     Q_OBJECT
 
 public:
+    enum class HardwareAccess { Enabled, Disabled };
     MidiControllerManager(ParameterStore* store, ControlClock& controlClock,
-                          QObject* parent = nullptr);
+                          QObject* parent = nullptr,
+                          HardwareAccess hardwareAccess = HardwareAccess::Enabled);
     ~MidiControllerManager() override;
 
     Q_INVOKABLE QStringList getAvailableMidiInputDevices();
@@ -114,6 +117,12 @@ public:
     void connectDecks(DjEngine* deckA, DjEngine* deckB,
                       DjEngine* deckC, DjEngine* deckD);
     void connectFxManager(FxManager* fxManager);
+
+    // FLX10 channel input ownership. The USB port this computer uses is not
+    // reported by the controller, so it is configured (0 unknown, 1 A, 2 B).
+    void setFlx10HostUsbPort(int port);
+    [[nodiscard]] int flx10HostUsbPort() const noexcept;
+    [[nodiscard]] int flx10InputSelector(int deckIndex) const noexcept;
 
     // Stop MIDI I/O and disconnect callbacks before QML/engine teardown.
     void shutdown();
@@ -165,6 +174,7 @@ signals:
     void performancePadStateChanged(const QString& deckId);
     void beatFxActiveChanged();
     void libraryViewToggleRequested();
+    void flx10InputOwnershipChanged();
 
 public slots:
     void onParameterChanged(const QString& id, float value);
@@ -187,6 +197,8 @@ private:
     void dispatchToStore(const QString& paramId, float value, ParameterStoreDispatch method);
 
     std::atomic<bool> m_shutdownComplete { false };
+    flx10::InputOwnershipTracker m_flx10InputOwnership;
+    const HardwareAccess m_hardwareAccess;
 
     ParameterStore* m_parameterStore = nullptr;
     DjEngine* m_deckA = nullptr;
@@ -274,10 +286,8 @@ private:
     int m_beatFxPosition = 1;
     MidiBeatFxTarget m_beatFxTarget = MidiBeatFxTarget::DeckA;
     bool m_applyingBeatFxRouting = false;
-    // Whether the physical LEVEL/DEPTH knob has reported a position yet. Until
-    // it has, its resting value is unknown and must not be taken as "the user
-    // asked for zero mix" — engaging with that would switch the effect on
-    // inaudibly, which is indistinguishable from it not switching on at all.
+    bool m_applyingBeatFxState = false;
+    // Until LEVEL/DEPTH reports a position, preserve the manager's mix amount.
     bool m_beatFxDepthFromKnob = false;
     float m_beatFxDivision = 0.25f;   // 1/4 beat, the usual power-up default
 
@@ -407,6 +417,9 @@ private:
     void logAvailableMidiPorts() const;
     [[nodiscard]] bool isSelectedFlx10Controller() const;
     bool shouldUseFlx10Feedback() const;
+    bool handleFlx10InputSelect(int msgId, float value, bool isNoteOff);
+    void applyFlx10InputOwnership();
+    void resetFlx10InputOwnership();
     void startFlx10OutputSession();
     void stopFlx10OutputSession();
 

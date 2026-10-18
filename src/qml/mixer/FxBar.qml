@@ -95,8 +95,10 @@ Rectangle {
         readonly property var kDivLabels: ["1/16", "1/8", "1/4", "1/2", "1", "2", "4"]
 
         // ── Room size steps (Reverb) ──────────────────────────────────────────
-        readonly property var kRoomValues: [0.10, 0.20, 0.30, 0.50, 0.75, 1.00]
-        readonly property var kRoomLabels: ["10%", "20%", "30%", "50%", "75%", "100%"]
+        readonly property var kRoomValues: fxManager ? fxManager.reverbSizeSteps : []
+        readonly property var kRoomLabels: kRoomValues.map(function(value) {
+            return Math.round(value * 100) + "%"
+        })
 
         // ── Effect metadata ───────────────────────────────────────────────────
         // paramType:
@@ -151,8 +153,7 @@ Rectangle {
             : (fxManager != null ? fxManager.displayBpm2 : 0.0)
 
         // ── Room-size primary param (Reverb) ──────────────────────────────────
-        // Stored in QML; pushed to fxManager when changed.
-        property real activePrimaryParam: unitId === 1
+        readonly property real activePrimaryParam: unitId === 1
             ? (fxManager != null ? fxManager.primaryParam1 : 0.5)
             : (fxManager != null ? fxManager.primaryParam2 : 0.5)
 
@@ -522,7 +523,6 @@ Rectangle {
                                     anchors.fill: parent
                                     cursorShape:  Qt.PointingHandCursor
                                     onClicked: {
-                                        root.activePrimaryParam = roomVal
                                         if (fxManager != null)
                                             fxManager.setPrimaryParam(root.unitId, roomVal)
                                     }
@@ -585,7 +585,7 @@ Rectangle {
             Layout.preferredWidth: 248
             Layout.fillHeight:     true
 
-            property string fallbackMode:  "Filter"
+            property string fallbackMode:  "None"
             property real   fallbackParam: 0.5
             readonly property var modes: ["Space", "D.Echo", "Crush", "Pitch", "Noise", "Sweep", "Filter"]
 
@@ -687,6 +687,7 @@ Rectangle {
                         Repeater {
                             model: scPanel.modes
                             delegate: Rectangle {
+                                objectName: "soundColorMode_" + modelData
                                 readonly property bool isActive: scPanel.isActiveMode(modelData)
 
                                 width:  Math.floor((scPanel.width - 44 - 5 * 3) / 4)
@@ -721,9 +722,10 @@ Rectangle {
                                     anchors.fill: parent
                                     cursorShape:  Qt.PointingHandCursor
                                     onClicked: {
-                                        scPanel.fallbackMode = modelData
-                                        if (typeof fxManager !== "undefined")
-                                            fxManager.setSoundColorMode(modelData)
+                                        const next = scPanel.activeMode === modelData ? "None" : modelData
+                                        scPanel.fallbackMode = next
+                                        if (typeof fxManager !== "undefined" && fxManager)
+                                            fxManager.setSoundColorMode(next)
                                     }
                                 }
                             }

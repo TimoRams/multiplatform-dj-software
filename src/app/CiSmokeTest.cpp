@@ -1,8 +1,12 @@
 #include "ApplicationBootstrap.h"
 #include "controllers/flx10/Flx10ControllerIdentity.h"
 #include "fx/FxManager.h"
+#include "app/ControlClock.h"
+#include "controllers/midi/MidiControllerManager.h"
+#include "controllers/midi/ParameterStore.h"
 
 #include <QCoreApplication>
+#include <QEvent>
 #include <QFile>
 #include <QGuiApplication>
 #include <QMetaProperty>
@@ -30,8 +34,15 @@ bool testFxManagerControls(QString& error)
             error = message;
         return condition;
     };
-
     FxManager manager;
+    for (const int unit : {1, 2}) {
+        manager.setUnitEnabled(unit, true);
+        if (!require(manager.unitEnabled(unit)
+                         && (unit == 1 ? manager.wetDry1() : manager.wetDry2()) == 0.0f,
+                     QStringLiteral("FX cold-start enable changed zero mix")))
+            return false;
+        manager.setUnitEnabled(unit, false);
+    }
     int deck1BChangedCount = 0;
     int deck2BChangedCount = 0;
     int deck1AChangedCount = 0;
@@ -122,6 +133,189 @@ bool testFxManagerControls(QString& error)
 
     return true;
 }
+
+bool testBeatFxFirstHardwareEngage(QString& error)
+{
+    ControlClock clock;
+    ParameterStore store;
+    FxManager fx;
+    MidiControllerManager midi(&store, clock, nullptr,
+                               MidiControllerManager::HardwareAccess::Disabled);
+    midi.connectDecks(nullptr, nullptr, nullptr, nullptr);
+    midi.connectFxManager(&fx);
+    const auto send = [&store](const char* id, float value) {
+        store.setMidiParameter(QString::fromLatin1(id), value);
+    };
+    const auto require = [&error](bool condition, const QString& message) {
+        if (!condition && error.isEmpty())
+            error = message;
+        return condition;
+    };
+    if (!require(fx.soundColorMode() == QStringLiteral("None"),
+                 QStringLiteral("Sound Color was selected at startup")))
+        return false;
+    midi.selectMapping(flx10::kMappingLabel);
+    const auto sendColorWire = [&midi](int note, int velocity) {
+        const juce::uint8 bytes[] {0x96, static_cast<juce::uint8>(note),
+                                  static_cast<juce::uint8>(velocity)};
+        static_cast<juce::MidiInputCallback&>(midi).handleIncomingMidiMessage(
+            nullptr, juce::MidiMessage(bytes, 3));
+        QCoreApplication::sendPostedEvents(&midi, QEvent::MetaCall);
+    };
+    const QStringList colorModes {
+        QStringLiteral("Space"), QStringLiteral("D.Echo"), QStringLiteral("Crush"),
+        QStringLiteral("Pitch"), QStringLiteral("Noise"), QStringLiteral("Filter")
+    };
+    for (int note = 0; note < colorModes.size(); ++note) {
+        sendColorWire(note, 127);
+        if (!require(fx.soundColorMode() == colorModes[note],
+                     QStringLiteral("Sound Color wire ON failed for %1").arg(colorModes[note])))
+            return false;
+        sendColorWire(note, 127);
+        if (!require(fx.soundColorMode() == colorModes[note],
+                     QStringLiteral("repeated Sound Color wire ON toggled off")))
+            return false;
+        sendColorWire(note, 0);
+        if (!require(fx.soundColorMode() == QStringLiteral("None"),
+                     QStringLiteral("Sound Color zero-velocity wire OFF was dropped")))
+            return false;
+    }
+    sendColorWire(5, 127);
+    sendColorWire(4, 127);
+    sendColorWire(5, 0);
+    if (!require(fx.soundColorMode() == QStringLiteral("Noise"),
+                 QStringLiteral("late wire OFF for Filter cleared Noise")))
+        return false;
+    sendColorWire(4, 0);
+    sendColorWire(3, 127);
+    sendColorWire(3, 0);
+    sendColorWire(3, 127);
+    if (!require(fx.soundColorMode() == QStringLiteral("Pitch"),
+                 QStringLiteral("Sound Color wire re-selection required two presses")))
+        return false;
+    sendColorWire(3, 0);
+    if (!require(fx.soundColorMode() == QStringLiteral("None"),
+                 QStringLiteral("Sound Color wire OFF left a mode selected")))
+        return false;
+    send("deckA_sound_color", 1.0f);
+    if (!require(fx.soundColorMode() == QStringLiteral("None"),
+                 QStringLiteral("turning an unassigned Color knob selected an effect")))
+        return false;
+    send("sound_color_fx_filter", 1.0f);
+    if (!require(fx.soundColorMode() == QStringLiteral("Filter"),
+                 QStringLiteral("Sound Color button failed to select Filter")))
+        return false;
+    send("sound_color_fx_filter", 1.0f);
+    if (!require(fx.soundColorMode() == QStringLiteral("Filter"),
+                 QStringLiteral("repeated Sound Color ON toggled off the selection")))
+        return false;
+    send("sound_color_fx_filter", 0.0f);
+    if (!require(fx.soundColorMode() == QStringLiteral("None"),
+                 QStringLiteral("Sound Color OFF failed to deselect")))
+        return false;
+    send("sound_color_fx_filter", 1.0f);
+    if (!require(fx.soundColorMode() == QStringLiteral("Filter"),
+                 QStringLiteral("Sound Color ON after OFF failed to select")))
+        return false;
+    send("sound_color_fx_noise", 1.0f);
+    send("sound_color_fx_filter", 0.0f);
+    if (!require(fx.soundColorMode() == QStringLiteral("Noise"),
+                 QStringLiteral("previous Sound Color OFF cleared the new selection")))
+        return false;
+    send("sound_color_fx_crush", 1.0f);
+    send("sound_color_fx_noise", 0.0f);
+    if (!require(fx.soundColorMode() == QStringLiteral("Crush"),
+                 QStringLiteral("Sound Color mode replacement failed")))
+        return false;
+    send("sound_color_fx_crush", 0.0f);
+    send("beat_fx_select_2", 1.0f);
+    send("beat_fx_channel_deck_a", 1.0f);
+    send("beat_fx_level_depth", 0.7f);
+    if (!require(!fx.enabled1(), QStringLiteral("hardware FX selectors/knob engaged the unit")))
+        return false;
+
+    // This is the cold-start path: wetDry1 is still zero, while the physical
+    // knob has already reported 0.7. Its synchronous notification used to
+    // replace the pending ON with the unit's old disabled state.
+    send("beat_fx_on", 1.0f);
+    if (!require(fx.enabled1() && midi.beatFxActive() && fx.deck1A()
+                     && fx.effectType1() == QStringLiteral("Echo")
+                     && qFuzzyCompare(fx.wetDry1(), 0.7f),
+                 QStringLiteral("first hardware FX ON was cancelled before UI activation")))
+        return false;
+    send("beat_fx_on", 0.0f);
+    send("beat_fx_level_depth", 0.3f);
+    send("beat_fx_on", 1.0f);
+    if (!require(fx.enabled1() && midi.beatFxActive()
+                     && qFuzzyCompare(fx.wetDry1(), 0.3f),
+                 QStringLiteral("hardware FX re-engage lost the new knob depth")))
+        return false;
+    fx.setUnitEnabled(1, false);
+    fx.setWetDry1(0.0f);
+    send("beat_fx_on", 1.0f);
+    if (!require(fx.enabled1() && midi.beatFxActive() && fx.wetDry1() == 0.0f,
+                 QStringLiteral("hardware FX ON raised zero UI depth")))
+        return false;
+    send("beat_fx_on", 0.0f);
+    send("beat_fx_level_depth", 0.0f);
+    send("beat_fx_on", 1.0f);
+    if (!require(fx.enabled1() && midi.beatFxActive() && fx.wetDry1() == 0.0f,
+                 QStringLiteral("hardware FX ON raised the knob's zero depth")))
+        return false;
+    send("beat_fx_level_depth", 0.0005f);
+    if (!require(fx.enabled1() && qFuzzyCompare(fx.wetDry1(), 0.0005f),
+                 QStringLiteral("fine hardware FX depth was replaced by a default")))
+        return false;
+    send("beat_fx_on", 0.0f);
+    send("beat_fx_on", 1.0f);
+    if (!require(fx.enabled1() && qFuzzyCompare(fx.wetDry1(), 0.0005f),
+                 QStringLiteral("hardware FX re-engage raised fine depth")))
+        return false;
+    send("beat_fx_channel_master", 1.0f);
+    send("beat_fx_level_depth", 0.4f);
+    if (!require(fx.enabled1() && !fx.deck1A() && !fx.deck1B()
+                     && !fx.deck1C() && !fx.deck1D(),
+                 QStringLiteral("Master FX also left per-deck instances assigned")))
+        return false;
+    send("beat_fx_select_5", 1.0f);
+    const float previousDivision = fx.beatDiv1();
+    fx.setPrimaryParam(1, 0.01f);
+    const QList<float> reverbSteps {0.01f, 0.10f, 0.25f, 0.50f, 0.75f, 0.90f, 1.0f};
+    for (const float expected : reverbSteps) {
+        if (expected != reverbSteps.front())
+            send("beat_fx_beat_plus", 1.0f);
+        if (!require(qFuzzyCompare(fx.primaryParam1(), expected)
+                         && fx.beatDiv1() == previousDivision,
+                     QStringLiteral("Reverb BEAT plus changed timing instead of percentage")))
+            return false;
+    }
+    send("beat_fx_beat_plus", 1.0f);
+    if (!require(fx.primaryParam1() == 1.0f,
+                 QStringLiteral("Reverb percentage exceeded 100 percent")))
+        return false;
+    for (auto it = reverbSteps.crbegin() + 1; it != reverbSteps.crend(); ++it) {
+        send("beat_fx_beat_minus", 1.0f);
+        if (!require(qFuzzyCompare(fx.primaryParam1(), *it),
+                     QStringLiteral("Reverb BEAT minus skipped a percentage step")))
+            return false;
+    }
+    send("beat_fx_beat_minus", 1.0f);
+    send("beat_fx_level_depth", 0.8f);
+    send("beat_fx_on", 0.0f);
+    send("beat_fx_on", 1.0f);
+    if (!require(qFuzzyCompare(fx.primaryParam1(), 0.01f)
+                     && qFuzzyCompare(fx.wetDry1(), 0.8f),
+                 QStringLiteral("Reverb mix or ON overwrote its percentage")))
+        return false;
+    send("beat_fx_select_2", 1.0f);
+    send("beat_fx_beat_plus", 1.0f);
+    if (!require(fx.beatDiv1() > previousDivision,
+                 QStringLiteral("Echo BEAT plus no longer controls timing")))
+        return false;
+    fx.setUnitEnabled(1, false);
+    return require(!midi.beatFxActive(),
+                   QStringLiteral("UI FX OFF did not update hardware-side state"));
+}
 }
 
 int runCiSmokeTest(int argc, char* argv[])
@@ -138,6 +332,8 @@ int runCiSmokeTest(int argc, char* argv[])
 
     QString fxManagerError;
     if (!testFxManagerControls(fxManagerError))
+        return fail(fxManagerError);
+    if (!testBeatFxFirstHardwareEngage(fxManagerError))
         return fail(fxManagerError);
 
     const QString qmlResource = QStringLiteral(":/DJSoftware/src/qml/main.qml");

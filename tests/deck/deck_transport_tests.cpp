@@ -108,18 +108,51 @@ int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
     bool ok = true;
-    ok &= require(engine::deck::jogNudgeCommandPercent(1.0) == 0.625,
-                  "FLX10 jog tick uses Mixxx bend scale");
+    ok &= require(engine::deck::jogNudgeCommandPercent(1.0) == 0.2,
+                  "an isolated jog tick uses the fine bend scale");
     ok &= require(engine::deck::jogNudgeCommandPercent(100.0) == 6.0
                   && engine::deck::jogNudgeCommandPercent(-100.0) == -6.0,
                   "jog bend remains clamped to six percent");
-    const double heldNudge = engine::deck::decayedJogNudgePercent(4.0, 0.080);
-    const double firstDecay = engine::deck::decayedJogNudgePercent(4.0, 0.120);
-    const double secondDecay = engine::deck::decayedJogNudgePercent(4.0, 0.200);
+    const double heldNudge = engine::deck::decayedJogNudgePercent(4.0, 0.020);
+    const double firstDecay = engine::deck::decayedJogNudgePercent(4.0, 0.060);
+    const double secondDecay = engine::deck::decayedJogNudgePercent(4.0, 0.100);
     ok &= require(heldNudge == 4.0 && firstDecay < heldNudge && secondDecay < firstDecay,
                   "jog nudge decays monotonically from the fixed command");
     ok &= require(engine::deck::decayedJogNudgePercent(4.0, 1.0) == 0.0,
                   "jog nudge settles exactly at base rate");
+    const auto bendForTicks = [](double interval, double ticks, int count) {
+        double command = 0.0;
+        for (int event = 0; event < count; ++event)
+            command = engine::deck::accumulatedJogNudgePercent(command, ticks, interval);
+        return command;
+    };
+    const double slowBend = bendForTicks(0.2, 1.0, 20);
+    const double mediumBend = bendForTicks(0.04, 1.0, 20);
+    const double fastBend = bendForTicks(0.005, 1.0, 20);
+    ok &= require(slowBend >= 0.2 && slowBend < 0.23
+                      && mediumBend > slowBend * 1.8 && fastBend > 5.8 && fastBend <= 6.0
+                      && bendForTicks(0.005, 1.0, 40) == 6.0,
+                  "slow single ticks stay effective while faster rim movement increases the bend");
+    ok &= require(engine::deck::accumulatedJogNudgePercent(6.0, -1.0, 0.005) == -0.2
+                      && bendForTicks(0.005, -1.0, 20) == -fastBend,
+                  "rim reversal responds on its first tick and is symmetric");
+    ok &= require(engine::deck::accumulatedJogNudgePercent(0.0, 0.1, 0.2) > 0.0
+                      && engine::deck::accumulatedJogNudgePercent(2.0, 0.0, 0.01) == 2.0,
+                  "fractional fine ticks have no dead zone and zero packets do not reset the bend");
+    const double decayedFastBend = engine::deck::decayedJogNudgePercent(fastBend, 1.0);
+    ok &= require(decayedFastBend == 0.0
+                      && std::abs(engine::deck::accumulatedJogNudgePercent(6.0, 1.0, 2.0) - 0.2) < 1e-8,
+                  "a stopped wheel returns to base speed and a later tick does not inherit old speed");
+    double fineTickShiftSeconds = 0.0;
+    for (int millisecond = 0; millisecond < 1000; ++millisecond)
+        fineTickShiftSeconds += engine::deck::decayedJogNudgePercent(0.2, millisecond * 0.001)
+            * 0.001 / 100.0;
+    ok &= require(fineTickShiftSeconds > 0.0001 && fineTickShiftSeconds < 0.00015,
+                  "one fine tick shifts the source by 0.10-0.15 ms instead of roughly 1 ms");
+    ok &= require(engine::deck::decayedJogNudgePercent(0.02, 0.020) == 0.02
+                      && engine::deck::decayedJogNudgePercent(0.02, 0.040) > 0.001
+                      && engine::deck::decayedJogNudgePercent(0.2, 0.250) == 0.0,
+                  "fractional ticks decay without the old dead zone and fine bends settle within 250 ms");
     QTemporaryDir directory;
     std::array<QString, 4> paths;
     for (int i = 0; i < 4; ++i) {

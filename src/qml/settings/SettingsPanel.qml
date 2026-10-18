@@ -1341,6 +1341,37 @@ Item {
                                 onClicked: controllerManager.refreshFlx10()
                             }
 
+                            RowLayout {
+                                spacing: 8
+
+                                Text {
+                                    text: "This computer is on"
+                                    color: UiTheme.textLabel
+                                    font.pixelSize: 11
+                                }
+
+                                ComboBox {
+                                    id: flx10HostPortCombo
+                                    objectName: "flx10HostPortCombo"
+                                    model: ["Unknown", "USB A", "USB B"]
+                                    currentIndex: settingsManager ? settingsManager.flx10HostUsbPort : 0
+                                    onActivated: {
+                                        if (settingsManager)
+                                            settingsManager.flx10HostUsbPort = currentIndex
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "The controller does not report which USB port is connected. "
+                                      + "Set it so channels switched to the other USB port or LINE "
+                                      + "are paused and silenced here; while Unknown, no channel is touched."
+                                color: UiTheme.textLabel
+                                font.pixelSize: 11
+                                wrapMode: Text.WordWrap
+                                Layout.fillWidth: true
+                            }
+
                             Text {
                                 text: controllerManager ? controllerManager.flx10Status : ""
                                 color: controllerManager && controllerManager.flx10Connected ? UiTheme.green : UiTheme.textLabel

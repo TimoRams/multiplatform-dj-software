@@ -201,25 +201,38 @@ void DDJFLX10Controller::refreshWaveformMarkersAndUpload(int deck)
 }
 bool DDJFLX10Controller::uploadDeck(int deck, bool startWindowSweep)
 {
-    if (m_waveforms[deck].isEmpty())
-        return true;
+    const auto* engine = deckEngine(deck);
+    if (!engine || !engine->hasTrack())
+        return false;
 
     // The init sequence is what takes the screen out of its "not loaded" state,
     // so it always goes out as soon as a track exists. Only the window sweep is
     // allowed to wait for the analysis to produce something worth sending.
-    bool ok = true;
-    ok = sendXx30(deck) && ok;
-    ok = sendXx39(deck) && ok;
-    ok = uploadCoverArt(deck) && ok;
-    ok = sendXx35(deck) && ok;
+    if (!m_deckInitialised[deck]) {
+        // Reserve room for the entire init plus the maximum cover. Otherwise
+        // accepting only part of a segmented upload leaves firmware waiting.
+#if defined(BROCKDJ_FLX10_HAS_HID)
+        {
+            std::lock_guard lock(m_hidWriteMutex);
+            const auto reserve = static_cast<std::size_t>(256 + kXx39Packets.size() + 4);
+            if (m_hidWriteQueue.size() + reserve > kHidWriteQueueCapacity)
+                return false;
+        }
+#endif
+        if (!sendXx30(deck) || !sendXx39(deck)
+            || !uploadCoverArt(deck) || !sendXx35(deck))
+            return false;
+        m_deckInitialised[deck] = true;
+        qInfo() << "[DDJ-FLX10] Deck" << deck << "track display initialization queued";
+    }
 
-    if (!startWindowSweep)
-        return ok;
+    if (!startWindowSweep || m_waveforms[deck].isEmpty())
+        return true;
 
     beginWaveformSweep(deck);
     if (!m_uploadTimer.isActive())
         m_uploadTimer.start(kUploadTickIntervalMs);
-    return ok;
+    return true;
 }
 
 void DDJFLX10Controller::beginWaveformSweep(int deck)
@@ -275,6 +288,16 @@ bool DDJFLX10Controller::sendXx33Album(int deck, const QByteArray& jpeg)
                                  ? 1
                                  : 1 + ((jpegSize - firstCapacity + nextCapacity - 1) / nextCapacity);
 
+#if defined(BROCKDJ_FLX10_HAS_HID)
+    {
+        // Only the owner thread publishes ordered packets; the display thread
+        // uses separate xx27 slots and the writer only removes queued packets.
+        std::lock_guard lock(m_hidWriteMutex);
+        if (m_hidWriteQueue.size() + static_cast<std::size_t>(totalPackets)
+            > kHidWriteQueueCapacity)
+            return false;
+    }
+#endif
     int offset = 0;
     bool ok = true;
     for (int segment = 1; segment <= totalPackets; ++segment) {

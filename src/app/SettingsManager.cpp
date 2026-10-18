@@ -553,6 +553,21 @@ void SettingsManager::setFlx10ControllerSupportEnabled(bool enabled)
     emit controllerSettingsChanged();
 }
 
+int SettingsManager::flx10HostUsbPort() const
+{
+    return std::clamp(readIntSetting(*this, "Controllers/DDJFLX10/HostUsbPort", 0), 0, 2);
+}
+
+void SettingsManager::setFlx10HostUsbPort(int port)
+{
+    port = std::clamp(port, 0, 2);
+    if (flx10HostUsbPort() == port)
+        return;
+
+    writeSetting(*this, "Controllers/DDJFLX10/HostUsbPort", port);
+    emit controllerSettingsChanged();
+}
+
 bool SettingsManager::tightDoubleSync() const
 {
     return getUiState(QStringLiteral("tightDoubleSync"), QStringLiteral("0")) == QLatin1String("1");

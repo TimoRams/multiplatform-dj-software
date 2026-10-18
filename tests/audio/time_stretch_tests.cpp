@@ -14,6 +14,10 @@ public:
     void releaseResources() override {}
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override {
         ++renderCalls;
+        if (!playing) {
+            info.clearActiveBufferRegion();
+            return;
+        }
         for (int i=0;i<info.numSamples;++i) {
             const float value=static_cast<float>(0.2*std::sin(phase));
             phase += 2.0*juce::MathConstants<double>::pi*220.0/sampleRate;
@@ -21,6 +25,7 @@ public:
         }
     }
     [[nodiscard]] std::uint64_t getRenderCalls() const noexcept { return renderCalls; }
+    bool playing = true;
 private:
     double sampleRate=48000.0, phase=0.0;
     std::uint64_t renderCalls=0;
@@ -40,6 +45,44 @@ static_assert(noexcept(std::declval<TimeStretchProcessor&>().getNextAudioBlock(
 
 int main(){
     bool ok=true;
+    for (const auto backend : {TimeStretchBackend::Signalsmith, TimeStretchBackend::RubberBand}) {
+        ToneSource tone;
+        TimeStretchProcessor source(&tone);
+        source.setBackend(backend);
+        source.prepareToPlay(128, 48000.0);
+        source.setPitchLockEnabled(true);
+        source.setTempoRatio(0.8);
+        juce::AudioBuffer<float> block(2, 128);
+        for (const int pauseBlocks : {160, 1, 4}) {
+            tone.playing = false;
+            source.setInputPlaybackActive(false);
+            for (int i = 0; i < pauseBlocks; ++i)
+                source.getNextAudioBlock({&block, 0, 128});
+            tone.playing = true;
+            source.setInputPlaybackActive(true);
+            bool engaged = false;
+            float minimumRms = 1.0f;
+            float windowEnergy = 0.0f;
+            for (int i = 0; i < 140; ++i) {
+                source.getNextAudioBlock({&block, 0, 128});
+                engaged |= source.getLatencySamples() > 0;
+                if (i >= 4) {
+                    const float rms = block.getRMSLevel(0, 0, 128);
+                    windowEnergy += rms * rms;
+                    if (i % 4 == 3) {
+                        minimumRms = std::min(minimumRms, std::sqrt(windowEnergy / 4.0f));
+                        windowEnergy = 0.0f;
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::duration<double>(128.0 / 48000.0));
+            }
+            if (minimumRms < 0.04f)
+                std::cerr << "resume backend=" << static_cast<int>(backend)
+                          << " minimum-rms=" << minimumRms << '\n';
+            ok &= require(engaged, "keylock returns after play/pause");
+            ok &= require(minimumRms >= 0.04f, "keylock resume does not replay paused silence");
+        }
+    }
     for (const auto backend : {TimeStretchBackend::Signalsmith, TimeStretchBackend::RubberBand})
     for (const double rate : {44100.0, 48000.0, 96000.0})
     for (const int samples : {64, 128, 512, 2048}) {

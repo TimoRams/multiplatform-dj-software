@@ -1012,6 +1012,7 @@ void DjEngine::startMainCueHoldPreview(quint64 pressSerial)
         || !m_cueLoopController.mainCue().holdPreviewPending
         || m_cueLoopController.mainCue().previewActive
         || m_transport->playRequested()
+        || inputExternal()
         || !m_hasTrack) {
         return;
     }

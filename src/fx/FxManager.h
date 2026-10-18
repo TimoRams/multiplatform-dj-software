@@ -6,6 +6,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QString>
+#include <QVariantList>
 
 class DjEngine;
 
@@ -19,6 +20,7 @@ class DjEngine;
 class FxManager : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QVariantList reverbSizeSteps READ reverbSizeSteps CONSTANT)
 
     // ── Per-unit properties (unit 1) ─────────────────────────────────────────
     Q_PROPERTY(QString effectType1  READ effectType1  WRITE setEffectType1  NOTIFY effectType1Changed)
@@ -139,6 +141,8 @@ public:
     Q_INVOKABLE void setBeatDivision(int unitId, float div);
     /// Set effect-specific primary parameter (0..1). Reverb: room size.
     Q_INVOKABLE void setPrimaryParam(int unitId, float v);
+    static QVariantList reverbSizeSteps();
+    Q_INVOKABLE void stepReverbSize(int unitId, int direction);
 
 signals:
     void effectType1Changed();
@@ -175,10 +179,12 @@ private:
     QPointer<DjEngine> m_engineD;
 
     // ── SoundColor state ─────────────────────────────────────────────────────
-    QString m_soundColorMode { "Filter" };
+    QString m_soundColorMode { "None" };
     float   m_soundColorParam { 0.5f };
     float   m_soundColorValueA { 0.0f };   // bipolar -1..+1 per deck
     float   m_soundColorValueB { 0.0f };
+    float   m_soundColorValueC { 0.0f };
+    float   m_soundColorValueD { 0.0f };
 
     void applySoundColorToEngine(DjEngine* engine, const QString& mode, float value);
     [[nodiscard]] DjEngine* engineForChannelId(const QString& channelId) const;
@@ -204,11 +210,6 @@ private:
     // panel, the controller LED, the audio routing — reads this, so there is no
     // second derived answer that can disagree with it.
     bool m_unitEnabled[2] { false, false };
-    // Mix amount used when a unit is engaged with its own amount still at zero.
-    // Engaging into silence is indistinguishable from the switch not working.
-    static constexpr float kDefaultEngagedWetDry = 0.5f;
-    static constexpr float kAudibleWetDryEpsilon = 0.001f;
-
     // Convert QML string name → EffectType enum
     static EffectType effectTypeFromString(const QString& name);
     // Forward effect type + wetDry to all assigned engines for a unit

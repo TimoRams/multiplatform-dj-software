@@ -84,15 +84,21 @@ void everyChannelCrossfaderAssignment()
     juce::AudioBuffer<float> signal(2, samples), silent(2, samples), master(2, samples);
     fill(signal, 0.25f);
     silent.clear();
-    const std::array<const juce::AudioBuffer<float>*, 4> tails {
-        &silent, &silent, &silent, &silent};
     MasterMixer mixer;
     mixer.prepare(48'000.0, samples);
     AudioParameters p;
+    for (const bool wetOnly : {false, true})
     for (std::size_t channel = 0; channel < 4; ++channel) {
         std::array<const juce::AudioBuffer<float>*, 4> programs {
             &silent, &silent, &silent, &silent};
-        programs[channel] = &signal;
+        std::array<const juce::AudioBuffer<float>*, 4> tails {
+            &silent, &silent, &silent, &silent};
+        if (wetOnly) {
+            programs[channel] = nullptr;
+            tails[channel] = &signal;
+        } else {
+            programs[channel] = &signal;
+        }
         for (const auto curve : {CrossfaderCurve::ConstantPower,
                                  CrossfaderCurve::Smooth, CrossfaderCurve::Scratch}) {
             p.crossfaderCurve = curve;
@@ -108,7 +114,30 @@ void everyChannelCrossfaderAssignment()
                         || (assignment == CrossfaderAssignment::A && position < 0.0f)
                         || (assignment == CrossfaderAssignment::B && position > 0.0f);
                     assert(std::abs(tail(master, 0) - (audible ? 0.25f : 0.0f)) < 0.002f);
+                    assert(std::abs(tail(master, 1) - (audible ? 0.25f : 0.0f)) < 0.002f);
                     assert(std::abs(mixer.crossfaderGain(channel) - (audible ? 1.0f : 0.0f)) < 0.002f);
+                }
+
+                MasterMixer dryMixer, wetMixer;
+                dryMixer.prepare(48'000.0, samples);
+                wetMixer.prepare(48'000.0, samples);
+                juce::AudioBuffer<float> wetMaster(2, samples);
+                const std::array<const juce::AudioBuffer<float>*, 4> dryPrograms {
+                    &signal, nullptr, nullptr, nullptr};
+                const std::array<const juce::AudioBuffer<float>*, 4> noPrograms {};
+                p.crossfaderAssignments[0] = CrossfaderAssignment::A;
+                for (const auto curve : {CrossfaderCurve::ConstantPower,
+                                         CrossfaderCurve::Smooth, CrossfaderCurve::Scratch}) {
+                    p.crossfaderCurve = curve;
+                    for (const float position : {-1.0f, 0.0f, 1.0f, -0.5f, -1.0f}) {
+                        p.crossfaderPosition = position;
+                        dryMixer.mixPrograms(dryPrograms, noPrograms, p, master, samples);
+                        wetMixer.mixPrograms(noPrograms, dryPrograms, p, wetMaster, samples);
+                        for (int ch = 0; ch < 2; ++ch)
+                            for (int sample = 0; sample < samples; ++sample)
+                                assert(std::abs(master.getSample(ch, sample)
+                                                    - wetMaster.getSample(ch, sample)) < 1.0e-7f);
+                    }
                 }
             }
         }
@@ -293,12 +322,53 @@ void performanceSmoke()
 
 } // namespace
 
+void suppressedInputSilencesMasterAndCue()
+{
+    constexpr int samples = 1024;
+    juce::AudioBuffer<float> program(2, samples), silent(2, samples),
+        master(2, samples), headphones(2, samples);
+    fill(program, 0.5f);
+    fill(silent, 0.0f);
+    const std::array<const juce::AudioBuffer<float>*, 4> programs {
+        &program, &silent, &silent, &silent };
+    const std::array<const juce::AudioBuffer<float>*, 4> tails {};
+    AudioParameters p;
+    p.crossfaderAssignments[0] = CrossfaderAssignment::Thru;
+    p.pflEnabled[0] = true;
+    p.headphoneMix = 0.0f;
+    MasterMixer mixer;
+    mixer.prepare(48'000.0, samples);
+    mixer.mixPrograms(programs, tails, p, master, samples);
+    assert(std::abs(tail(master, 0) - 0.5f) < 0.002f);
+
+    HeadphoneBus bus;
+    bus.prepare(48'000.0, samples);
+    const std::array<const juce::AudioBuffer<float>*, 4> pfl { &program, &silent, &silent, &silent };
+    for (int i = 0; i < 3; ++i)
+        bus.mix(pfl, master, p, headphones, samples);
+    assert(std::abs(tail(headphones, 0)) > 0.1f);
+
+    p.deckInputSuppressed[0] = true;
+    mixer.mixPrograms(programs, tails, p, master, samples);
+    mixer.mixPrograms(programs, tails, p, master, samples);
+    assert(std::abs(tail(master, 0)) < 0.0001f);
+    for (int i = 0; i < 3; ++i)
+        bus.mix(pfl, master, p, headphones, samples);
+    assert(std::abs(tail(headphones, 0)) < 0.0001f);
+
+    p.deckInputSuppressed[0] = false;
+    mixer.mixPrograms(programs, tails, p, master, samples);
+    mixer.mixPrograms(programs, tails, p, master, samples);
+    assert(std::abs(tail(master, 0) - 0.5f) < 0.002f);
+}
+
 int main()
 {
     parameterSnapshotIsCoherent();
     commandQueueIsBounded();
     everyChannelCrossfaderAssignment();
     mixerHeadphoneAndRouter();
+    suppressedInputSilencesMasterAndCue();
     outputRouterPreservesSampleContract();
     silenceTailPreservesMixedZeroCrossings();
     performanceSmoke();

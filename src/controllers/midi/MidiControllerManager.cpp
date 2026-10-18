@@ -25,8 +25,9 @@ int MidiControllerManager::indexOfIdentifier(const std::vector<juce::String>& id
 
 
 MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock& controlClock,
-                                             QObject* parent)
+                                             QObject* parent, HardwareAccess hardwareAccess)
     : QObject(parent),
+      m_hardwareAccess(hardwareAccess),
       m_parameterStore(store),
       // Not a QObject child — m_midiFeedback is a C++ member; parenting would make
       // ~QObject delete it again after the member destructor (UAF on macOS quit).
@@ -54,7 +55,8 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
     m_deckBBeatJumpGraceTimer.setSingleShot(true);
     connect(&m_deckBBeatJumpGraceTimer, &QTimer::timeout, this, [this] { endBeatJumpGraceSearch(1U); });
 
-    m_midiDeviceListConnection = juce::MidiDeviceListConnection::make([this]
+    if (hardwareAccess == HardwareAccess::Enabled)
+        m_midiDeviceListConnection = juce::MidiDeviceListConnection::make([this]
     {
         QMetaObject::invokeMethod(this, [this]()
         {
@@ -83,9 +85,13 @@ MidiControllerManager::MidiControllerManager(ParameterStore* store, ControlClock
         updateKeyShiftModeBlink(context.monotonicSeconds);
     };
     clockCallbacks.housekeeping = [this](const ControlTickContext& context) {
-        runControllerHousekeeping(context.monotonicSeconds);
+        if (m_hardwareAccess == HardwareAccess::Enabled)
+            runControllerHousekeeping(context.monotonicSeconds);
     };
     m_controlClockRegistration = controlClock.registerCallbacks(std::move(clockCallbacks));
+
+    if (hardwareAccess == HardwareAccess::Disabled)
+        return;
 
     m_selectedController = SettingsManager::getInstance().getSelectedController();
     m_selectedMappingFile = SettingsManager::getInstance().getSelectedMappingFile();
@@ -313,8 +319,10 @@ void MidiControllerManager::runControllerHousekeeping(double monotonicSeconds)
 
         const bool inputOpen = hasActiveMidiInput();
         const bool inputJustClosed = m_lastHousekeepingInputOpen && !inputOpen;
-        if (inputJustClosed)
+        if (inputJustClosed) {
             cancelBeatJumpSearch();
+            resetFlx10InputOwnership();
+        }
         const bool outputOpen =
             (m_midiOutput != nullptr)
 #if defined(Q_OS_LINUX)

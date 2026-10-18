@@ -201,6 +201,8 @@ private:
     juce::AudioBuffer<float> m_outputHistory;
     int m_historyWrite = 0;
     std::uint64_t m_historySamples = 0;
+    std::uint64_t m_playbackHistoryStart = 0;
+    bool m_requireFreshPlaybackHistory = false;
     std::atomic<bool> m_accepting { false };
     std::atomic<bool> m_prepared { false };
     std::atomic<bool> m_stopRequested { false };

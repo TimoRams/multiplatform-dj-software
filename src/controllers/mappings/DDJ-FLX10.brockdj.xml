@@ -28,6 +28,11 @@
     <Entry paramId="deckB_slip" status="0x91" control="0x40" type="toggle"/>
     <Entry paramId="deckA_slip_reverse" status="0x90" control="0x15" type="momentary"/>
     <Entry paramId="deckB_slip_reverse" status="0x91" control="0x15" type="momentary"/>
+    <!-- SHIFT + SLIP REVERSE has a dedicated reverse-toggle note. -->
+    <Entry paramId="deckA_reverse" status="0x90" control="0x38" type="toggle"/>
+    <Entry paramId="deckB_reverse" status="0x91" control="0x38" type="toggle"/>
+    <Entry paramId="deckC_reverse" status="0x92" control="0x38" type="toggle"/>
+    <Entry paramId="deckD_reverse" status="0x93" control="0x38" type="toggle"/>
     <Entry paramId="deckA_tempo_reset" status="0x90" control="0x41" type="toggle"/>
     <Entry paramId="deckB_tempo_reset" status="0x91" control="0x41" type="toggle"/>
     <Entry paramId="deckA_tempo_range_cycle" status="0x90" control="0x60" type="toggle"/>
@@ -364,6 +369,11 @@
          handler so the effect stays on after the button is let go. -->
     <Entry paramId="beat_fx_on" status="0x94" control="0x46" type="momentary"/>
 
+    <!-- INPUT SELECT (M17) is deliberately not an <Entry>: on status 0x90-0x93
+         notes 0x55 (PC-A), 0x56 (LINE/PHONO) and 0x57 (PC-B) carry 0x7F for the
+         chosen position. MidiControllerManager::handleFlx10InputSelect decodes
+         them (flx10/Flx10InputOwnership.h) because the result depends on the
+         configured USB port, which the controller does not report. -->
     <!-- Sound Color FX selector and per-channel 14-bit color knobs. -->
     <Entry paramId="sound_color_fx_space" status="0x96" control="0x00" type="toggle"/>
     <Entry paramId="sound_color_fx_dub_echo" status="0x96" control="0x01" type="toggle"/>
@@ -393,6 +403,10 @@
     <Entry paramId="deckA_sound_color" status="0xB6" control="0x37" type="encoder-absolute"/>
     <Entry paramId="deckB_sound_color" status="0xB6" control="0x18" type="encoder-absolute"/>
     <Entry paramId="deckB_sound_color" status="0xB6" control="0x38" type="encoder-absolute"/>
+    <Entry paramId="deckC_sound_color" status="0xB6" control="0x19" type="encoder-absolute"/>
+    <Entry paramId="deckC_sound_color" status="0xB6" control="0x39" type="encoder-absolute"/>
+    <Entry paramId="deckD_sound_color" status="0xB6" control="0x1A" type="encoder-absolute"/>
+    <Entry paramId="deckD_sound_color" status="0xB6" control="0x3A" type="encoder-absolute"/>
     <Entry paramId="deckA_vol" status="0xB0" control="0x13" type="fader"/>
     <Entry paramId="deckA_vol" status="0xB0" control="0x33" type="fader"/>
     <Entry paramId="deckB_vol" status="0xB1" control="0x13" type="fader"/>
