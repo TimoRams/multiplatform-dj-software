@@ -21,6 +21,8 @@ The project is still under active development, so bugs, unfinished features, exp
 
 * Dual-deck playback with FLAC, WAV, OGG, and MP3 support
 * GPU-rendered RGB waveforms, beat grids, loops, hot cues, and sync
+* Read-only Rekordbox USB browsing (legacy and OneLibrary), imported dynamic
+  beatgrids and cached analysis previews; built-in beat analysis remains static
 * Three-band EQ, filter, crossfader, and built-in effects
 * Library browsing, metadata extraction, cover art, and background analysis
 * MIDI mapping, controller integration, and Ableton Link support

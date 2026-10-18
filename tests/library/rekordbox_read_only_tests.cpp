@@ -465,6 +465,9 @@ bool sourceReadOnlyAudit()
 
 } // namespace
 
+bool runRekordboxModernTests();
+bool runRekordboxPreviewTests();
+
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
@@ -813,8 +816,7 @@ int main(int argc, char** argv)
                 || (device.value(QStringLiteral("badge")) == QStringLiteral("REKORDBOX")
                     && device.value(QStringLiteral("libraryType"))
                            == QStringLiteral("rekordboxDeviceLibraryPlus")
-                    && device.value(QStringLiteral("status")).toString().contains(
-                           QStringLiteral("not yet supported"), Qt::CaseInsensitive));
+                    && !device.value(QStringLiteral("status")).toString().isEmpty());
         }
         ok &= require(foundGeneric, "generic USB classification");
         ok &= require(foundPlus, "Device Library Plus detection and safe status");
@@ -964,5 +966,7 @@ int main(int argc, char** argv)
     ok &= require(parseMs < 15'000, "10k-track parse exceeded safety budget");
 
     setTreeOwnerWritable(mount);
+    ok &= runRekordboxModernTests();
+    ok &= runRekordboxPreviewTests();
     return ok ? 0 : 1;
 }

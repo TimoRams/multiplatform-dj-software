@@ -4,6 +4,11 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QSet>
+#include <QDateTime>
+#include <QCborArray>
+#ifdef Q_OS_UNIX
+#include <sys/stat.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -277,6 +282,48 @@ void mergeAnalysis(Analysis* target, const Analysis& incoming)
     mergeCueList(&target->hotCues, incoming.hotCues);
     mergeCueList(&target->memoryCues, incoming.memoryCues);
     mergeCueList(&target->loops, incoming.loops);
+    if (incoming.waveformPreview.size() > target->waveformPreview.size())
+        target->waveformPreview = incoming.waveformPreview;
+}
+
+QStringList relatedPaths(const QString& path)
+{
+    const QFileInfo info(path);
+    const QString base = info.dir().filePath(info.completeBaseName());
+    return {path, base + QStringLiteral(".EXT"), base + QStringLiteral(".2EX")};
+}
+
+QByteArray sourceFingerprint(const QString& path)
+{
+    QCborArray fields;
+    for (const auto& candidate : relatedPaths(path)) {
+        const QFileInfo info(candidate);
+        fields.append(candidate);
+        fields.append(info.canonicalFilePath());
+        fields.append(info.exists());
+        fields.append(info.size());
+        fields.append(info.lastModified().toMSecsSinceEpoch());
+        fields.append(info.metadataChangeTime().toMSecsSinceEpoch());
+#ifdef Q_OS_UNIX
+        struct stat status {};
+        if (::stat(QFile::encodeName(candidate).constData(), &status) == 0) {
+            fields.append(qint64(status.st_dev));
+            fields.append(qint64(status.st_ino));
+#ifdef Q_OS_MACOS
+            fields.append(qint64(status.st_mtimespec.tv_sec));
+            fields.append(qint64(status.st_mtimespec.tv_nsec));
+            fields.append(qint64(status.st_ctimespec.tv_sec));
+            fields.append(qint64(status.st_ctimespec.tv_nsec));
+#else
+            fields.append(qint64(status.st_mtim.tv_sec));
+            fields.append(qint64(status.st_mtim.tv_nsec));
+            fields.append(qint64(status.st_ctim.tv_sec));
+            fields.append(qint64(status.st_ctim.tv_nsec));
+#endif
+        }
+#endif
+    }
+    return QCborValue(fields).toCbor();
 }
 
 } // namespace
@@ -294,8 +341,8 @@ AnalysisReader::Result AnalysisReader::readReadOnly(const QString& path) const
         result.error = QStringLiteral("ANLZ size is outside safe limits");
         return result;
     }
-    const QByteArray data = file.readAll();
-    if (data.size() != file.size()
+    const QByteArray data = file.read(12);
+    if (data.size() != 12
         || QByteArrayView(data.constData(), 4) != QByteArrayView("PMAI", 4)) {
         result.error = QStringLiteral("Invalid ANLZ file header");
         return result;
@@ -304,9 +351,9 @@ AnalysisReader::Result AnalysisReader::readReadOnly(const QString& path) const
     quint32 headerLength = 0;
     quint32 declaredLength = 0;
     if (!readBe32(data, 4, &headerLength) || !readBe32(data, 8, &declaredLength)
-        || headerLength < 12 || headerLength > static_cast<quint32>(data.size())
+        || headerLength < 12 || headerLength > static_cast<quint32>(file.size())
         || declaredLength < headerLength
-        || declaredLength != static_cast<quint32>(data.size())) {
+        || declaredLength != static_cast<quint32>(file.size())) {
         result.error = QStringLiteral("Invalid ANLZ lengths");
         return result;
     }
@@ -320,24 +367,52 @@ AnalysisReader::Result AnalysisReader::readReadOnly(const QString& path) const
         }
         quint32 sectionHeader = 0;
         quint32 sectionLength = 0;
-        if (!readBe32(data, section + 4, &sectionHeader)
-            || !readBe32(data, section + 8, &sectionLength)
+        if (!file.seek(section)) {
+            result.error = QStringLiteral("Cannot seek ANLZ section");
+            return result;
+        }
+        QByteArray sectionData = file.read(12);
+        if (!readBe32(sectionData, 4, &sectionHeader)
+            || !readBe32(sectionData, 8, &sectionLength)
             || sectionHeader < 12 || sectionLength < sectionHeader
             || !rangeFits(section, sectionLength, declaredLength)) {
             result.error = QStringLiteral("Invalid ANLZ section length");
             return result;
         }
-        const QByteArrayView tag(data.constData() + section, 4);
-        const qsizetype body = section + 12;
-        const qsizetype sectionEnd = section + sectionLength;
+        const QByteArray tag = sectionData.first(4);
+        const bool supported = tag == "PQTZ" || tag == "PCOB" || tag == "PCO2"
+            || (tag == "PWAV" && sectionLength <= 20 + 4096);
+        if (!supported) {
+            section += sectionLength;
+            continue;
+        }
+        sectionData += file.read(sectionLength - 12);
+        if (sectionData.size() != sectionLength) {
+            result.error = QStringLiteral("Truncated ANLZ section");
+            return result;
+        }
+        const qsizetype body = 12;
+        const qsizetype sectionEnd = sectionData.size();
         QString parseError;
         bool parsed = true;
         if (tag == QByteArrayView("PQTZ", 4))
-            parsed = parseBeatGrid(data, body, sectionEnd, &result.analysis, &parseError);
+            parsed = parseBeatGrid(sectionData, body, sectionEnd, &result.analysis, &parseError);
         else if (tag == QByteArrayView("PCOB", 4))
-            parsed = parseLegacyCueList(data, body, sectionEnd, &result.analysis, &parseError);
+            parsed = parseLegacyCueList(sectionData, body, sectionEnd, &result.analysis, &parseError);
         else if (tag == QByteArrayView("PCO2", 4))
-            parsed = parseExtendedCueList(data, body, sectionEnd, &result.analysis, &parseError);
+            parsed = parseExtendedCueList(sectionData, body, sectionEnd, &result.analysis, &parseError);
+        else if (tag == "PWAV") {
+            quint32 columns = 0;
+            // Documented PWAV header is 20 bytes; low five bits are height,
+            // upper three are display intensity, not frequency information.
+            if (sectionHeader == 20 && readBe32(sectionData, 12, &columns)
+                && columns > 0 && columns <= 4096
+                && rangeFits(20, columns, sectionEnd)) {
+                result.analysis.waveformPreview = sectionData.mid(20, columns);
+                for (char& value : result.analysis.waveformPreview)
+                    value = static_cast<char>(static_cast<quint8>(value) & 0x1fU);
+            }
+        }
         if (!parsed) {
             result.error = parseError;
             return result;
@@ -352,31 +427,79 @@ AnalysisReader::Result AnalysisReader::readReadOnly(const QString& path) const
     return result;
 }
 
-AnalysisReader::Result AnalysisReader::readRelatedReadOnly(const QString& datPath) const
+AnalysisReader::Result AnalysisReader::readRelatedReadOnly(
+    const QString& datPath, const QString& mountPath) const
 {
     Result combined;
-    const QFileInfo datInfo(datPath);
-    const QString base = datInfo.dir().filePath(datInfo.completeBaseName());
-    const QStringList candidates{datPath, base + QStringLiteral(".EXT"),
-                                 base + QStringLiteral(".2EX")};
+    const QStringList candidates = relatedPaths(datPath);
     bool found = false;
     for (const QString& candidate : candidates) {
         if (!QFileInfo::exists(candidate))
             continue;
         found = true;
+        if (!mountPath.isEmpty()) {
+            const QString root = QFileInfo(mountPath).canonicalFilePath();
+            const QString canonical = QFileInfo(candidate).canonicalFilePath();
+            if (root.isEmpty() || !canonical.startsWith(root + QLatin1Char('/'))) {
+                combined.error = QStringLiteral("ANLZ sidecar escapes the device");
+                continue;
+            }
+        }
         const Result current = readReadOnly(candidate);
         if (!current.ok) {
             combined.error = current.error;
-            return combined;
+            continue;
         }
+        combined.ok = true;
         mergeAnalysis(&combined.analysis, current.analysis);
     }
     if (!found) {
         combined.error = QStringLiteral("No related ANLZ file exists");
         return combined;
     }
-    combined.ok = true;
     return combined;
+}
+
+AnalysisReader::Result AnalysisCache::readReadOnly(
+    std::shared_ptr<const DeviceIndex> index, const QString& trackId)
+{
+    for (auto source = m_sources.begin(); source != m_sources.end();) {
+        if (source->expired() || !m_entries.contains(source.key())) {
+            m_entries.remove(source.key());
+            source = m_sources.erase(source);
+        } else {
+            ++source;
+        }
+    }
+    if (!index)
+        return {ReadResult{false, QStringLiteral("Device index unavailable")}, {}};
+    const auto found = index->trackBySourceAwareId.constFind(trackId);
+    if (found == index->trackBySourceAwareId.cend())
+        return {ReadResult{false, QStringLiteral("Track unavailable")}, {}};
+    const QString path = index->tracks.at(*found).analysisPath;
+    const QString key = index->deviceId + QLatin1Char('\n') + trackId;
+    const QByteArray before = sourceFingerprint(path);
+    if (auto* cached = m_entries.object(key)) {
+        if (cached->index.lock() == index && cached->fingerprint == before)
+            return cached->result;
+        m_entries.remove(key);
+    }
+    auto result = DeviceSource{}.readAnalysisReadOnly(*index, trackId);
+    if (result.ok && before == sourceFingerprint(path)) {
+        const auto& a = result.analysis;
+        qint64 cost = sizeof(Entry) + 128 + before.size() + key.size() * 2
+            + a.beats.size() * sizeof(Beat) + a.waveformPreview.size();
+        for (const auto* cues : {&a.hotCues, &a.memoryCues, &a.loops}) {
+            cost += cues->size() * sizeof(Cue);
+            for (const auto& cue : *cues)
+                cost += (cue.label.size() + cue.color.size()) * 2;
+        }
+        if (cost <= m_entries.maxCost()) {
+            m_entries.insert(key, new Entry{index, before, result}, int(cost));
+            m_sources.insert(key, index);
+        }
+    }
+    return result;
 }
 
 } // namespace rekordbox

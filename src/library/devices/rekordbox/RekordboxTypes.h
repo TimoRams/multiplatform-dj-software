@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QByteArray>
 #include <QString>
 #include <QVector>
 
@@ -38,6 +39,8 @@ struct Analysis {
     QVector<Cue> hotCues;
     QVector<Cue> memoryCues;
     QVector<Cue> loops;
+    // PWAV overview columns (0..31), not PCM or a scrolling waveform.
+    QByteArray waveformPreview;
 };
 
 struct Track {
@@ -74,6 +77,7 @@ struct Playlist {
 struct DeviceIndex {
     QString deviceId;
     QString mountPath;
+    QString warning;
     QVector<Track> tracks;
     QVector<Playlist> playlists;
     QHash<quint32, qsizetype> trackById;

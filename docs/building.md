@@ -174,6 +174,36 @@ when testing a specific display resolution and memory size. This affects only
 reusable rendered tiles; source analysis data and audio cache correctness are
 unchanged.
 
+## Read-only Rekordbox USB libraries
+
+Device browsing supports both legacy `PIONEER/rekordbox/export.pdb` and encrypted
+`PIONEER/rekordbox/exportLibrary.db` (OneLibrary, formerly Device Library Plus).
+SQLCipher is required for OneLibrary browsing, not just device names and colours.
+When both exist, OneLibrary is preferred; an unreadable or unsupported modern
+index falls back to `export.pdb` with an explicit diagnostic in the device status.
+A modern-only unsupported schema reports an error rather than an empty library.
+
+The supported modern schema uses `content`, `artist`, `album`, `genre`, `key`,
+`color`, `image`, `playlist` and `playlist_content`, as documented by
+[pyrekordbox's OneLibrary format reference](https://github.com/dylanljones/pyrekordbox/blob/master/docs/source/formats/onelibrary.md).
+Track metadata, millisecond durations, BPM × 100, device-relative audio/ANLZ/artwork
+paths, nested folders and exported playlist membership/order are read directly.
+Smart playlists use their exported membership; rules are not evaluated locally.
+Unknown playlist attributes, missing required columns, invalid IDs, dangling
+playlist membership and invalid/cyclic folder hierarchies report errors.
+Missing audio remains visible but unavailable; paths cannot escape the USB root.
+
+Access is strictly read-only (`mode=ro&immutable=1`, `query_only`, in-memory SQL
+temporary storage); BrockDJ never updates the index or creates database sidecars
+on the USB. Mount only completed, quiescent exports: immutable reading assumes
+the exporter is not concurrently editing the library. This does not add USB
+export/write support. Nonempty WAL/recovery sidecars are rejected rather than
+silently ignored; finish exporting and safely eject the medium first.
+The `rekordbox_read_only` CTest includes encrypted synthetic
+OneLibrary fixtures and verifies metadata, ordering, discovery, failure handling,
+legacy fallback, path containment and unchanged USB file bytes/sidecar absence.
+Hardware/export-version coverage beyond the documented schema is not claimed.
+
 ## macOS
 
 Install Xcode command-line tools, CMake/Ninja, Qt and the native audio-analysis

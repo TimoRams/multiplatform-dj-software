@@ -669,5 +669,12 @@ TrackVisualResult DeckTrackLoader::prepareVisuals(
             result.instantOverview = std::move(renderInfo.overview);
         }
     }
+    if (result.instantOverview.isEmpty() && request.external
+        && !request.external->analysis.overviewWaveform.isEmpty()) {
+        result.instantOverview = request.external->analysis.overviewWaveform;
+        // Overview columns never become full-resolution render-cache lines.
+        result.instantOverviewExpected = std::max(1, static_cast<int>(
+            std::ceil(metadata.durationSec * m_waveformPointsPerSecond)));
+    }
     return result;
 }

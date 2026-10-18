@@ -465,18 +465,18 @@ void DeviceLibraryManager::applySystemVolumes(QVector<SystemVolume> volumes)
                                         QStringLiteral("PIONEER/rekordbox/export.pdb"));
             const bool plus = hasFile(volume.mountPath,
                                       QStringLiteral("PIONEER/rekordbox/exportLibrary.db"));
-            state.kind = legacy ? rekordbox::DeviceLibraryKind::LegacyPdb
-                                : (plus ? rekordbox::DeviceLibraryKind::DeviceLibraryPlus
+            state.kind = plus ? rekordbox::DeviceLibraryKind::DeviceLibraryPlus
+                                : (legacy ? rekordbox::DeviceLibraryKind::LegacyPdb
                                         : rekordbox::DeviceLibraryKind::GenericUsb);
             if (!state.operationPending) {
-                if (state.kind == rekordbox::DeviceLibraryKind::DeviceLibraryPlus)
-                    state.status = QStringLiteral("OneLibrary export — track browsing not yet supported");
-                else if (state.kind == rekordbox::DeviceLibraryKind::GenericUsb)
+                if (state.kind == rekordbox::DeviceLibraryKind::GenericUsb)
                     state.status = QStringLiteral("Mounted");
                 else if (state.index)
                     state.status = QStringLiteral("%1 tracks · %2 playlists")
                                        .arg(state.index->tracks.size())
                                        .arg(state.index->playlists.size());
+                if (state.index && !state.index->warning.isEmpty())
+                    state.status += QStringLiteral(" · ") + state.index->warning;
             }
         } else {
             state.index.reset();
@@ -531,7 +531,7 @@ void DeviceLibraryManager::applySystemVolumes(QVector<SystemVolume> volumes)
     ++m_generation;
     for (const QString& id : std::as_const(m_deviceOrder)) {
         const auto& state = m_devices[id];
-        if (state.ready && state.kind == rekordbox::DeviceLibraryKind::LegacyPdb
+        if (state.ready && state.kind != rekordbox::DeviceLibraryKind::GenericUsb
             && !state.index && !state.scanning && !state.operationPending) {
             queueIndex(id);
         }
@@ -604,11 +604,9 @@ void DeviceLibraryManager::inspectStorageVolumes(const QList<QStorageInfo>& volu
         state.volumeReadOnly = storage.isReadOnly();
         const bool legacy = hasFile(root, QStringLiteral("PIONEER/rekordbox/export.pdb"));
         const bool plus = hasFile(root, QStringLiteral("PIONEER/rekordbox/exportLibrary.db"));
-        state.kind = legacy ? rekordbox::DeviceLibraryKind::LegacyPdb
-                            : (plus ? rekordbox::DeviceLibraryKind::DeviceLibraryPlus
+        state.kind = plus ? rekordbox::DeviceLibraryKind::DeviceLibraryPlus
+                            : (legacy ? rekordbox::DeviceLibraryKind::LegacyPdb
                                     : rekordbox::DeviceLibraryKind::GenericUsb);
-        if (state.kind == rekordbox::DeviceLibraryKind::DeviceLibraryPlus)
-            state.status = QStringLiteral("OneLibrary export — track browsing not yet supported");
         m_devices.insert(id, state);
         if (!m_deviceOrder.contains(id))
             m_deviceOrder.append(id);
@@ -642,7 +640,7 @@ void DeviceLibraryManager::inspectStorageVolumes(const QList<QStorageInfo>& volu
     ++m_generation;
     for (const QString& id : std::as_const(m_deviceOrder)) {
         const auto& state = m_devices[id];
-        if (state.kind == rekordbox::DeviceLibraryKind::LegacyPdb
+        if (state.kind != rekordbox::DeviceLibraryKind::GenericUsb
             && !state.index && !state.scanning) {
             queueIndex(id);
         }
@@ -681,11 +679,9 @@ void DeviceLibraryManager::inspectMountPaths(const QStringList& paths)
         state.volumeReadOnly = !rootInfo.isWritable();
         const bool legacy = hasFile(root, QStringLiteral("PIONEER/rekordbox/export.pdb"));
         const bool plus = hasFile(root, QStringLiteral("PIONEER/rekordbox/exportLibrary.db"));
-        state.kind = legacy ? rekordbox::DeviceLibraryKind::LegacyPdb
-                            : (plus ? rekordbox::DeviceLibraryKind::DeviceLibraryPlus
+        state.kind = plus ? rekordbox::DeviceLibraryKind::DeviceLibraryPlus
+                            : (legacy ? rekordbox::DeviceLibraryKind::LegacyPdb
                                     : rekordbox::DeviceLibraryKind::GenericUsb);
-        if (state.kind == rekordbox::DeviceLibraryKind::DeviceLibraryPlus)
-            state.status = QStringLiteral("OneLibrary export — track browsing not yet supported");
         m_devices.insert(id, state);
         present.insert(id);
         if (!m_deviceOrder.contains(id))
@@ -715,7 +711,7 @@ void DeviceLibraryManager::inspectMountPaths(const QStringList& paths)
     ++m_generation;
     for (const QString& id : std::as_const(m_deviceOrder)) {
         const auto& state = m_devices[id];
-        if (state.kind == rekordbox::DeviceLibraryKind::LegacyPdb
+        if (state.kind != rekordbox::DeviceLibraryKind::GenericUsb
             && !state.index && !state.scanning) {
             queueIndex(id);
         }
@@ -942,7 +938,7 @@ void DeviceLibraryManager::publishDevices()
 void DeviceLibraryManager::queueIndex(const QString& deviceId)
 {
     auto found = m_devices.find(deviceId);
-    if (found == m_devices.end() || found->kind != rekordbox::DeviceLibraryKind::LegacyPdb)
+    if (found == m_devices.end() || found->kind == rekordbox::DeviceLibraryKind::GenericUsb)
         return;
     found->scanning = true;
     found->status = QStringLiteral("Scanning library…");
@@ -963,6 +959,7 @@ void DeviceLibraryManager::queueIndex(const QString& deviceId)
 void DeviceLibraryManager::workerLoop()
 {
     lowerDeviceWorkerPriority();
+    rekordbox::AnalysisCache analysisCache;
     for (;;) {
         WorkerTask task;
         {
@@ -997,8 +994,7 @@ void DeviceLibraryManager::workerLoop()
             if (found != task.index->trackBySourceAwareId.cend()) {
                 track = task.index->tracks.at(*found);
                 if (!track.analysisPath.isEmpty())
-                    result = rekordbox::DeviceSource{}.readAnalysisReadOnly(*task.index,
-                                                                            task.trackId);
+                    result = analysisCache.readReadOnly(task.index, task.trackId);
                 else
                     result.ok = true;
             } else {
@@ -1051,6 +1047,8 @@ void DeviceLibraryManager::applyIndexResult(QString deviceId, quint64 generation
         found->status = QStringLiteral("%1 tracks · %2 playlists")
                             .arg(found->index->tracks.size())
                             .arg(found->index->playlists.size());
+        if (!found->index->warning.isEmpty())
+            found->status += QStringLiteral(" · ") + found->index->warning;
         if (m_selectedDeviceId == deviceId) {
             m_selectedViewName = found->name;
             m_viewTrackIds.clear();
@@ -1441,6 +1439,7 @@ void DeviceLibraryManager::applyAnalysisResult(
     request.insert(QStringLiteral("hotCues"), cuesToVariant(result.analysis.hotCues));
     request.insert(QStringLiteral("memoryCues"), cuesToVariant(result.analysis.memoryCues));
     request.insert(QStringLiteral("loops"), cuesToVariant(result.analysis.loops));
+    request.insert(QStringLiteral("waveformPreview"), result.analysis.waveformPreview);
     setStatusMessage(result.analysis.beats.isEmpty()
         ? QStringLiteral("Loading track without Rekordbox beatgrid")
         : QStringLiteral("Rekordbox beatgrid ready"));

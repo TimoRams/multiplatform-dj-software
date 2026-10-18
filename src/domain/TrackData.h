@@ -207,6 +207,7 @@ public:
 
     // Rebuilds the entire BeatMarker array so that newAnchorSec is beat 1 / bar 1.
     void shiftBeatgridToDownbeat(double newAnchorSec, double trackLengthSec);
+    bool scaleDynamicBeatgrid(double factor);
 
     // Shift every beat marker by deltaSec (positive = later in the track).
     void nudgeBeatgrid(double deltaSec, double trackLengthSec);
@@ -218,8 +219,10 @@ public:
         return m_bpm;
     }
 
-    // Update only the BPM value (used by manual x2 / ÷2 correction).
-    // Does NOT rebuild the beat grid — the caller is responsible for that.
+    [[nodiscard]] double bpmAt(double positionSec) const;
+
+    // Changes nominal BPM. Dynamic grids retain their shape by rescaling
+    // timestamps; constant grids are rebuilt separately by the caller.
     void setBpm(double bpm);
 
     qint64 getFirstBeatSample() const {

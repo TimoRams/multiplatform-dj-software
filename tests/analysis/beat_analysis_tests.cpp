@@ -213,6 +213,20 @@ bool validationRejectsPlausibleLookingWrongTempo()
 int main()
 {
     bool ok = true;
+    const auto features = pulseTrain(120.0, 80.0);
+    std::vector<analysis::BeatMarker> driftingTracker;
+    double time = 0.0;
+    for (int i = 0; i < 160; ++i) {
+        analysis::BeatMarker beat;
+        beat.positionSec = time;
+        beat.confidence = 1.0f;
+        driftingTracker.push_back(beat);
+        time += i < 80 ? 0.48 : 0.52;
+    }
+    const auto staticFit = analysis::BeatGridFitter{}.fit(features, driftingTracker, 120.0);
+    ok &= require(staticFit.grid.type == TrackData::BeatGridType::ConstantTempo
+                      && staticFit.grid.tempoNodes.size() == 1,
+                  "built-in fitting remains static even when the tracker drifts");
     ok &= tempoAndMetricalLevelAreStable();
     ok &= constantGridNeverWobbles();
     ok &= downbeatPhaseUsesRepeatedBassAccents();

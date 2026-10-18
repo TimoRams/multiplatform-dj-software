@@ -3,6 +3,8 @@
 #include "library/devices/rekordbox/RekordboxTypes.h"
 
 #include <QString>
+#include <QCache>
+#include <memory>
 
 namespace rekordbox {
 
@@ -25,7 +27,29 @@ public:
     };
 
     [[nodiscard]] Result readReadOnly(const QString& path) const;
-    [[nodiscard]] Result readRelatedReadOnly(const QString& datPath) const;
+    [[nodiscard]] Result readRelatedReadOnly(const QString& datPath,
+                                            const QString& mountPath = {}) const;
+};
+
+// Worker-owned, bounded RAM cache. Index lifetime scopes entries to one mounted
+// source; file identities include all three sidecars, including absent files.
+class AnalysisCache final
+{
+public:
+    explicit AnalysisCache(int maxBytes = 16 * 1024 * 1024) : m_entries(maxBytes) {}
+    [[nodiscard]] AnalysisReader::Result readReadOnly(
+        std::shared_ptr<const DeviceIndex> index, const QString& trackId);
+    void clear() { m_entries.clear(); m_sources.clear(); }
+    [[nodiscard]] int entryCount() const { return m_entries.size(); }
+
+private:
+    struct Entry {
+        std::weak_ptr<const DeviceIndex> index;
+        QByteArray fingerprint;
+        AnalysisReader::Result result;
+    };
+    QCache<QString, Entry> m_entries;
+    QHash<QString, std::weak_ptr<const DeviceIndex>> m_sources;
 };
 
 class DeviceSource final
@@ -35,6 +59,8 @@ public:
         DeviceIndex index;
     };
 
+    // Prefer the documented encrypted OneLibrary schema. Legacy export.pdb
+    // remains a fallback; a modern failure is retained in index.warning.
     [[nodiscard]] Result readIndexReadOnly(const QString& mountPath,
                                            const QString& deviceId) const;
     [[nodiscard]] AnalysisReader::Result readAnalysisReadOnly(

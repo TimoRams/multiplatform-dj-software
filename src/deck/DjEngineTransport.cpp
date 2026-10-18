@@ -6,6 +6,7 @@
 #include "audio/TimeStretchProcessor.h"
 #include "audio/cache/CachedPlaybackAudioSource.h"
 #include "deck/DeckTransport.h"
+#include "domain/BeatGridTiming.h"
 #include "library/CoverArtExtractor.h"
 #include "library/LibraryCoverService.h"
 #include "library/LibraryDatabase.h"
@@ -98,6 +99,12 @@ double DjEngine::getVisualPosition() const
 double DjEngine::getVisualPositionQml() const
 {
     return getVisualPosition();
+}
+
+double DjEngine::getCurrentBpm() const
+{
+    const double base = m_trackData ? m_trackData->bpmAt(getPosition()) : 0.0;
+    return base > 0.0 ? base * getTempoRatio() : 0.0;
 }
 
 
@@ -727,6 +734,18 @@ void DjEngine::loadExternalTrack(const QVariantMap& request)
     external.metadata.tagBpm = request.value(QStringLiteral("bpm")).toDouble();
     external.metadata.durationSec = request.value(QStringLiteral("durationSec")).toDouble();
 
+    const QByteArray preview = request.value(QStringLiteral("waveformPreview")).toByteArray();
+    if (preview.size() <= 4096) {
+        external.analysis.overviewWaveform.reserve(preview.size());
+        for (const char value : preview) {
+            TrackData::RgbWaveformFrame frame;
+            frame.peak = static_cast<float>(static_cast<quint8>(value) & 0x1fU) / 31.0f;
+            // PWAV has amplitude/intensity only, not spectral or RMS data.
+            frame.bass = frame.mid = frame.treble = frame.peak;
+            external.analysis.overviewWaveform.append(frame);
+        }
+    }
+
     const QVariantList beatValues = request.value(QStringLiteral("beats")).toList();
     external.analysis.beats.reserve(static_cast<size_t>(beatValues.size()));
     double lastPosition = -1.0;
@@ -734,16 +753,28 @@ void DjEngine::loadExternalTrack(const QVariantMap& request)
     int barIndex = 0;
     bool sawBeat = false;
     bool dynamicTempo = false;
-    for (const QVariant& value : beatValues) {
-        const QVariantMap map = value.toMap();
+    for (qsizetype beatIndex = 0; beatIndex < beatValues.size(); ++beatIndex) {
+        const QVariantMap map = beatValues[beatIndex].toMap();
         const double position = map.value(QStringLiteral("positionSec")).toDouble();
-        const double bpm = map.value(QStringLiteral("bpm")).toDouble();
+        double bpm = map.value(QStringLiteral("bpm")).toDouble();
         const int beatInBar = map.value(QStringLiteral("beatInBar")).toInt();
+        if (bpm == 0.0 && beatIndex + 1 < beatValues.size()) {
+            const double nextPosition = beatValues[beatIndex + 1].toMap()
+                .value(QStringLiteral("positionSec")).toDouble();
+            if (nextPosition > position)
+                bpm = 60.0 / (nextPosition - position);
+        } else if (bpm == 0.0 && lastTempo > 0.0) {
+            bpm = lastTempo;
+        }
         if (!std::isfinite(position) || position < 0.0 || position <= lastPosition
-            || !std::isfinite(bpm) || bpm <= 0.0 || bpm > 400.0
+            || !std::isfinite(bpm) || bpm <= 0.0 || bpm > 1000.0
             || beatInBar < 1 || beatInBar > 4) {
+            qWarning() << "[DjEngine] Invalid imported beat entry" << beatIndex;
             continue;
         }
+        if (lastPosition >= 0.0 && lastTempo > 0.0
+            && std::abs((position - lastPosition) - 60.0 / lastTempo) > 0.0021)
+            dynamicTempo = true;
         if (sawBeat && beatInBar == 1)
             ++barIndex;
         TrackData::BeatMarker marker;
@@ -1079,11 +1110,12 @@ double DjEngine::getBeatPhase() const
     if (!std::isfinite(bpm) || bpm <= 0.0) return 0.0;
 
     const double position = getPosition();
-    if (m_trackData->getBeatGrid().size() >= 2) {
-        const auto [previous, beatLength] = beatIntervalAt(position);
-        return std::clamp((position - previous) / beatLength, 0.0, 0.9999);
+    const auto grid = m_trackData->getBeatGridSnapshot();
+    if (grid->size() >= 2) {
+        const double beat = beatgrid::beatPosition(*grid, position, bpm);
+        return beat - std::floor(beat);
     }
-    const double phase = std::fmod(position / (60.0 / bpm), 1.0);
+    const double phase = std::fmod(getBeatPosition(), 1.0);
     return phase < 0.0 ? phase + 1.0 : phase;
 }
 
@@ -1093,18 +1125,10 @@ double DjEngine::getBarPhase() const
     const double bpm = m_trackData->getBpm();
     if (!std::isfinite(bpm) || bpm <= 0.0) return 0.0;
 
-    const auto& grid = m_trackData->getBeatGrid();
+    const auto snapshot = m_trackData->getBeatGridSnapshot();
+    const auto& grid = *snapshot;
     if (grid.size() >= 2) {
-        const double beatPosition = getBeatPosition();
-        int downbeatOffset = 0;
-        if (const auto it = std::ranges::find_if(grid, &TrackData::BeatMarker::isDownbeat);
-            it != grid.end()) {
-            downbeatOffset = static_cast<int>(std::distance(grid.begin(), it) % kBeatsPerBar);
-        }
-        const double relative = beatPosition - static_cast<double>(downbeatOffset);
-        const double barPosition = std::fmod(std::fmod(relative, kBeatsPerBar) + kBeatsPerBar,
-                                             kBeatsPerBar);
-        return barPosition / static_cast<double>(kBeatsPerBar);
+        return beatgrid::barPhase(grid, getPosition(), bpm);
     }
 
     const double sampleRate = m_trackData->getSampleRate();
@@ -1122,21 +1146,10 @@ double DjEngine::getBeatPosition() const
     if (!std::isfinite(bpm) || bpm <= 0.0) return 0.0;
 
     const double position = getPosition();
-    const auto& grid = m_trackData->getBeatGrid();
+    const auto snapshot = m_trackData->getBeatGridSnapshot();
+    const auto& grid = *snapshot;
     if (grid.size() >= 2) {
-        const auto it = std::upper_bound(grid.begin(), grid.end(), position,
-            [](double value, const TrackData::BeatMarker& marker) {
-                return value < marker.positionSec;
-            });
-        const auto previous = it != grid.begin() ? std::prev(it) : grid.begin();
-        const int beatIndex = static_cast<int>(std::distance(grid.begin(), previous));
-        double beatLength = 60.0 / bpm;
-        if (std::next(previous) != grid.end()) {
-            const double candidate = std::next(previous)->positionSec - previous->positionSec;
-            if (candidate > 0.001)
-                beatLength = candidate;
-        }
-        return static_cast<double>(beatIndex) + ((position - previous->positionSec) / beatLength);
+        return beatgrid::beatPosition(grid, position, bpm);
     }
 
     const double sampleRate = m_trackData->getSampleRate();
@@ -1145,12 +1158,40 @@ double DjEngine::getBeatPosition() const
     return (position - firstBeat) / (60.0 / bpm);
 }
 
+QVariantMap DjEngine::beatDisplayInfo() const
+{
+    if (!m_trackData || !m_trackData->isBpmAnalyzed())
+        return {{QStringLiteral("valid"), false}};
+    const auto grid = m_trackData->getBeatGridSnapshot();
+    const double position = getPlayheadPositionAtomic();
+    const double bpm = m_trackData->getBpm();
+    if (grid->size() >= 2) {
+        const auto interval = beatgrid::intervalAt(*grid, position, bpm);
+        const auto& marker = (*grid)[interval.index];
+        const int extra = static_cast<int>(std::floor((position - interval.start) / interval.duration));
+        const int beat = marker.beatInBar - 1 + extra;
+        return {{QStringLiteral("valid"), true},
+                {QStringLiteral("beatInBar"), (beat % 4 + 4) % 4 + 1},
+                {QStringLiteral("barNumber"), marker.barNumber
+                    + static_cast<int>(std::floor(static_cast<double>(beat) / 4.0))}};
+    }
+    if (!std::isfinite(bpm) || bpm <= 0.0)
+        return {{QStringLiteral("valid"), false}};
+    const double rate = m_trackData->getSampleRate();
+    const double anchor = rate > 0.0 ? m_trackData->getFirstBeatSample() / rate : 0.0;
+    const int beat = static_cast<int>(std::floor((position - anchor) * bpm / 60.0));
+    return {{QStringLiteral("valid"), true},
+            {QStringLiteral("beatInBar"), (beat % 4 + 4) % 4 + 1},
+            {QStringLiteral("barNumber"), static_cast<int>(std::floor(beat / 4.0)) + 1}};
+}
+
 engine::sync::DeckSyncInputSnapshot DjEngine::buildSyncInputSnapshot() const
 {
     engine::sync::DeckSyncInputSnapshot input;
     const DeckTransportSnapshot transport = m_transport->snapshot();
-    const double bpm = m_trackData ? m_trackData->getBpm() : 0.0;
-    const auto& grid = m_trackData->getBeatGrid();
+    const double bpm = m_trackData ? m_trackData->bpmAt(transport.audiblePositionSeconds) : 0.0;
+    const auto snapshot = m_trackData->getBeatGridSnapshot();
+    const auto& grid = *snapshot;
     const bool validBpm = std::isfinite(bpm) && bpm > 0.0;
     const bool gridValid = validBpm && grid.size() >= 2;
     const bool downbeatValid = gridValid

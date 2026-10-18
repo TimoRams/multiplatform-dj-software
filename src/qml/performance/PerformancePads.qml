@@ -246,24 +246,9 @@ Item {
     readonly property bool isKeyShiftSelectionAvailable:
         root.keyShiftMode && root.engine && root.engine.keySemitoneOffset !== undefined
 
-    function beatDurationSeconds() {
-        if (!root.engine) return 0.5
-        var bpm = root.engine.currentBpm
-        if (!bpm || bpm <= 0.0) return 0.5
-        return 60.0 / bpm
-    }
-
     function doBeatJump(beats) {
         if (!root.engine) return
-        var duration = root.engine.getDuration()
-        if (!duration || duration <= 0.0) return
-        var current = root.engine.getPlayheadPositionAtomic()
-        if (current === undefined || isNaN(current))
-            current = root.engine.progress * duration
-        var nextPos = current + beats * root.beatDurationSeconds()
-        var preRoll = root.engine.preRollSeconds || 0.0
-        nextPos = Math.max(-preRoll, Math.min(duration, nextPos))
-        root.engine.setPosition(nextPos / duration)
+        root.engine.beatJump(beats)
     }
 
     function beginPadPress(index) {

@@ -6,6 +6,7 @@
 #include "audio/TimeStretchProcessor.h"
 #include "audio/cache/CachedPlaybackAudioSource.h"
 #include "deck/DeckTransport.h"
+#include "domain/BeatGridTiming.h"
 #include "library/CoverArtExtractor.h"
 #include "library/LibraryCoverService.h"
 #include "library/LibraryDatabase.h"
@@ -64,7 +65,7 @@ void DjEngine::activateLoopRange(double inSec, double outSec, bool jumpToIn)
     if (beatDur > 1e-4) {
         constexpr double kMinLoopBeats = 1.0 / 64.0;
         constexpr double kMaxLoopBeats = 4096.0;
-        const double beats = (out - in) / beatDur;
+        const double beats = beatCountBetween(in, out);
         m_cueLoopController.activeLoop().lengthBeats = std::clamp(beats, kMinLoopBeats, kMaxLoopBeats);
     }
 
@@ -88,8 +89,9 @@ void DjEngine::activateLoopRange(double inSec, double outSec, bool jumpToIn)
 DjEngine::BeatInterval DjEngine::beatIntervalAt(double positionSec) const
 {
     const double bpm    = m_trackData->getBpm();
-    const double nomLen = 60.0 / bpm;
-    const auto&  grid   = m_trackData->getBeatGrid();
+    const double nomLen = bpm > 0.0 ? 60.0 / bpm : 0.5;
+    const auto snapshot = m_trackData->getBeatGridSnapshot();
+    const auto& grid = *snapshot;
 
     if (grid.size() >= 2) {
         const auto it   = std::upper_bound(grid.begin(), grid.end(), positionSec,
@@ -99,6 +101,10 @@ DjEngine::BeatInterval DjEngine::beatIntervalAt(double positionSec) const
         double beatLen = nomLen;
         if (std::next(prev) != grid.end()) {
             const double candidate = std::next(prev)->positionSec - prevSec;
+            if (candidate > 0.01)
+                beatLen = candidate;
+        } else if (prev != grid.begin()) {
+            const double candidate = prevSec - std::prev(prev)->positionSec;
             if (candidate > 0.01)
                 beatLen = candidate;
         }
@@ -132,7 +138,8 @@ double DjEngine::quantizedBeatAt(double sec) const
     if (!m_trackData)
         return sec;
 
-    const auto& grid = m_trackData->getBeatGrid();
+    const auto snapshot = m_trackData->getBeatGridSnapshot();
+    const auto& grid = *snapshot;
     if (!grid.empty()) {
         // Binary search: first marker strictly after sec.
         const auto it = std::upper_bound(grid.begin(), grid.end(), sec,
@@ -165,7 +172,8 @@ double DjEngine::nextBeatBoundaryAfter(double sec) const
         return sec;
 
     constexpr double kEps = 1e-4;
-    const auto& grid = m_trackData->getBeatGrid();
+    const auto snapshot = m_trackData->getBeatGridSnapshot();
+    const auto& grid = *snapshot;
     if (!grid.empty()) {
         const auto it = std::upper_bound(grid.begin(), grid.end(), sec + kEps,
             [](double v, const TrackData::BeatMarker& m) { return v < m.positionSec; });
@@ -199,7 +207,8 @@ double DjEngine::beatDurationAround(double sec) const
     if (!m_trackData)
         return 0.5;
 
-    const auto& grid = m_trackData->getBeatGrid();
+    const auto snapshot = m_trackData->getBeatGridSnapshot();
+    const auto& grid = *snapshot;
     if (grid.size() >= 2) {
         // Binary search for the containing interval [prev, next).
         const auto it   = std::upper_bound(grid.begin(), grid.end(), sec,
@@ -219,6 +228,15 @@ double DjEngine::beatDurationAround(double sec) const
     return bpm > 0.0 ? (60.0 / bpm) : 0.5;
 }
 
+double DjEngine::beatCountBetween(double startSec, double endSec) const
+{
+    if (!m_trackData)
+        return (endSec - startSec) / 0.5;
+    const auto grid = m_trackData->getBeatGridSnapshot();
+    const double bpm = m_trackData->getBpm();
+    return beatgrid::beatPosition(*grid, endSec, bpm)
+        - beatgrid::beatPosition(*grid, startSec, bpm);
+}
 
 void DjEngine::startLoopAt(double startSec, double lengthBeats)
 {
@@ -237,7 +255,13 @@ void DjEngine::startLoopAt(double startSec, double lengthBeats)
     constexpr double kMinLoopBeats = 1.0 / 64.0;
     constexpr double kMaxLoopBeats = 4096.0;
     double beats = std::clamp(lengthBeats, kMinLoopBeats, kMaxLoopBeats);
-    double end = start + beats * beatDur;
+    DeckCueLoopController::BeatGridSnapshot loopGrid;
+    loopGrid.bpm = m_trackData->getBpm();
+    const auto markers = m_trackData->getBeatGridSnapshot();
+    loopGrid.beats.reserve(markers->size());
+    for (const auto& marker : *markers)
+        loopGrid.beats.push_back(marker.positionSec);
+    double end = DeckCueLoopController::beatJumpTarget(start, beats, loopGrid);
     if (end > trackLen)
         end = trackLen;
     if (end <= start + 0.001)
@@ -245,7 +269,7 @@ void DjEngine::startLoopAt(double startSec, double lengthBeats)
 
     m_cueLoopController.activeLoop().inSec = start;
     m_cueLoopController.activeLoop().outSec = end;
-    m_cueLoopController.activeLoop().lengthBeats = (end - start) / beatDur;
+    m_cueLoopController.activeLoop().lengthBeats = beatCountBetween(start, end);
     m_cueLoopController.activeLoop().active = true;
     m_cueLoopController.activeLoop().inSet = true;
     applyLoopRangeToAudioSource();
@@ -313,7 +337,8 @@ void DjEngine::setLoopOut()
     if (beatDurAtIn > 1e-4) {
         constexpr double kMinLoopBeats = 1.0 / 64.0;
         constexpr double kMaxLoopBeats = 4096.0;
-        const double beats = (m_cueLoopController.activeLoop().outSec - m_cueLoopController.activeLoop().inSec) / beatDurAtIn;
+        const double beats = beatCountBetween(m_cueLoopController.activeLoop().inSec,
+                                               m_cueLoopController.activeLoop().outSec);
         m_cueLoopController.activeLoop().lengthBeats = std::clamp(beats, kMinLoopBeats, kMaxLoopBeats);
     }
 
@@ -616,7 +641,7 @@ void DjEngine::installExternalCues(const ExternalTrackLoadSnapshot& external)
         slot.outSec = cue.loopEndSec;
         const double beatDuration = beatDurationAround(slot.inSec);
         slot.lengthBeats = beatDuration > 1e-4
-            ? (slot.outSec - slot.inSec) / beatDuration : 0.0;
+            ? beatCountBetween(slot.inSec, slot.outSec) : 0.0;
         slot.label = cue.label;
         slot.color = cue.color.isEmpty()
             ? DeckCueLoopController::defaultSavedLoopColor(loopIndex) : cue.color;
@@ -1183,7 +1208,7 @@ void DjEngine::loadSavedLoopsForCurrentTrack()
 
         const double beatDur = beatDurationAround(slot.inSec);
         if (beatDur > 1e-4)
-            slot.lengthBeats = (slot.outSec - slot.inSec) / beatDur;
+            slot.lengthBeats = beatCountBetween(slot.inSec, slot.outSec);
     }
 
     emit savedLoopsChanged();
@@ -1250,7 +1275,7 @@ void DjEngine::storeSavedLoop(int index)
     slot.inSec = inSec;
     slot.outSec = outSec;
     const double beatDur = beatDurationAround(inSec);
-    slot.lengthBeats = beatDur > 1e-4 ? (outSec - inSec) / beatDur : 4.0;
+    slot.lengthBeats = beatDur > 1e-4 ? beatCountBetween(inSec, outSec) : 4.0;
     if (slot.color.isEmpty())
         slot.color = DeckCueLoopController::defaultSavedLoopColor(index);
     if (slot.label.isEmpty())

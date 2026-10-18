@@ -2,7 +2,11 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QSet>
 #include <QUrl>
+
+#include <limits>
+#include <memory>
 
 #ifdef BROCKDJ_HAVE_SQLCIPHER
 #include <sqlite3.h>
@@ -25,7 +29,7 @@ const QString& identityDatabaseRelativePath()
 // The device database is encrypted with SQLCipher using a fixed key that is
 // neither licence- nor machine-dependent — every device written by the
 // exporting software uses the same one. It is public knowledge and is only
-// needed to *read* the device's own name and colour here.
+// needed to read the exported library and device identity.
 // Applied as a pragma rather than through sqlite3_key(), because the latter is
 // only declared when SQLCipher is built with the codec macro exposed.
 const char* const kCipherKeyPragma =
@@ -55,7 +59,196 @@ bool applyKey(sqlite3* db)
         return false;
     // Belt and braces: even a mode=ro handle is told explicitly that no
     // statement may modify the database.
-    return sqlite3_exec(db, "PRAGMA query_only = 1;", nullptr, nullptr, nullptr) == SQLITE_OK;
+    return sqlite3_exec(db, "PRAGMA query_only = 1; PRAGMA temp_store = MEMORY;",
+                        nullptr, nullptr, nullptr) == SQLITE_OK;
+}
+
+PdbReader::Result readModernIndex(const QString& path)
+{
+    PdbReader::Result result;
+    // Immutable SQLite deliberately ignores recovery files. Never show a
+    // potentially stale/inconsistent snapshot from an unfinished export.
+    for (const auto& suffix : {QStringLiteral("-wal"), QStringLiteral("-journal")}) {
+        if (QFileInfo(path + suffix).size() > 0) {
+            result.error = QStringLiteral(
+                "OneLibrary has pending database recovery data; finish exporting and safely eject first");
+            return result;
+        }
+    }
+    sqlite3* rawDb = nullptr;
+    const int flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI | SQLITE_OPEN_NOMUTEX;
+    const int opened = sqlite3_open_v2(readOnlyUri(path).toUtf8().constData(),
+                                     &rawDb, flags, nullptr);
+    const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(rawDb, sqlite3_close);
+    if (opened != SQLITE_OK || !applyKey(db.get())) {
+        result.error = QStringLiteral("Cannot open OneLibrary exportLibrary.db read-only");
+        return result;
+    }
+
+    using Statement = std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>;
+    auto prepare = [&](const char* sql) {
+        sqlite3_stmt* statement = nullptr;
+        if (sqlite3_prepare_v2(db.get(), sql, -1, &statement, nullptr) != SQLITE_OK) {
+            result.error = QStringLiteral("Unsupported or unreadable OneLibrary schema: %1")
+                               .arg(QString::fromUtf8(sqlite3_errmsg(db.get())));
+        }
+        return Statement(statement, sqlite3_finalize);
+    };
+    auto text = [](sqlite3_stmt* row, int column) {
+        const auto* value = sqlite3_column_text(row, column);
+        return value ? QString::fromUtf8(reinterpret_cast<const char*>(value),
+                                         sqlite3_column_bytes(row, column)) : QString{};
+    };
+    auto id = [&](sqlite3_stmt* row, int column, quint32& value, bool allowZero = false) {
+        const sqlite3_int64 number = sqlite3_column_int64(row, column);
+        if ((sqlite3_column_type(row, column) != SQLITE_INTEGER
+             && !(allowZero && sqlite3_column_type(row, column) == SQLITE_NULL))
+            || number < (allowZero ? 0 : 1)
+            || number > std::numeric_limits<quint32>::max()) {
+            result.error = QStringLiteral("Invalid OneLibrary identifier or sequence number");
+            return false;
+        }
+        value = static_cast<quint32>(number);
+        return true;
+    };
+    auto completed = [&](int status) {
+        if (status == SQLITE_DONE)
+            return true;
+        result.error = QStringLiteral("Error reading OneLibrary: %1")
+                           .arg(QString::fromUtf8(sqlite3_errmsg(db.get())));
+        return false;
+    };
+
+    // Map the documented OneLibrary schema explicitly, never master.db or a
+    // guessed set of similarly named columns. Additional columns are harmless.
+    auto tracks = prepare(
+        "SELECT c.content_id,c.title,a.name,b.name,g.name,k.name,c.djComment,"
+        "c.bpmx100,c.length,c.bitrate,c.rating,col.name,c.path,"
+        "c.analysisDataFilePath,i.path FROM content c "
+        "LEFT JOIN artist a ON a.artist_id=c.artist_id_artist "
+        "LEFT JOIN album b ON b.album_id=c.album_id "
+        "LEFT JOIN genre g ON g.genre_id=c.genre_id "
+        "LEFT JOIN \"key\" k ON k.key_id=c.key_id "
+        "LEFT JOIN color col ON col.color_id=c.color_id "
+        "LEFT JOIN image i ON i.image_id=c.image_id ORDER BY c.content_id");
+    auto playlists = prepare(
+        "SELECT playlist_id,playlist_id_parent,sequenceNo,attribute,name "
+        "FROM playlist ORDER BY sequenceNo,playlist_id");
+    auto entries = prepare(
+        "SELECT playlist_id,content_id,sequenceNo FROM playlist_content "
+        "ORDER BY playlist_id,sequenceNo,content_id");
+    if (!tracks || !playlists || !entries)
+        return result;
+
+    constexpr qsizetype maxRows = 1'000'000;
+    QSet<quint32> trackIds;
+    int status = SQLITE_OK;
+    while ((status = sqlite3_step(tracks.get())) == SQLITE_ROW) {
+        Track track;
+        if (!id(tracks.get(), 0, track.id))
+            return result;
+        if (trackIds.contains(track.id) || result.tracks.size() >= maxRows) {
+            result.error = QStringLiteral("Duplicate tracks or excessive OneLibrary index size");
+            return result;
+        }
+        trackIds.insert(track.id);
+        track.title = text(tracks.get(), 1);
+        track.artist = text(tracks.get(), 2);
+        track.album = text(tracks.get(), 3);
+        track.genre = text(tracks.get(), 4);
+        track.key = text(tracks.get(), 5);
+        track.comment = text(tracks.get(), 6);
+        track.bpm = sqlite3_column_double(tracks.get(), 7) / 100.0;
+        track.durationSec = sqlite3_column_double(tracks.get(), 8) / 1000.0;
+        track.bitrateKbps = sqlite3_column_int(tracks.get(), 9);
+        track.rating = sqlite3_column_int(tracks.get(), 10);
+        track.color = text(tracks.get(), 11);
+        track.relativeAudioPath = text(tracks.get(), 12);
+        track.relativeAnalysisPath = text(tracks.get(), 13);
+        track.relativeArtworkPath = text(tracks.get(), 14);
+        if (track.relativeAudioPath.isEmpty()) {
+            result.error = QStringLiteral("OneLibrary track %1 has no audio path").arg(track.id);
+            return result;
+        }
+        result.tracks.append(std::move(track));
+    }
+    if (!completed(status))
+        return result;
+
+    QHash<quint32, qsizetype> playlistById;
+    while ((status = sqlite3_step(playlists.get())) == SQLITE_ROW) {
+        Playlist playlist;
+        quint32 attribute = 0;
+        if (!id(playlists.get(), 0, playlist.id)
+            || !id(playlists.get(), 1, playlist.parentId, true)
+            || !id(playlists.get(), 2, playlist.sortOrder, true)
+            || !id(playlists.get(), 3, attribute, true))
+            return result;
+        // Smart playlists have their exported membership materialized too.
+        if (attribute != 0 && attribute != 1 && attribute != 4) {
+            result.error = QStringLiteral("Unsupported OneLibrary playlist attribute %1")
+                               .arg(attribute);
+            return result;
+        }
+        if (playlistById.contains(playlist.id) || result.playlists.size() >= maxRows) {
+            result.error = QStringLiteral("Duplicate playlists or excessive OneLibrary index size");
+            return result;
+        }
+        playlist.folder = attribute == 1;
+        playlist.name = text(playlists.get(), 4);
+        playlistById.insert(playlist.id, result.playlists.size());
+        result.playlists.append(std::move(playlist));
+    }
+    if (!completed(status))
+        return result;
+    qsizetype entryCount = 0;
+    while ((status = sqlite3_step(entries.get())) == SQLITE_ROW) {
+        quint32 playlistId = 0, trackId = 0, sequence = 0;
+        if (!id(entries.get(), 0, playlistId) || !id(entries.get(), 1, trackId)
+            || !id(entries.get(), 2, sequence, true))
+            return result;
+        if (!playlistById.contains(playlistId) || !trackIds.contains(trackId)
+            || result.playlists[playlistById.value(playlistId)].folder
+            || ++entryCount > maxRows) {
+            result.error = QStringLiteral("Invalid OneLibrary playlist membership");
+            return result;
+        }
+        result.playlists[playlistById.value(playlistId)].trackIds.append(trackId);
+    }
+    if (!completed(status))
+        return result;
+
+    QHash<quint32, QVector<qsizetype>> children;
+    for (qsizetype n = 0; n < result.playlists.size(); ++n) {
+        const auto& playlist = result.playlists[n];
+        if (playlist.parentId
+            && (!playlistById.contains(playlist.parentId)
+                || !result.playlists[playlistById.value(playlist.parentId)].folder)) {
+            result.error = QStringLiteral("Invalid OneLibrary playlist parent");
+            return result;
+        }
+        children[playlist.parentId].append(n);
+    }
+    QVector<Playlist> ordered;
+    QVector<qsizetype> pending;
+    auto pushChildren = [&](quint32 parent) {
+        const auto siblings = children.value(parent);
+        for (auto it = siblings.crbegin(); it != siblings.crend(); ++it)
+            pending.append(*it);
+    };
+    pushChildren(0);
+    while (!pending.isEmpty()) {
+        const auto n = pending.takeLast();
+        ordered.append(result.playlists[n]);
+        pushChildren(result.playlists[n].id);
+    }
+    if (ordered.size() != result.playlists.size()) {
+        result.error = QStringLiteral("Cyclic OneLibrary playlist hierarchy");
+        return result;
+    }
+    result.playlists = std::move(ordered);
+    result.ok = true;
+    return result;
 }
 
 #endif // BROCKDJ_HAVE_SQLCIPHER
@@ -71,7 +264,8 @@ QString DeviceSource::resolveContainedPath(const QString& mountPath,
     if (canonicalRoot.isEmpty() || !rootInfo.isDir())
         return {};
 
-    QString relative = QDir::fromNativeSeparators(devicePath.trimmed());
+    QString relative = QDir::fromNativeSeparators(devicePath);
+    relative.replace(QLatin1Char('\\'), QLatin1Char('/'));
     while (relative.startsWith(QLatin1Char('/')))
         relative = relative.mid(1);
     relative = QDir::cleanPath(relative);
@@ -102,15 +296,35 @@ DeviceSource::Result DeviceSource::readIndexReadOnly(const QString& mountPath,
                                                       const QString& deviceId) const
 {
     Result result;
+    const QString modernPath = resolveContainedPath(
+        mountPath, QStringLiteral("PIONEER/rekordbox/exportLibrary.db"));
+    PdbReader::Result parsed;
+    QString modernError;
+    if (!modernPath.isEmpty()) {
+#ifdef BROCKDJ_HAVE_SQLCIPHER
+        parsed = readModernIndex(modernPath);
+#else
+        parsed.error = QStringLiteral("OneLibrary browsing requires SQLCipher support");
+#endif
+        if (!parsed.ok)
+            modernError = parsed.error;
+    } else if (QFileInfo::exists(QDir(mountPath).filePath(
+                   QStringLiteral("PIONEER/rekordbox/exportLibrary.db")))) {
+        modernError = QStringLiteral("OneLibrary exportLibrary.db is unreadable or outside the USB root");
+    }
     const QString databasePath = resolveContainedPath(
         mountPath, QStringLiteral("PIONEER/rekordbox/export.pdb"));
-    if (databasePath.isEmpty()) {
-        result.error = QStringLiteral("Legacy Rekordbox export.pdb is unavailable");
-        return result;
+    if (!parsed.ok && !databasePath.isEmpty()) {
+        parsed = PdbReader{}.readReadOnly(databasePath);
+        if (parsed.ok && !modernError.isEmpty())
+            result.index.warning = modernError + QStringLiteral("; using legacy export.pdb");
     }
-    const auto parsed = PdbReader{}.readReadOnly(databasePath);
     if (!parsed.ok) {
-        result.error = parsed.error;
+        result.error = modernError.isEmpty() ? parsed.error : modernError;
+        if (result.error.isEmpty())
+            result.error = QStringLiteral("No readable Rekordbox export.pdb or exportLibrary.db");
+        else if (!databasePath.isEmpty() && !modernError.isEmpty())
+            result.error += QStringLiteral("; legacy export.pdb: ") + parsed.error;
         return result;
     }
 
@@ -150,7 +364,7 @@ AnalysisReader::Result DeviceSource::readAnalysisReadOnly(
         missing.error = QStringLiteral("Rekordbox analysis path is unavailable");
         return missing;
     }
-    return AnalysisReader{}.readRelatedReadOnly(track.analysisPath);
+    return AnalysisReader{}.readRelatedReadOnly(track.analysisPath, index.mountPath);
 }
 
 bool DeviceIdentityReader::isSupported()

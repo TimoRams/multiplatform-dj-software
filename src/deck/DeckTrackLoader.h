@@ -75,6 +75,7 @@ struct ImportedTrackAnalysisSnapshot {
     QVector<ImportedCueSnapshot> hotCues;
     QVector<ImportedCueSnapshot> memoryCues;
     QVector<ImportedCueSnapshot> loops;
+    QVector<TrackData::RgbWaveformFrame> overviewWaveform;
 
     [[nodiscard]] bool hasBeatgrid() const noexcept {
         return bpm > 0.0 && !beats.empty();

@@ -1,6 +1,7 @@
 #include "analysis/AnalysisTypes.h"
 #include "analysis/internal/AnalysisWorkingData.h"
 #include "domain/TrackData.h"
+#include "domain/BeatGridTiming.h"
 
 #include <QCoreApplication>
 #include <QThread>
@@ -96,6 +97,67 @@ int main(int argc, char** argv)
     ok &= require(preservedGrid.lockedByUser
                       && preservedGrid.origin == TrackData::AnalysisOrigin::RekordboxDevice,
                   "local analysis lost imported beatgrid origin/lock");
+
+    TrackData dynamicData;
+    std::vector<TrackData::BeatMarker> dynamicBeats{
+        {0.0, true, false, 0, 1, 3, 1.0f},
+        {0.5, true, false, 0, 1, 4, 1.0f},
+        {1.0, true, true, 1, 2, 1, 1.0f},
+        {1.4, true, false, 1, 2, 2, 1.0f},
+        {1.7, true, true, 2, 3, 1, 1.0f},
+        {2.0, true, false, 2, 3, 2, 1.0f}};
+    TrackData::BeatGridInfo dynamicInfo;
+    dynamicInfo.type = TrackData::BeatGridType::DynamicTempo;
+    dynamicInfo.lockedByUser = true;
+    dynamicInfo.tempoNodes = {{0.0, 120.0, 1.0f}, {1.0, 150.0, 1.0f},
+                             {1.4, 200.0, 1.0f}};
+    dynamicData.setBpmData(120.0, 0, 48000.0, dynamicBeats, {}, dynamicInfo);
+    ok &= require(std::abs(dynamicData.bpmAt(1.2) - 150.0) < 1.0e-9
+                      && std::abs(dynamicData.bpmAt(2.2) - 200.0) < 1.0e-9,
+                  "dynamic BPM follows actual adjacent beats including final interval");
+    ok &= require(std::abs(beatgrid::beatPosition(dynamicBeats, 1.2, 120.0) - 2.5) < 1.0e-9
+                      && std::abs(beatgrid::barPhase(dynamicBeats, 1.85, 120.0) - 0.125) < 1.0e-9,
+                  "dynamic timing honors local spacing and later bar resets");
+    dynamicData.setBpmData(90.0, 4800, 48000.0);
+    ok &= require(dynamicData.getBpm() == 120.0
+                      && dynamicData.getFirstBeatSample() == 0,
+                  "incremental analysis cannot overwrite locked grid BPM or anchor");
+    const auto beforeNudge = dynamicData.getBeatGridSnapshot();
+    dynamicData.nudgeBeatgrid(0.02, 3.0);
+    const auto afterNudge = dynamicData.getBeatGridSnapshot();
+    ok &= require(beforeNudge != afterNudge
+                      && beforeNudge->at(2).positionSec == 1.0
+                      && afterNudge->at(2).positionSec == 1.02
+                      && dynamicData.getBeatGridInfo().tempoNodes[1].positionSec == 1.02,
+                  "grid nudge invalidates render snapshot and moves tempo nodes atomically");
+    dynamicData.shiftBeatgridToDownbeat(1.42, 3.0);
+    const auto reanchored = dynamicData.getBeatGridSnapshot();
+    ok &= require(reanchored->size() == dynamicBeats.size()
+                      && reanchored->at(3).isDownbeat
+                      && std::abs(reanchored->at(3).positionSec - reanchored->at(2).positionSec - 0.4) < 1.0e-9
+                      && dynamicData.getBeatGridInfo().type == TrackData::BeatGridType::DynamicTempo,
+                  "downbeat edit preserves variable beat spacing instead of rebuilding a rigid grid");
+    TrackData reloadedDynamic;
+    const auto dynamicSeed = dynamicData.createAnalysisSeed();
+    reloadedDynamic.setBpmData(dynamicSeed.bpm, dynamicSeed.firstBeatSample,
+                              dynamicSeed.sampleRate, dynamicSeed.beats,
+                              dynamicSeed.confidence, dynamicSeed.beatGrid);
+    ok &= require(std::abs(reloadedDynamic.bpmAt(1.2) - 150.0) < 1.0e-9
+                      && reloadedDynamic.getBeatGridInfo().type == TrackData::BeatGridType::DynamicTempo,
+                  "local analysis snapshot round trip retains variable-tempo grid");
+    ok &= require(reloadedDynamic.scaleDynamicBeatgrid(2.0)
+                      && std::abs(reloadedDynamic.bpmAt(1.2) - 300.0) < 1.0e-9
+                      && reloadedDynamic.getBeatGridSnapshot()->size() == dynamicBeats.size() * 2 - 1,
+                  "doubling a dynamic grid inserts beats without flattening tempo changes");
+    ok &= require(reloadedDynamic.scaleDynamicBeatgrid(0.5)
+                      && std::abs(reloadedDynamic.bpmAt(1.2) - 150.0) < 1.0e-9
+                      && reloadedDynamic.getBeatGridSnapshot()->size() == dynamicBeats.size(),
+                  "halving restores original dynamic timestamps and tempo");
+    reloadedDynamic.setBpm(60.0);
+    ok &= require(std::abs(reloadedDynamic.bpmAt(1.0) - 75.0) < 1.0e-9
+                      && std::abs(reloadedDynamic.bpmAt(2.1) - 100.0) < 1.0e-9
+                      && reloadedDynamic.getBeatGridInfo().type == TrackData::BeatGridType::DynamicTempo,
+                  "manual nominal BPM rescales dynamic timing without flattening it");
 
     analysis::AnalysisResult invalid = result;
     invalid.bpm = std::numeric_limits<double>::quiet_NaN();

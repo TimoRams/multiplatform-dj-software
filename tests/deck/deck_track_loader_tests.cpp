@@ -131,6 +131,10 @@ int main(int argc, char** argv)
         external.analysis.beatGridInfo.type = TrackData::BeatGridType::ConstantTempo;
         external.analysis.beatGridInfo.lockedByUser = true;
         external.analysis.beatGridInfo.origin = TrackData::AnalysisOrigin::RekordboxDevice;
+        external.analysis.overviewWaveform = {
+            {0.25f, 0.0f, 0.25f, 0.25f, 0.25f},
+            {0.75f, 0.0f, 0.75f, 0.75f, 0.75f}
+        };
 
         ResultWaiter waiter;
         const auto generation = loader.loadExternalTrack(
@@ -156,6 +160,13 @@ int main(int argc, char** argv)
                           && waiter.value().external->analysis.beatGridInfo.origin
                               == TrackData::AnalysisOrigin::RekordboxDevice,
                       "external exact beatgrid snapshot was not preserved");
+        ok &= require(waiter.value().instantOverview == external.analysis.overviewWaveform
+                          && waiter.value().instantOverviewExpected == 20,
+                      "external preview spans decoded duration using overview-only publication");
+        ok &= require(!waiter.value().waveformCacheLoaded
+                          && !waiter.value().waveformRenderCacheAvailable
+                          && waiter.value().waveformCache.waveform.isEmpty(),
+                      "low-resolution imported preview must not impersonate full waveform cache");
         cache.releaseTrack(waiter.value().cacheHandle);
     }
     {

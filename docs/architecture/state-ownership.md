@@ -31,3 +31,11 @@ the visual anchor and controller cursor at the track endpoint. Display clocks
 must not extrapolate past that stationary cursor or apply moving-playback
 latency compensation to it. Seeking back into the track releases the hold;
 scratch continues to use its own authoritative cursor.
+
+Imported dynamic beatgrids retain individual beat timestamps and bar markers.
+Local BPM and sync use adjacent beat intervals, including the last interval at
+the end of a grid; phase follows each marker's bar position. UI BPM changes do
+not emit tempo-fader changes or restart controller waveform uploads. Beatgrid
+edits invalidate immutable render snapshots and move tempo nodes with the grid.
+Changing the downbeat on a dynamic grid preserves its variable spacing.
+The built-in analyzer still produces constant-tempo grids only.

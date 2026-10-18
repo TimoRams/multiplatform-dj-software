@@ -613,7 +613,7 @@ double scoreOffset(const AnalysisFeatures& f,
 } // namespace
 
 BeatGridFitResult BeatGridFitter::fit(const AnalysisFeatures& features,
-                                      const std::vector<BeatMarker>& trackedBeats,
+                                      const std::vector<BeatMarker>&,
                                       double estimatedBpm) const
 {
     BeatGridFitResult result;
@@ -711,42 +711,11 @@ BeatGridFitResult BeatGridFitter::fit(const AnalysisFeatures& features,
         result.beats.push_back(marker);
     }
 
-    std::vector<double> localBpms;
-    for (size_t i = 16; i < trackedBeats.size(); i += 16) {
-        const double span = trackedBeats[i].positionSec - trackedBeats[i - 16].positionSec;
-        if (span > 0.0)
-            localBpms.push_back(16.0 * 60.0 / span);
-    }
-
-    if (localBpms.size() >= 3) {
-        const double mean = std::accumulate(localBpms.begin(), localBpms.end(), 0.0) / static_cast<double>(localBpms.size());
-        double variance = 0.0;
-        double minBpm = localBpms.front();
-        double maxBpm = localBpms.front();
-        for (double bpm : localBpms) {
-            variance += (bpm - mean) * (bpm - mean);
-            minBpm = std::min(minBpm, bpm);
-            maxBpm = std::max(maxBpm, bpm);
-        }
-        const double stddev = std::sqrt(variance / static_cast<double>(localBpms.size()));
-        if (stddev > 1.2 || (maxBpm - minBpm) > 2.8) {
-            result.grid.type = BeatGridType::DynamicTempo;
-            for (size_t i = 16; i < trackedBeats.size(); i += 16) {
-                const double span = trackedBeats[i].positionSec - trackedBeats[i - 16].positionSec;
-                if (span <= 0.0)
-                    continue;
-                TempoNode node;
-                node.positionSec = trackedBeats[i - 16].positionSec;
-                node.bpm = 16.0 * 60.0 / span;
-                node.confidence = trackedBeats[i].confidence;
-                result.grid.tempoNodes.push_back(node);
-            }
-        }
-    }
-
-    if (result.grid.tempoNodes.empty()) {
-        result.grid.tempoNodes.push_back({anchorSec, result.bpm, static_cast<float>(std::clamp(bestScore, 0.0, 1.0))});
-    }
+    // This fitter emits a rigid grid. Tracker drift must not label its
+    // constant timestamps as dynamic or attach a contradictory tempo map.
+    result.grid.type = BeatGridType::ConstantTempo;
+    result.grid.tempoNodes = {
+        {anchorSec, result.bpm, static_cast<float>(std::clamp(bestScore, 0.0, 1.0))}};
 
     result.confidence = static_cast<float>(std::clamp(0.55 * bestScore
                                                     + 0.25 * bestMeanEvidence

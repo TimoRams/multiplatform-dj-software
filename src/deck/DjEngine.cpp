@@ -113,6 +113,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
           engine::sync::DeckSyncController::Configuration {deckIndex}))
 {
     m_syncCoordinator.registerDeck(m_deckIndex, *m_syncController);
+    connect(this, &DjEngine::tempoChanged, this, &DjEngine::currentBpmChanged);
     connect(this, &DjEngine::loopChanged, this, &DjEngine::slipPreviewChanged);
     connect(this, &DjEngine::scrubbingChanged, this, &DjEngine::slipPreviewChanged);
     connect(this, &DjEngine::slipChanged, this, &DjEngine::slipPreviewChanged);
@@ -743,6 +744,11 @@ void DjEngine::notifyProgressIfNeeded()
     m_lastNotifiedProgressSec = posSec;
     m_progressNotifyClock.restart();
     emit progressChanged();
+    const double currentBpm = getCurrentBpm();
+    if (std::abs(currentBpm - m_lastNotifiedCurrentBpm) >= 0.01) {
+        m_lastNotifiedCurrentBpm = currentBpm;
+        emit currentBpmChanged();
+    }
 }
 
 
@@ -1052,8 +1058,10 @@ void DjEngine::doubleBpm()
 
     const double anchor = nearestDownbeatAnchor(
         m_trackData->getBeatGrid(), static_cast<double>(getVisualPosition()));
-    m_trackData->setBpm(m_trackData->getBpm() * 2.0);
-    m_trackData->shiftBeatgridToDownbeat(anchor, trackLengthSec);
+    if (!m_trackData->scaleDynamicBeatgrid(2.0)) {
+        m_trackData->setBpm(m_trackData->getBpm() * 2.0);
+        m_trackData->shiftBeatgridToDownbeat(anchor, trackLengthSec);
+    }
     persistCurrentAnalysisToLibrary();
     emit beatgridLockedChanged();
     emit tempoChanged();
@@ -1069,8 +1077,10 @@ void DjEngine::halveBpm()
 
     const double anchor = nearestDownbeatAnchor(
         m_trackData->getBeatGrid(), static_cast<double>(getVisualPosition()));
-    m_trackData->setBpm(m_trackData->getBpm() / 2.0);
-    m_trackData->shiftBeatgridToDownbeat(anchor, trackLengthSec);
+    if (!m_trackData->scaleDynamicBeatgrid(0.5)) {
+        m_trackData->setBpm(m_trackData->getBpm() / 2.0);
+        m_trackData->shiftBeatgridToDownbeat(anchor, trackLengthSec);
+    }
     persistCurrentAnalysisToLibrary();
     emit beatgridLockedChanged();
     emit tempoChanged();

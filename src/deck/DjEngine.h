@@ -54,7 +54,7 @@ class DjEngine : public QObject
     Q_PROPERTY(double keySemitoneOffset READ keySemitoneOffset WRITE setKeySemitoneOffset NOTIFY keySemitoneOffsetChanged)
     Q_PROPERTY(double tempoPercent READ getTempoPercent WRITE setTempoPercent NOTIFY tempoChanged)
     Q_PROPERTY(double tempoRangePercent READ tempoRangePercent WRITE setTempoRangePercent NOTIFY tempoRangeChanged)
-    Q_PROPERTY(double currentBpm READ getCurrentBpm NOTIFY tempoChanged)
+    Q_PROPERTY(double currentBpm READ getCurrentBpm NOTIFY currentBpmChanged)
     Q_PROPERTY(double tempoRatio READ getTempoRatio NOTIFY tempoChanged)
     Q_PROPERTY(TrackData* trackData READ getTrackData CONSTANT)
     Q_PROPERTY(bool quantizeEnabled READ quantizeEnabled WRITE setQuantizeEnabled NOTIFY quantizeEnabledChanged)
@@ -326,13 +326,11 @@ public:
     // Bar phase: 0.0 = on the downbeat ("the 1"), 0.25/0.5/0.75 = beats 2/3/4 of
     // the bar. Anchored to downbeat markers so sync can arrange grids bar-aligned.
     [[nodiscard]] Q_INVOKABLE double getBarPhase() const;
-    [[nodiscard]] double getBeatPosition() const;
-    // Returns the analysed BPM multiplied by the current tempo ratio.
+    [[nodiscard]] Q_INVOKABLE double getBeatPosition() const;
+    [[nodiscard]] Q_INVOKABLE QVariantMap beatDisplayInfo() const;
+    // Returns the local grid BPM multiplied by the current tempo ratio.
     // Shows 0.0 until BPM analysis is complete.
-    [[nodiscard]] double  getCurrentBpm()   const {
-        double base = m_trackData ? m_trackData->getBpm() : 0.0;
-        return base > 0.0 ? base * (1.0 + m_tempoPercent / 100.0) : 0.0;
-    }
+    [[nodiscard]] double getCurrentBpm() const;
     // Speed multiplier for the waveform renderer (e.g. 1.08 at +8%).
     [[nodiscard]] double  getTempoRatio()   const { return 1.0 + m_tempoPercent / 100.0; }
 
@@ -490,6 +488,7 @@ signals:
     void scrubbingChanged();
     void reverseChanged();
     void tempoChanged();
+    void currentBpmChanged();
     void tempoRangeChanged();
     void trackLoaded();
     void trackEjected();
@@ -691,6 +690,7 @@ private:
     bool m_lastNotifiedOnAir     = false;
     QElapsedTimer m_vuNotifyClock;
     double m_lastNotifiedProgressSec = 0.0;
+    double m_lastNotifiedCurrentBpm = 0.0;
     QElapsedTimer m_progressNotifyClock;
 
     // Mixer state
@@ -724,6 +724,7 @@ private:
     BeatInterval beatIntervalAt(double positionSec) const;
     double quantizedBeatAt(double sec) const;
     double beatDurationAround(double sec) const;
+    double beatCountBetween(double startSec, double endSec) const;
     void startLoopAt(double startSec, double lengthBeats);
     void applyLoopRangeToAudioSource();
     void clearLoopRangeOnAudioSource();

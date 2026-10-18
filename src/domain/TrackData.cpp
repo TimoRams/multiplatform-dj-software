@@ -1,4 +1,5 @@
 #include "TrackData.h"
+#include "domain/BeatGridTiming.h"
 #include "analysis/AnalysisTypes.h"
 #include "waveform/WaveformLineBuilder.h"
 
@@ -250,10 +251,8 @@ void TrackData::setBpmData(double bpm, qint64 firstBeatSample, double sampleRate
     bool beatgridUpdated = false;
     {
         QMutexLocker locker(&m_mutex);
-        if (m_beatGridInfo.lockedByUser && !beatGrid.empty()) {
-            beatGrid.clear();
-            beatGridInfo = m_beatGridInfo;
-        }
+        if (m_beatGridInfo.lockedByUser)
+            return;
         m_bpm             = bpm;
         m_firstBeatSample = firstBeatSample;
         m_sampleRate      = sampleRate;
@@ -261,7 +260,7 @@ void TrackData::setBpmData(double bpm, qint64 firstBeatSample, double sampleRate
         m_confidence      = confidence;
         if (!beatGrid.empty()) {
             m_beatGrid = std::move(beatGrid);
-        m_beatGridSnapshot.reset();
+            m_beatGridSnapshot.reset();
             beatgridUpdated = true;
         }
         if (beatGridInfo.type != BeatGridType::Unknown || !beatGridInfo.tempoNodes.empty()
@@ -272,6 +271,16 @@ void TrackData::setBpmData(double bpm, qint64 firstBeatSample, double sampleRate
     emit bpmAnalyzed();
     if (beatgridUpdated)
         emit beatgridChanged();
+}
+
+double TrackData::bpmAt(double positionSec) const
+{
+    const auto grid = getBeatGridSnapshot();
+    QMutexLocker locker(&m_mutex);
+    if (m_beatGridInfo.type != BeatGridType::DynamicTempo || grid->size() < 2
+        || !std::isfinite(positionSec))
+        return m_bpm;
+    return 60.0 / beatgrid::intervalAt(*grid, positionSec, m_bpm).duration;
 }
 
 void TrackData::ensureProvisionalBeatgrid(double trackLengthSec)
@@ -336,6 +345,45 @@ void TrackData::ensureProvisionalBeatgrid(double trackLengthSec)
 void TrackData::shiftBeatgridToDownbeat(double newAnchorSec, double trackLengthSec)
 {
     assertOwnerThread();
+    if (!std::isfinite(newAnchorSec) || trackLengthSec <= 0.0)
+        return;
+    bool shiftedDynamic = false;
+    {
+        QMutexLocker locker(&m_mutex);
+        if (m_beatGridInfo.type == BeatGridType::DynamicTempo && !m_beatGrid.empty()) {
+            const auto nearest = std::min_element(m_beatGrid.begin(), m_beatGrid.end(),
+                [newAnchorSec](const auto& a, const auto& b) {
+                    return std::abs(a.positionSec - newAnchorSec)
+                        < std::abs(b.positionSec - newAnchorSec);
+                });
+            const auto anchorIndex = nearest - m_beatGrid.begin();
+            const double delta = newAnchorSec - nearest->positionSec;
+            for (std::size_t i = 0; i < m_beatGrid.size(); ++i) {
+                auto& marker = m_beatGrid[i];
+                const auto index = static_cast<std::ptrdiff_t>(i) - anchorIndex;
+                marker.positionSec += delta;
+                marker.beatInBar = static_cast<int>((index % 4 + 4) % 4) + 1;
+                marker.isDownbeat = marker.beatInBar == 1;
+                marker.barIndex = static_cast<int>(std::floor(static_cast<double>(index) / 4.0));
+                marker.barNumber = marker.barIndex + 1;
+                marker.userModified = true;
+                marker.lockedByUser = true;
+            }
+            for (auto& node : m_beatGridInfo.tempoNodes)
+                node.positionSec += delta;
+            m_firstBeatSample = static_cast<qint64>(std::llround(newAnchorSec * m_sampleRate));
+            m_beatGridInfo.userModified = true;
+            m_beatGridInfo.lockedByUser = true;
+            m_beatGridSnapshot.reset();
+            alignSegmentsToBeatgridLocked();
+            shiftedDynamic = true;
+        }
+    }
+    if (shiftedDynamic) {
+        emit beatgridChanged();
+        emit segmentsAnalyzed();
+        return;
+    }
     double bpm;
     {
         QMutexLocker locker(&m_mutex);
@@ -439,16 +487,81 @@ void TrackData::nudgeBeatgrid(double deltaSec, double trackLengthSec)
                   [](const BeatMarker& a, const BeatMarker& b) {
                       return a.positionSec < b.positionSec;
                   });
+        m_beatGrid.erase(std::unique(m_beatGrid.begin(), m_beatGrid.end(),
+            [](const auto& a, const auto& b) {
+                return std::abs(a.positionSec - b.positionSec) < 1.0e-9;
+            }), m_beatGrid.end());
+        m_beatGridSnapshot.reset();
+        for (auto& node : m_beatGridInfo.tempoNodes)
+            node.positionSec += deltaSec;
 
-        const qint64 anchorSample = static_cast<qint64>(
-            std::llround(std::max(0.0, m_beatGrid.front().positionSec) * m_sampleRate));
-        m_firstBeatSample = anchorSample;
+        m_firstBeatSample += static_cast<qint64>(std::llround(deltaSec * m_sampleRate));
         m_beatGridInfo.userModified = true;
         m_beatGridInfo.lockedByUser = true;
         alignSegmentsToBeatgridLocked();
     }
     emit beatgridChanged();
     emit segmentsAnalyzed();
+}
+
+bool TrackData::scaleDynamicBeatgrid(double factor)
+{
+    assertOwnerThread();
+    if (factor != 2.0 && factor != 0.5)
+        return false;
+    {
+        QMutexLocker locker(&m_mutex);
+        if (m_beatGridInfo.type != BeatGridType::DynamicTempo || m_beatGrid.size() < 2)
+            return false;
+        const double storedAnchor = static_cast<double>(m_firstBeatSample) / m_sampleRate;
+        const auto anchorBeat = std::min_element(m_beatGrid.begin(), m_beatGrid.end(),
+            [storedAnchor](const auto& a, const auto& b) {
+                return std::abs(a.positionSec - storedAnchor)
+                    < std::abs(b.positionSec - storedAnchor);
+            });
+        const auto anchorIndex = static_cast<std::size_t>(anchorBeat - m_beatGrid.begin());
+        const double anchor = m_beatGrid[anchorIndex].positionSec;
+        std::vector<BeatMarker> grid;
+        grid.reserve(factor == 2.0 ? m_beatGrid.size() * 2 : (m_beatGrid.size() + 1) / 2);
+        for (std::size_t i = 0; i < m_beatGrid.size(); ++i) {
+            if (factor == 0.5 && i % 2 != anchorIndex % 2)
+                continue;
+            grid.push_back(m_beatGrid[i]);
+            if (factor == 2.0 && i + 1 < m_beatGrid.size()) {
+                auto midpoint = m_beatGrid[i];
+                midpoint.positionSec = (midpoint.positionSec + m_beatGrid[i + 1].positionSec) * 0.5;
+                grid.push_back(midpoint);
+            }
+        }
+        if (grid.size() < 2)
+            return false;
+        const auto newAnchor = std::lower_bound(grid.begin(), grid.end(), anchor,
+            [](const auto& beat, double seconds) { return beat.positionSec < seconds; });
+        const auto newAnchorIndex = newAnchor - grid.begin();
+        for (std::size_t i = 0; i < grid.size(); ++i) {
+            auto& marker = grid[i];
+            const auto index = static_cast<std::ptrdiff_t>(i) - newAnchorIndex;
+            marker.beatInBar = static_cast<int>((index % 4 + 4) % 4) + 1;
+            marker.isDownbeat = marker.beatInBar == 1;
+            marker.barIndex = static_cast<int>(std::floor(static_cast<double>(index) / 4.0));
+            marker.barNumber = marker.barIndex + 1;
+            marker.userModified = true;
+            marker.lockedByUser = true;
+        }
+        m_bpm *= factor;
+        for (auto& node : m_beatGridInfo.tempoNodes)
+            node.bpm *= factor;
+        m_firstBeatSample = static_cast<qint64>(std::llround(anchor * m_sampleRate));
+        m_beatGrid = std::move(grid);
+        m_beatGridInfo.userModified = true;
+        m_beatGridInfo.lockedByUser = true;
+        m_beatGridSnapshot.reset();
+        alignSegmentsToBeatgridLocked();
+    }
+    emit bpmAnalyzed();
+    emit beatgridChanged();
+    emit segmentsAnalyzed();
+    return true;
 }
 
 void TrackData::setBeatgridLocked(bool locked)
@@ -459,6 +572,7 @@ void TrackData::setBeatgridLocked(bool locked)
         m_beatGridInfo.lockedByUser = locked;
         for (auto& marker : m_beatGrid)
             marker.lockedByUser = locked;
+        m_beatGridSnapshot.reset();
     }
     emit beatgridChanged();
 }
@@ -467,15 +581,31 @@ void TrackData::setBpm(double bpm)
 {
     assertOwnerThread();
     bool changed = false;
+    bool gridChanged = false;
     {
         QMutexLocker locker(&m_mutex);
         if (m_bpm != bpm) {
+            if (m_beatGridInfo.type == BeatGridType::DynamicTempo
+                && !m_beatGrid.empty() && m_bpm > 0.0 && std::isfinite(bpm) && bpm > 0.0) {
+                const double anchor = static_cast<double>(m_firstBeatSample) / m_sampleRate;
+                const double ratio = m_bpm / bpm;
+                for (auto& marker : m_beatGrid)
+                    marker.positionSec = anchor + (marker.positionSec - anchor) * ratio;
+                for (auto& node : m_beatGridInfo.tempoNodes) {
+                    node.positionSec = anchor + (node.positionSec - anchor) * ratio;
+                    node.bpm /= ratio;
+                }
+                m_beatGridSnapshot.reset();
+                gridChanged = true;
+            }
             m_bpm = bpm;
             changed = true;
         }
     }
     if (changed)
         emit bpmAnalyzed();
+    if (gridChanged)
+        emit beatgridChanged();
 }
 
 void TrackData::setKeyData(const QString& camelotKey)

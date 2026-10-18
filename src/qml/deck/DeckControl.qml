@@ -389,7 +389,7 @@ Item {
     function _followAbletonLinkTempo(forceNow) {
         if (!deck._shouldFollowLinkTempo()) return
         var linkBpm = Number(linkManager.bpm)
-        var baseBpm = Number(deck.engine.trackData.bpm)
+        var baseBpm = Number(deck.engine.currentBpm) / Number(deck.engine.tempoRatio)
         if (isNaN(linkBpm) || !isFinite(linkBpm) || linkBpm <= 0.0) return
         if (isNaN(baseBpm) || !isFinite(baseBpm) || baseBpm <= 0.0) return
         var targetPct = ((linkBpm / baseBpm) - 1.0) * 100.0
@@ -408,15 +408,7 @@ Item {
         if (!deck.engine.trackData || !deck.engine.trackData.isBpmAnalyzed) return
         var liveBpm = Number(deck.engine.currentBpm)
         if (isNaN(liveBpm) || liveBpm <= 0.0) return
-        var playheadSec = deck.engine.getPlayheadPositionAtomic()
-        if (playheadSec === undefined || isNaN(playheadSec)) return
-        var sampleRate = Number(deck.engine.trackData.sampleRate)
-        if (isNaN(sampleRate) || sampleRate <= 0.0) sampleRate = 44100.0
-        var firstBeatSec = Number(deck.engine.trackData.firstBeatSample) / sampleRate
-        var analyzedBpm = Number(deck.engine.trackData.bpm)
-        if (isNaN(analyzedBpm) || analyzedBpm <= 0.0) analyzedBpm = liveBpm
-        var beatDur = 60.0 / analyzedBpm
-        var absoluteBeat = (playheadSec - firstBeatSec) / beatDur
+        var absoluteBeat = deck.engine.getBeatPosition()
         if (isNaN(absoluteBeat) || !isFinite(absoluteBeat)) return
         var nowMs = Date.now()
         var minPublishIntervalMs = deck.engine.scrubbing ? 70 : 120
@@ -473,6 +465,7 @@ Item {
         target: deck.engine
         function onTrackMetadataChanged() { deck._syncMetadata() }
         function onTempoChanged()         { deck._syncTempo(); deck._syncTempoSlider() }
+        function onCurrentBpmChanged()    { deck._syncTempo(); deck._followAbletonLinkTempo(false) }
         function onTempoRangeChanged()    { deck._syncTempoSlider() }
         function onLoopChanged()          { deck._syncTempo() }
         function onScrubbingChanged() {

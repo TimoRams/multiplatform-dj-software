@@ -201,6 +201,44 @@ No file-count reduction or offscreen smoke replaces this matrix.
 - Verify that only the newest generation publishes metadata, cover, waveform,
   cues, beatgrid, and audio; UI remains responsive and shutdown joins workers.
 
+### Rekordbox ANLZ previews and repeated loads
+
+`rekordbox_read_only` includes synthetic PWAV bit decoding, skipped large unknown
+sections, malformed optional previews, corrupt companion fallback, sidecar
+containment, cache reuse and invalidation (including same-size rewrites with
+restored mtime), remount identity and cache budget checks. `track_loader` checks
+that a supplied overview is published without claiming a full-resolution cache.
+
+The ANLZ reader seeks over unsupported sections instead of loading entire
+DAT/EXT/2EX files. Documented **PWAV** columns supply a neutral monochrome
+full-track overview; the low five bits are amplitude, the upper three are
+display intensity, not spectral energy. Tiny PWV2, RGB PWV4, three-band PWV6
+and scrolling PWV3/PWV5/PWV7 are not decoded. No frequency bands, RMS or
+full-resolution geometry are inferred from these preview bytes. Full-resolution
+own waveforms and their existing local caches remain authoritative.
+Format references: [ANLZ sections](https://djl-analysis.deepsymmetry.org/rekordbox-export-analysis/anlz.html)
+and [preview bit layout](https://github.com/Deep-Symmetry/beat-link/blob/master/src/main/java/org/deepsymmetry/beatlink/data/WaveformPreview.java).
+
+Parsed analysis uses a worker-owned **16 MiB LRU RAM cache**, not files on the
+stick. Entries include every companion's presence, canonical path, size,
+modification/change timestamps and, on macOS/Linux, device/inode and nanosecond
+timestamps. New source-index identities cannot reuse an ejected source's entries;
+expired sources are purged on the next cache request and all RAM is released at
+worker shutdown. There is no cross-launch parsed-analysis cache.
+
+- Load a real exported USB track without an existing BrockDJ waveform cache.
+  Confirm a complete overview appears while full-resolution own analysis fills
+  scrolling detail. Compare its shape and beginning/end against rekordbox.
+- Repeat on the same/another deck; verify consistent cues/grid/overview and
+  measure cold versus repeated load time on the intended USB medium.
+- Check missing PWAV, corrupt EXT/2EX and unsupported waveform formats: audio
+  still loads and the own waveform replaces the missing preview safely.
+- Re-export changed analysis, add/remove companions, then eject/remount a stick
+  at the same path. No old preview/grid may survive a new source identity.
+- Confirm no database, ANLZ, journal, waveform cache or other files are written
+  to the stick. Keep native-like timing and real-export compatibility marked
+  **hardware-unverified** until measurements on that export/device exist.
+
 ### Four-deck playback
 
 - Play all four decks with open faders and the crossfader centered.

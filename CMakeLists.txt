@@ -108,21 +108,21 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # ---- SQLCipher ------------------------------------------------------------
-# Reads a connected device's Rekordbox nickname and background colour from its
+# Reads a connected device's Rekordbox OneLibrary tracks and identity from its
 # encrypted device database. Linux and macOS builds require it so device
 # identity behaves consistently on both supported desktop platforms.
 add_library(ThirdParty::SQLCipher INTERFACE IMPORTED)
 if(PkgConfig_FOUND)
     pkg_check_modules(SQLCIPHER QUIET IMPORTED_TARGET sqlcipher)
     if(TARGET PkgConfig::SQLCIPHER)
-        message(STATUS "Enabling device identity reader via SQLCipher")
+        message(STATUS "Enabling read-only Rekordbox OneLibrary support via SQLCipher")
         target_link_libraries(ThirdParty::SQLCipher INTERFACE PkgConfig::SQLCIPHER)
         target_compile_definitions(ThirdParty::SQLCipher INTERFACE BROCKDJ_HAVE_SQLCIPHER=1)
     endif()
 endif()
 if((UNIX OR APPLE) AND NOT TARGET PkgConfig::SQLCIPHER)
     message(FATAL_ERROR
-        "SQLCipher is required for Rekordbox device nicknames. "
+        "SQLCipher is required for Rekordbox OneLibrary browsing and device identity. "
         "Install libsqlcipher-dev on Linux or sqlcipher with Homebrew on macOS.")
 endif()
 
@@ -896,6 +896,8 @@ add_test(NAME library_analysis_manager COMMAND BrockDJ_library_analysis_manager_
 
 add_executable(BrockDJ_rekordbox_read_only_tests
     tests/library/rekordbox_read_only_tests.cpp
+    tests/library/rekordbox_preview_tests.cpp
+    tests/library/rekordbox_modern_tests.cpp
     src/library/devices/DeviceLibraryManager.h
     src/library/devices/DeviceLibraryManager.cpp
     src/library/devices/rekordbox/RekordboxTypes.h

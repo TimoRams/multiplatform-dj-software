@@ -190,23 +190,7 @@ Rectangle {
         var _tick = root.beatUiTick
         if (!engine || !engine.trackData || !engine.trackData.isBpmAnalyzed)
             return { valid: false, beatInBar: 0, barNumber: 0 }
-        var bpm = Number(engine.trackData.bpm)
-        if (!isFinite(bpm) || bpm <= 0)
-            return { valid: false, beatInBar: 0, barNumber: 0 }
-        var pos = engine.getPlayheadPositionAtomic()
-        if (pos === undefined || isNaN(pos))
-            return { valid: false, beatInBar: 0, barNumber: 0 }
-        var sr = Number(engine.trackData.sampleRate)
-        if (!isFinite(sr) || sr <= 0) sr = 44100.0
-        var first = Number(engine.trackData.firstBeatSample) / sr
-        var beatDur = 60.0 / bpm
-        var beats = (pos - first) / beatDur
-        var beatFloor = Math.floor(beats)
-        return {
-            valid: true,
-            beatInBar: (((beatFloor % 4) + 4) % 4) + 1,
-            barNumber: Math.floor(beatFloor / 4) + 1
-        }
+        return engine.beatDisplayInfo()
     }
 
     // The desktop settings tree is large and is almost never needed during a

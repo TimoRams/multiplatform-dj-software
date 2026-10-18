@@ -701,6 +701,13 @@ bool headerPublicationTests(const std::string& header)
             property real masterVuLevelR: 0
             signal progressChanged()
             signal playingChanged()
+            property var beatOverride: null
+            function beatDisplayInfo() {
+                if (beatOverride) return beatOverride
+                var beat = Math.floor(atomicState.position * 2)
+                return { valid: true, beatInBar: ((beat % 4) + 4) % 4 + 1,
+                         barNumber: Math.floor(beat / 4) + 1 }
+            }
             function getPlayheadPositionAtomic() { return atomicState.position }
             function moveAtomic(position) { atomicState.position = position }
         }
@@ -764,6 +771,10 @@ bool headerPublicationTests(const std::string& header)
     move(2.5);
     QMetaObject::invokeMethod(deck.get(), "playingChanged");
     ok &= require(bar() == 2, "play transition invalidates the atomic header position");
+    deck->setProperty("beatOverride", QVariantMap{
+        {"valid", true}, {"beatInBar", 3}, {"barNumber", 17}});
+    QMetaObject::invokeMethod(deck.get(), "progressChanged");
+    ok &= require(bar() == 17, "header uses imported dynamic bar markers instead of a global BPM formula");
     deck->setProperty("trackData", QVariantMap{{"isBpmAnalyzed", false}});
     QQmlExpression valid(QQmlEngine::contextForObject(host.get()), host.get(),
                           QStringLiteral("beatInfo.valid"));
@@ -1188,6 +1199,7 @@ bool performancePadsThemeRuntimeTests()
             function play() { isPlaying = true }
             function pause() { isPlaying = false }
             function setPosition(value) { seekPosition = value }
+            function beatJump(beats) { seekPosition = beats }
             function setPadFx(effect, amount) { appliedFx = effect }
             function clearPadFx() { ++fxReleases; appliedFx = "" }
             function startEchoOut() { appliedFx = "EchoOut" }
