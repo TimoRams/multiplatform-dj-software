@@ -217,6 +217,7 @@ Window {
         property string cfCurveMode: "exponential"
 
         property bool _restoringSettings: false
+        property bool _stateReady: false
 
         readonly property color clrA: UiTheme.deckA
         readonly property color clrB: UiTheme.deckB
@@ -243,47 +244,29 @@ Window {
         property var mc: null
 
         function applyVolumes() {
-            if (!mc)
+            if (!mc || _restoringSettings || !_stateReady)
                 return
             mc.syncCrossfaderState(cfPos, assignA, assignB, assignC, assignD,
                                    cfSharpness, cfCurveMode)
             mc.applyAllVolumes()
         }
 
-        function scheduleSettingsSave() {
-            if (_restoringSettings)
-                return
-            settingsSaveTimer.restart()
-        }
-
-        function persistSettings() {
-            if (typeof settingsManager === "undefined" || !settingsManager)
-                return
-            settingsManager.crossfaderPosition = cfPos
-            settingsManager.crossfaderSharpness = cfSharpness
-            settingsManager.crossfaderCurveMode = cfCurveMode
-            settingsManager.crossfaderAssignA = assignA
-            settingsManager.crossfaderAssignB = assignB
-            settingsManager.crossfaderAssignC = assignC
-            settingsManager.crossfaderAssignD = assignD
-        }
-
         function restoreSettings() {
-            if (typeof settingsManager === "undefined" || !settingsManager)
+            if (!mc)
                 return
 
+            var state = mc.crossfaderState
             _restoringSettings = true
-            cfPos = settingsManager.crossfaderPosition
-            cfSharpness = settingsManager.crossfaderSharpness
-            cfCurveMode = settingsManager.crossfaderCurveMode
-            assignA = settingsManager.crossfaderAssignA
-            assignB = settingsManager.crossfaderAssignB
-            assignC = settingsManager.crossfaderAssignC
-            assignD = settingsManager.crossfaderAssignD
+            cfPos = state.position
+            cfSharpness = state.sharpness
+            cfCurveMode = state.curveMode
+            assignA = state.assignA
+            assignB = state.assignB
+            assignC = state.assignC
+            assignD = state.assignD
             cfSlider.value = cfPos
             curveDial.value = cfSharpness
             _restoringSettings = false
-            applyVolumes()
         }
 
         property real volA: 1.0
@@ -295,35 +278,31 @@ Window {
             if (_restoringSettings)
                 return
             applyVolumes()
-            scheduleSettingsSave()
         }
         onCfSharpnessChanged: {
             applyVolumes()
-            scheduleSettingsSave()
         }
         onCfCurveModeChanged: {
             applyVolumes()
-            scheduleSettingsSave()
         }
-        onAssignAChanged: { applyVolumes(); scheduleSettingsSave() }
-        onAssignBChanged: { applyVolumes(); scheduleSettingsSave() }
-        onAssignCChanged: { applyVolumes(); scheduleSettingsSave() }
-        onAssignDChanged: { applyVolumes(); scheduleSettingsSave() }
+        onAssignAChanged: applyVolumes()
+        onAssignBChanged: applyVolumes()
+        onAssignCChanged: applyVolumes()
+        onAssignDChanged: applyVolumes()
         onEngineAChanged: applyVolumes()
         onEngineBChanged: applyVolumes()
         onEngineCChanged: applyVolumes()
         onEngineDChanged: applyVolumes()
 
-        Timer {
-            id: settingsSaveTimer
-            interval: 250
-            repeat: false
-            onTriggered: cfBar.persistSettings()
-        }
-
         Component.onCompleted: {
             restoreSettings()
+            _stateReady = true
             applyVolumes()
+        }
+
+        Connections {
+            target: cfBar.mc
+            function onCrossfaderStateChanged() { cfBar.restoreSettings() }
         }
 
         Connections {
@@ -334,12 +313,6 @@ Window {
                 else if (id === "deckB_vol") cfBar.volB = value
                 else if (id === "deckC_vol") cfBar.volC = value
                 else if (id === "deckD_vol") cfBar.volD = value
-                else if (id === "crossfader") {
-                    // Audio: parameterStore → MixerControl; mirror slider only.
-                    _restoringSettings = true
-                    cfSlider.value = value * 2.0 - 1.0
-                    _restoringSettings = false
-                }
             }
         }
 

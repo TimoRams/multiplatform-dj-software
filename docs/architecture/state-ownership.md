@@ -26,6 +26,13 @@ A snapshot or atomic used only for thread transfer is not a second product owner
 `DjEngine`, `MixerControl`, MIDI, HID, and QML publish commands and display snapshots. They
 do not own DSP state or create alternate audio paths.
 
+`MixerControl` restores crossfader position, curve/sharpness and all four
+assignments from `SettingsManager` before MIDI input or QML controls start.
+Hardware and UI commands share this path; the development panel only mirrors
+its notified state. Settings writes are coalesced to at most one batch per
+250 ms, with a final flush during exit, independently of whether the panel is
+open. `MasterMixer` remains the sole owner of the resulting audio gain.
+
 At natural track end, play intent remains active while `DeckTransport` holds
 the visual anchor and controller cursor at the track endpoint. Display clocks
 must not extrapolate past that stationary cursor or apply moving-playback

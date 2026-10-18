@@ -3,6 +3,7 @@
 #include "deck/DjEngine.h"
 #include "audio/AudioEngine.h"
 #include "SettingsManager.h"
+#include "MixerControl.h"
 #include "controllers/ControllerIntegrationManager.h"
 #include "fx/FxManager.h"
 #include "library/LibraryAnalysisManager.h"
@@ -70,6 +71,8 @@ void performExitTeardown(ApplicationRuntime& runtime, bool manualBackup)
         runtime.controlClock->stop();
 
     if (runtime.settingsManager) {
+        if (runtime.mixerControl)
+            runtime.mixerControl->persistCrossfaderSettings();
         runtime.settingsManager->setRequestManualBackupOnExit(manualBackup);
         runtime.settingsManager->flushToDisk();
     }

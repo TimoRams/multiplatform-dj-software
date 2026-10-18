@@ -442,6 +442,8 @@ int runApplication(int argc, char *argv[])
     runtime.libraryCoverService = std::make_unique<LibraryCoverService>(
         runtime.coverProviderPtr, *runtime.mediaIoScheduler);
     runtime.mixerControl = std::make_unique<MixerControl>();
+    runtime.mixerControl->attachSettingsManager(&settingsManager);
+    runtime.mixerControl->attachParameterStore(runtime.parameterStore.get());
     runtime.audioDeviceService = std::make_unique<AudioDeviceService>();
     const auto audioCacheBudgetBytes = audioCacheBudgetBytesFromEnv();
     runtime.audioPageCache = std::make_unique<AudioPageCache>(audioCacheBudgetBytes);
@@ -773,7 +775,6 @@ int runApplication(int argc, char *argv[])
                 *runtime.libraryPreviewPlayer);
             ApplicationLifecycle::setQmlContextProperty(
                 engine, QmlContextProperty::LibraryPreview, runtime.libraryPreviewPlayer.get());
-            runtime.mixerControl->attachParameterStore(runtime.parameterStore.get());
             runtime.mixerControl->setDecks(runtime.deckA.get(), runtime.deckB.get(),
                                            runtime.deckC.get(), runtime.deckD.get());
 

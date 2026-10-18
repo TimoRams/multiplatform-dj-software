@@ -267,6 +267,22 @@ vendor-driver API.
    Privacy & Security permissions where applicable. Do not uninstall the
    audio driver or run BrockDJ as root to work around this.
 
+The built-in MIDI mapping also handles all four channel CROSSFADER ASSIGN
+switches. A routes to the left side, B to the right, and THRU bypasses the
+crossfader only (not the channel fader). Active Note On messages select the
+position; the two inactive notes sent with it do not change the assignment.
+Position, curve/sharpness and assignments persist even with the development
+controls closed; opening those controls mirrors the current mixer state.
+Custom mappings can learn each A/THRU/B action in the Mapping Editor.
+
+The switch notes (`16` = A, `1D` = THRU, `18` = B; active value `7F`) follow
+the [official FLX10 MIDI chart](https://downloads.support.alphatheta.com/software_info/dj-controllers/DDJ-FLX10/DDJ-FLX10_MIDI_Message_List_E1.pdf).
+Statuses `90` through `93` correspond to decks 1 through 4, as also used by the
+[community FLX10 mapping](https://github.com/Loui1979/MIXXX-FLX10/blob/main/Controllers/Pioneer-DDJ-FLX10.midi.xml#L1724-L1847).
+The official chart's M11 channel column prints only `1`; the per-channel
+expansion is corroborated by that community mapping, not by hardware captures.
+Real-device switch behavior still requires hardware acceptance testing.
+
 Only VID:PID `2B73:0041`, USB interface **5**, with the expected unnumbered
 128-byte output descriptor is accepted. The interface number is also checked
 on registry parents for macOS versions which omit it from IOHID properties.

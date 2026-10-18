@@ -53,6 +53,14 @@ and real selector mouse/keyboard/Escape behavior. Animation checks wait for
 observed state rather than assuming one event-loop pass completes a transition.
 It does not replace the real scene-graph or hardware rendering tests.
 
+Crossfader inline coverage restores non-default assignments, curve and position,
+then mirrors hardware-side state changes without sending stale UI values back.
+For hardware acceptance, check each FLX10 channel in A, THRU and B at both
+crossfader endpoints; THRU must remain audible at either end. Close the
+development controls, change assignments/position on hardware, restart, and
+check the restored audio routing before opening the controls. Also check
+curve/sharpness retention and quitting immediately after a change.
+
 The performance sidebar regression resizes already-created panels through
 180/240/320/420 px and large heights at 800/1280/1920 px widths, down and up again.
 It checks actual row/text bounds and overlaps, A/B waveform alignment, vertical

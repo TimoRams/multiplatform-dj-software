@@ -400,6 +400,20 @@
     <Entry paramId="crossfader" status="0xB6" control="0x1F" type="fader"/>
     <Entry paramId="crossfader" status="0xB6" control="0x3F" type="fader"/>
 
+    <!-- CROSSFADER ASSIGN: active note selects A/THRU/B; inactive notes are ignored. -->
+    <Entry paramId="deckA_crossfader_assign_a" status="0x90" control="0x16" type="toggle"/>
+    <Entry paramId="deckA_crossfader_assign_thru" status="0x90" control="0x1D" type="toggle"/>
+    <Entry paramId="deckA_crossfader_assign_b" status="0x90" control="0x18" type="toggle"/>
+    <Entry paramId="deckB_crossfader_assign_a" status="0x91" control="0x16" type="toggle"/>
+    <Entry paramId="deckB_crossfader_assign_thru" status="0x91" control="0x1D" type="toggle"/>
+    <Entry paramId="deckB_crossfader_assign_b" status="0x91" control="0x18" type="toggle"/>
+    <Entry paramId="deckC_crossfader_assign_a" status="0x92" control="0x16" type="toggle"/>
+    <Entry paramId="deckC_crossfader_assign_thru" status="0x92" control="0x1D" type="toggle"/>
+    <Entry paramId="deckC_crossfader_assign_b" status="0x92" control="0x18" type="toggle"/>
+    <Entry paramId="deckD_crossfader_assign_a" status="0x93" control="0x16" type="toggle"/>
+    <Entry paramId="deckD_crossfader_assign_thru" status="0x93" control="0x1D" type="toggle"/>
+    <Entry paramId="deckD_crossfader_assign_b" status="0x93" control="0x18" type="toggle"/>
+
     <!-- Monitoring and library. -->
     <!-- The FLX10 Master Level knob controls its hardware output directly.
          Keep it out of the software mixer to avoid applying gain twice. -->

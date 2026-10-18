@@ -37,6 +37,24 @@ int main(int argc, char** argv)
     const auto transportSource = readFile(QStringLiteral(SOURCE_DIR "/src/deck/DjEngineTransport.cpp"));
     const auto librarySource = readFile(QStringLiteral(SOURCE_DIR "/src/library/LibraryAnalysisManager.cpp"));
     const auto bootstrapSource = readFile(QStringLiteral(SOURCE_DIR "/src/app/ApplicationBootstrap.cpp"));
+    const auto mixerSource = readFile(QStringLiteral(SOURCE_DIR "/src/app/MixerControl.cpp"));
+    const auto lifecycleSource = readFile(QStringLiteral(SOURCE_DIR "/src/app/ApplicationLifecycle.cpp"));
+    ok &= require(bootstrapSource.contains(QStringLiteral("attachSettingsManager(&settingsManager)"))
+                      && bootstrapSource.indexOf(QStringLiteral("attachSettingsManager(&settingsManager)"))
+                          < bootstrapSource.indexOf(QStringLiteral("new MidiControllerManager"))
+                      && bootstrapSource.contains(QStringLiteral("attachParameterStore(runtime.parameterStore.get())"))
+                      && mixerSource.contains(QStringLiteral("settings->getCrossfaderPosition()"))
+                      && mixerSource.contains(QStringLiteral("m_settings->setCrossfaderPosition(m_cfPos)"))
+                      && mixerSource.contains(QStringLiteral("m_settings->setCrossfaderCurveMode(m_cfCurveMode)"))
+                      && mixerSource.contains(QStringLiteral("m_settings->setCrossfaderAssignD(m_assignD)"))
+                      && lifecycleSource.contains(QStringLiteral("runtime.mixerControl->persistCrossfaderSettings()")),
+                  "crossfader restore precedes MIDI startup and persistence is owned by C++, including exit");
+    ok &= require(mixerSource.contains(QStringLiteral("suffix == QLatin1String(\"crossfader_assign_a\")"))
+                      && mixerSource.contains(QStringLiteral("suffix == QLatin1String(\"crossfader_assign_thru\")"))
+                      && mixerSource.contains(QStringLiteral("suffix == QLatin1String(\"crossfader_assign_b\")"))
+                      && mixerSource.contains(QStringLiteral("if (value < 0.5f)"))
+                      && mixerSource.contains(QStringLiteral("AudioEngine::setCrossfaderAssignment(static_cast<int>(domain::toIndex(*id))")),
+                  "hardware assignments route each deck independently and ignore inactive switch notes");
     const auto beginReload = deckSource.indexOf(QStringLiteral("void DjEngine::beginWaveformReanalysis"));
     const auto finishReload = deckSource.indexOf(QStringLiteral("void DjEngine::finishWaveformReanalysis"));
     const auto reload = deckSource.mid(beginReload, finishReload - beginReload);

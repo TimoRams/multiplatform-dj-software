@@ -15,6 +15,22 @@ Window {
     flags: Qt.Dialog
 
     property string searchFilter: searchField.text.trim().toLowerCase()
+    readonly property var crossfaderAssignActions: [
+        ["Assign Deck A: A", "deckA_crossfader_assign_a"],
+        ["Assign Deck A: THRU", "deckA_crossfader_assign_thru"],
+        ["Assign Deck A: B", "deckA_crossfader_assign_b"],
+        ["Assign Deck B: A", "deckB_crossfader_assign_a"],
+        ["Assign Deck B: THRU", "deckB_crossfader_assign_thru"],
+        ["Assign Deck B: B", "deckB_crossfader_assign_b"],
+        ["Assign Deck C: A", "deckC_crossfader_assign_a"],
+        ["Assign Deck C: THRU", "deckC_crossfader_assign_thru"],
+        ["Assign Deck C: B", "deckC_crossfader_assign_b"],
+        ["Assign Deck D: A", "deckD_crossfader_assign_a"],
+        ["Assign Deck D: THRU", "deckD_crossfader_assign_thru"],
+        ["Assign Deck D: B", "deckD_crossfader_assign_b"]
+    ]
+    readonly property var mixerActions: [["Volume A", "deckA_vol"],
+        ["Volume B", "deckB_vol"], ["Crossfader", "crossfader"]].concat(crossfaderAssignActions)
 
     function rowVisible(lbl, pid) {
         if (!searchFilter) return true
@@ -398,15 +414,25 @@ Window {
                     // ── MIXER ───────────────────────────────────────────────
                     Item {
                         width: parent.width; height: visible ? 30 : 0
-                        visible: mappingEditorWindow.catVisible([["Volume A","deckA_vol"],["Volume B","deckB_vol"],["Crossfader","crossfader"]])
+                        visible: mappingEditorWindow.catVisible(mappingEditorWindow.mixerActions)
                         Text { anchors.verticalCenter: parent.verticalCenter; text: "MIXER"; color: UiTheme.textLabel; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1.5 }
                     }
                     MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Volume A","deckA_vol");    labelStr: "Volume A";   paramId: "deckA_vol" }
                     MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Volume B","deckB_vol");    labelStr: "Volume B";   paramId: "deckB_vol" }
                     MappingRow { width: parent.width; visible: mappingEditorWindow.rowVisible("Crossfader","crossfader"); labelStr: "Crossfader"; paramId: "crossfader" }
+                    Repeater {
+                        model: mappingEditorWindow.crossfaderAssignActions
+                        delegate: MappingRow {
+                            required property var modelData
+                            width: parent.width
+                            labelStr: modelData[0]
+                            paramId: modelData[1]
+                            visible: mappingEditorWindow.rowVisible(labelStr, paramId)
+                        }
+                    }
 
                     Item { width: parent.width; height: visible ? 8 : 0
-                        visible: mappingEditorWindow.catVisible([["Volume A","deckA_vol"],["Volume B","deckB_vol"],["Crossfader","crossfader"]]) }
+                        visible: mappingEditorWindow.catVisible(mappingEditorWindow.mixerActions) }
 
                     // ── DECK A — EQ & FILTER ────────────────────────────────
                     Item {

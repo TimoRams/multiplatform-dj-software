@@ -4,11 +4,14 @@
 
 #include <QObject>
 #include <QString>
+#include <QTimer>
+#include <QVariantMap>
 
 #include <array>
 
 class DjEngine;
 class ParameterStore;
+class SettingsManager;
 
 // The mixer's state owner. Everything that can move a channel strip — QML
 // directly, or MIDI/UI by way of ParameterStore — arrives here, updates the one
@@ -16,9 +19,13 @@ class ParameterStore;
 // second copy, so the hardware and the on-screen strip cannot drift apart.
 class MixerControl : public QObject {
     Q_OBJECT
+    Q_PROPERTY(QVariantMap crossfaderState READ crossfaderState NOTIFY crossfaderStateChanged)
 public:
     explicit MixerControl(QObject* parent = nullptr);
 
+    void attachSettingsManager(SettingsManager* settings);
+    void persistCrossfaderSettings();
+    QVariantMap crossfaderState() const;
     void setDecks(DjEngine* deckA, DjEngine* deckB, DjEngine* deckC, DjEngine* deckD);
 
     // Normalized 0–1 parameters (MIDI, UI knobs) enter through the store; this
@@ -34,6 +41,7 @@ public:
     Q_INVOKABLE void toggleCue(const QString& channelId);
     Q_INVOKABLE void setChannelFader(const QString& channelId, double level);
     Q_INVOKABLE void setCrossfaderPosition(float cfPos);
+    Q_INVOKABLE void setCrossfaderAssignment(const QString& channelId, const QString& assignment);
 
     Q_INVOKABLE void syncCrossfaderState(float cfPos,
                                          const QString& assignA,
@@ -47,7 +55,14 @@ public:
     Q_INVOKABLE void applyAllMixState();
     Q_INVOKABLE double faderLevel(const QString& channelId) const;
 
+signals:
+    void crossfaderStateChanged();
+
 private:
+    void publishCrossfaderState();
+    SettingsManager* m_settings = nullptr;
+    ParameterStore* m_parameterStore = nullptr;
+    QTimer m_settingsSaveTimer;
     struct ChannelMixState {
         double trim = 1.0;
         double eqHigh = 0.0;

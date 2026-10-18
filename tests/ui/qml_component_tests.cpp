@@ -1045,6 +1045,10 @@ bool crossfaderInlineRuntimeTests(const std::string& developmentControls)
         QtObject {
             property real appliedPosition: -2
             property int applyCalls: 0
+            property var crossfaderState: ({
+                position: -0.6, sharpness: 1.0, curveMode: "exponential",
+                assignA: "T", assignB: "A", assignC: "B", assignD: "T"
+            })
             function syncCrossfaderState(position, a, b, c, d, sharpness, mode) {
                 appliedPosition = position
             }
@@ -1089,9 +1093,30 @@ bool crossfaderInlineRuntimeTests(const std::string& developmentControls)
         return false;
     ok &= require(mixer->property("applyCalls").toInt() > 0,
                   "the inline crossfader applies its state through the real mixer contract");
+    ok &= require(std::abs(bar->property("cfPos").toDouble() + 0.6) < 1e-6
+                      && bar->property("assignA").toString() == QStringLiteral("T")
+                      && bar->property("assignB").toString() == QStringLiteral("A")
+                      && bar->property("assignC").toString() == QStringLiteral("B")
+                      && bar->property("assignD").toString() == QStringLiteral("T")
+                      && bar->property("cfSharpness").toDouble() == 1.0,
+                  "opening crossfader controls restores the mixer state instead of resetting it");
     bar->setProperty("cfPos", 0.35);
     ok &= require(std::abs(mixer->property("appliedPosition").toDouble() - 0.35) < 1e-6,
                   "the hosted crossfader forwards position changes to MixerControl");
+    const double lastUiPosition = mixer->property("appliedPosition").toDouble();
+    mixer->setProperty("crossfaderState", QVariantMap{
+        {QStringLiteral("position"), 0.8}, {QStringLiteral("sharpness"), 0.0},
+        {QStringLiteral("curveMode"), QStringLiteral("linear")},
+        {QStringLiteral("assignA"), QStringLiteral("B")},
+        {QStringLiteral("assignB"), QStringLiteral("T")},
+        {QStringLiteral("assignC"), QStringLiteral("A")},
+        {QStringLiteral("assignD"), QStringLiteral("B")}});
+    ok &= require(std::abs(bar->property("cfPos").toDouble() - 0.8) < 1e-6
+                      && bar->property("assignA").toString() == QStringLiteral("B")
+                      && bar->property("assignB").toString() == QStringLiteral("T")
+                      && bar->property("cfCurveMode").toString() == QStringLiteral("linear")
+                      && mixer->property("appliedPosition").toDouble() == lastUiPosition,
+                  "hardware state updates mirror all controls without sending stale UI state back");
     return ok;
 }
 
@@ -3175,6 +3200,19 @@ int main(int argc, char** argv)
                   "FLX10 mixer faders and knobs map complete coherent 14-bit pairs");
     ok &= require(flx10Mapping.find("paramId=\"master_level\"") == std::string::npos,
                   "FLX10 hardware Master Level never changes the software master gain");
+    for (int deck = 0; deck < 4; ++deck) {
+        const std::string prefix = std::string("paramId=\"deck") + char('A' + deck)
+            + "_crossfader_assign_";
+        const std::string status = std::string("\" status=\"0x9") + char('0' + deck)
+            + "\" control=\"";
+        ok &= require(flx10Mapping.find(prefix + "a" + status + "0x16\" type=\"toggle\"")
+                          != std::string::npos
+                      && flx10Mapping.find(prefix + "thru" + status + "0x1D\" type=\"toggle\"")
+                          != std::string::npos
+                      && flx10Mapping.find(prefix + "b" + status + "0x18\" type=\"toggle\"")
+                          != std::string::npos,
+                      "every FLX10 channel maps A/THRU/B as active-note selections, not continuous CCs");
+    }
     ok &= require(flx10Mapping.find("paramId=\"master_cue\" status=\"0x96\" control=\"0x63\"")
                       != std::string::npos
                   && flx10Mapping.find("paramId=\"deckA_headphone_cue\" status=\"0x90\" control=\"0x54\"")

@@ -116,6 +116,7 @@ inline MidiInteractionType defaultInteractionTypeForParam(const QString& paramId
         || paramId == QStringLiteral("deckC_headphone_cue")
         || paramId == QStringLiteral("deckD_headphone_cue")
         || paramId == QStringLiteral("master_cue")
+        || paramId.contains(QStringLiteral("_crossfader_assign_"))
         || paramId.startsWith(QStringLiteral("library_load_"))
         || paramId == QStringLiteral("library_back")
         || paramId == QStringLiteral("library_expand")

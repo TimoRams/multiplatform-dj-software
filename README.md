@@ -33,6 +33,10 @@ playhead can be moved from the center (50%) toward the left (20%) to show more
 upcoming audio. The preference applies to all decks, including slip previews,
 and is restored on restart.
 
+Crossfader position, curve/sharpness and per-deck A/THRU/B assignments are
+restored on restart, including changes made from a controller while the
+development controls are closed.
+
 ## Platform status
 
 | Platform | Status                       |

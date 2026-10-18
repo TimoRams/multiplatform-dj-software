@@ -78,6 +78,43 @@ void commandQueueIsBounded()
     assert(!queue.pop(command));
 }
 
+void everyChannelCrossfaderAssignment()
+{
+    constexpr int samples = 512;
+    juce::AudioBuffer<float> signal(2, samples), silent(2, samples), master(2, samples);
+    fill(signal, 0.25f);
+    silent.clear();
+    const std::array<const juce::AudioBuffer<float>*, 4> tails {
+        &silent, &silent, &silent, &silent};
+    MasterMixer mixer;
+    mixer.prepare(48'000.0, samples);
+    AudioParameters p;
+    for (std::size_t channel = 0; channel < 4; ++channel) {
+        std::array<const juce::AudioBuffer<float>*, 4> programs {
+            &silent, &silent, &silent, &silent};
+        programs[channel] = &signal;
+        for (const auto curve : {CrossfaderCurve::ConstantPower,
+                                 CrossfaderCurve::Smooth, CrossfaderCurve::Scratch}) {
+            p.crossfaderCurve = curve;
+            for (const float position : {-1.0f, 1.0f}) {
+                p.crossfaderPosition = position;
+                for (const auto assignment : {CrossfaderAssignment::A,
+                                              CrossfaderAssignment::Thru,
+                                              CrossfaderAssignment::B}) {
+                    p.crossfaderAssignments[channel] = assignment;
+                    mixer.mixPrograms(programs, tails, p, master, samples);
+                    mixer.mixPrograms(programs, tails, p, master, samples);
+                    const bool audible = assignment == CrossfaderAssignment::Thru
+                        || (assignment == CrossfaderAssignment::A && position < 0.0f)
+                        || (assignment == CrossfaderAssignment::B && position > 0.0f);
+                    assert(std::abs(tail(master, 0) - (audible ? 0.25f : 0.0f)) < 0.002f);
+                    assert(std::abs(mixer.crossfaderGain(channel) - (audible ? 1.0f : 0.0f)) < 0.002f);
+                }
+            }
+        }
+    }
+}
+
 void mixerHeadphoneAndRouter()
 {
     constexpr int samples = 512;
@@ -260,6 +297,7 @@ int main()
 {
     parameterSnapshotIsCoherent();
     commandQueueIsBounded();
+    everyChannelCrossfaderAssignment();
     mixerHeadphoneAndRouter();
     outputRouterPreservesSampleContract();
     silenceTailPreservesMixedZeroCrossings();

@@ -1,9 +1,11 @@
 #include "MixerControl.h"
+#include "SettingsManager.h"
 
 #include "audio/AudioEngine.h"
 #include "controllers/midi/ParameterStore.h"
 #include "deck/DjEngine.h"
 
+#include <QDebug>
 #include <algorithm>
 #include <cmath>
 
@@ -44,6 +46,54 @@ CrossfaderCurve curveFromState(const QString& mode, float sharpness)
 MixerControl::MixerControl(QObject* parent)
     : QObject(parent)
 {
+    m_settingsSaveTimer.setSingleShot(true);
+    m_settingsSaveTimer.setInterval(250);
+    connect(&m_settingsSaveTimer, &QTimer::timeout,
+            this, &MixerControl::persistCrossfaderSettings);
+}
+
+void MixerControl::attachSettingsManager(SettingsManager* settings)
+{
+    m_settings = settings;
+    if (!settings)
+        return;
+    syncCrossfaderState(settings->getCrossfaderPosition(),
+                        settings->getCrossfaderAssignA(), settings->getCrossfaderAssignB(),
+                        settings->getCrossfaderAssignC(), settings->getCrossfaderAssignD(),
+                        settings->getCrossfaderSharpness(), settings->getCrossfaderCurveMode());
+    m_settingsSaveTimer.stop();
+}
+
+QVariantMap MixerControl::crossfaderState() const
+{
+    return {{QStringLiteral("position"), m_cfPos},
+            {QStringLiteral("sharpness"), m_cfSharpness},
+            {QStringLiteral("curveMode"), m_cfCurveMode},
+            {QStringLiteral("assignA"), m_assignA}, {QStringLiteral("assignB"), m_assignB},
+            {QStringLiteral("assignC"), m_assignC}, {QStringLiteral("assignD"), m_assignD}};
+}
+
+void MixerControl::publishCrossfaderState()
+{
+    if (m_parameterStore)
+        m_parameterStore->setParameter(QStringLiteral("crossfader"), (m_cfPos + 1.0f) * 0.5f);
+    if (m_settings && !m_settingsSaveTimer.isActive())
+        m_settingsSaveTimer.start();
+    emit crossfaderStateChanged();
+}
+
+void MixerControl::persistCrossfaderSettings()
+{
+    m_settingsSaveTimer.stop();
+    if (!m_settings)
+        return;
+    m_settings->setCrossfaderPosition(m_cfPos);
+    m_settings->setCrossfaderSharpness(m_cfSharpness);
+    m_settings->setCrossfaderCurveMode(m_cfCurveMode);
+    m_settings->setCrossfaderAssignA(m_assignA);
+    m_settings->setCrossfaderAssignB(m_assignB);
+    m_settings->setCrossfaderAssignC(m_assignC);
+    m_settings->setCrossfaderAssignD(m_assignD);
 }
 
 void MixerControl::setDecks(DjEngine* deckA, DjEngine* deckB, DjEngine* deckC, DjEngine* deckD)
@@ -58,6 +108,8 @@ void MixerControl::attachParameterStore(ParameterStore* store)
 {
     if (!store)
         return;
+    m_parameterStore = store;
+    store->setParameter(QStringLiteral("crossfader"), (m_cfPos + 1.0f) * 0.5f);
     connect(store, &ParameterStore::parameterChanged,
             this, &MixerControl::onParameterChanged);
 }
@@ -155,8 +207,30 @@ void MixerControl::setChannelFader(const QString& channelId, double level)
 
 void MixerControl::setCrossfaderPosition(float cfPos)
 {
-    m_cfPos = std::clamp(cfPos, -1.0f, 1.0f);
+    const float position = std::clamp(cfPos, -1.0f, 1.0f);
+    if (m_cfPos == position)
+        return;
+    m_cfPos = position;
     AudioEngine::setCrossfaderPosition(m_cfPos);
+    publishCrossfaderState();
+}
+
+void MixerControl::setCrossfaderAssignment(const QString& channelId, const QString& assignment)
+{
+    const auto id = domain::deckFromChannelId(channelId);
+    if (!id || (assignment != QLatin1String("A") && assignment != QLatin1String("T")
+                && assignment != QLatin1String("B"))) {
+        qWarning() << "MixerControl: invalid crossfader assignment" << channelId << assignment;
+        return;
+    }
+    const std::array<QString*, 4> assignments {&m_assignA, &m_assignB, &m_assignC, &m_assignD};
+    auto& current = *assignments[domain::toIndex(*id)];
+    if (current == assignment)
+        return;
+    current = assignment;
+    AudioEngine::setCrossfaderAssignment(static_cast<int>(domain::toIndex(*id)),
+                                         assignmentFromString(assignment));
+    publishCrossfaderState();
 }
 
 void MixerControl::syncCrossfaderState(float cfPos,
@@ -167,7 +241,8 @@ void MixerControl::syncCrossfaderState(float cfPos,
                                        float cfSharpness,
                                        const QString& cfCurveMode)
 {
-    m_cfPos = cfPos;
+    const auto previous = crossfaderState();
+    m_cfPos = std::clamp(cfPos, -1.0f, 1.0f);
     m_assignA = assignA;
     m_assignB = assignB;
     m_assignC = assignC;
@@ -180,6 +255,8 @@ void MixerControl::syncCrossfaderState(float cfPos,
     AudioEngine::setCrossfaderAssignment(1, assignmentFromString(m_assignB));
     AudioEngine::setCrossfaderAssignment(2, assignmentFromString(m_assignC));
     AudioEngine::setCrossfaderAssignment(3, assignmentFromString(m_assignD));
+    if (previous != crossfaderState())
+        publishCrossfaderState();
 }
 
 void MixerControl::applyAllVolumes()
@@ -244,7 +321,19 @@ void MixerControl::onParameterChanged(const QString& id, float value)
     // The setters below are plain functions, not property writers, so feeding
     // store updates through them cannot bounce back out as a QML binding change.
     const QStringView suffix = QStringView(id).mid(sep + 1);
-    if (suffix == QLatin1String("gain"))
+    if (suffix.startsWith(QLatin1String("crossfader_assign_"))) {
+        // A switch reports all three notes; only its active (127) note selects a side.
+        if (value < 0.5f)
+            return;
+        if (suffix == QLatin1String("crossfader_assign_a"))
+            setCrossfaderAssignment(channelId, QStringLiteral("A"));
+        else if (suffix == QLatin1String("crossfader_assign_thru"))
+            setCrossfaderAssignment(channelId, QStringLiteral("T"));
+        else if (suffix == QLatin1String("crossfader_assign_b"))
+            setCrossfaderAssignment(channelId, QStringLiteral("B"));
+        else
+            qWarning() << "MixerControl: unknown crossfader assignment parameter" << id;
+    } else if (suffix == QLatin1String("gain"))
         setTrim(channelId, trimFromNormalized(value));
     else if (suffix == QLatin1String("eqHigh"))
         setEqHigh(channelId, bipolarFromNormalized(value));
