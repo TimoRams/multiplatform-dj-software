@@ -616,8 +616,12 @@ void DjEngine::onWaveformControlTick(const ControlTickContext& context)
                     QVector<TrackData::RgbWaveformFrame>(*overview->samples));
             }
         }
+        // Converting a chunk to canonical lines runs on this UI/control thread.
+        // Leave the 60 Hz playhead frame enough time when the analyzer is busy.
+        // The mailbox keeps and reprioritizes the remaining chunks on each tick.
         const auto chunks = m_analysisMailbox->takeChunks(
-            m_waveformDemand, WAVEFORM_POINTS_PER_SECOND);
+            m_waveformDemand, WAVEFORM_POINTS_PER_SECOND,
+            (isPlaying() || isScratchVisualActive()) ? 1 : 6);
         for (const auto& chunk : chunks) {
             if (chunk.generation == m_analyzer->generation()
                 && chunk.waveform && chunk.spectral) {

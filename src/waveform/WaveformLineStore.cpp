@@ -146,6 +146,45 @@ WaveformLineStore::PublishResult WaveformLineStore::publishBatch(
     return PublishResult::Accepted;
 }
 
+bool WaveformLineStore::installPreparedFinal(
+    std::uint64_t trackGeneration, std::uint32_t totalLineCount,
+    const std::vector<std::shared_ptr<const std::vector<WaveformLine>>>& lines)
+{
+    if (trackGeneration == 0 || totalLineCount == 0
+        || lines.size() != (static_cast<std::uint64_t>(totalLineCount)
+                + kChunkSize - 1) / kChunkSize)
+        return false;
+
+    auto table = std::make_shared<std::vector<
+        std::shared_ptr<const WaveformLineChunk>>>();
+    table->reserve(lines.size());
+    const auto previous = snapshot();
+    const auto revision = previous ? previous->dataGeneration + 1 : 1;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        const auto first = static_cast<std::uint64_t>(index) * kChunkSize;
+        const auto count = static_cast<std::size_t>(std::min<std::uint64_t>(
+            kChunkSize, totalLineCount - first));
+        if (!lines[index] || lines[index]->size() != count)
+            return false;
+        table->push_back(std::make_shared<const WaveformLineChunk>(WaveformLineChunk{
+            trackGeneration, static_cast<std::uint32_t>(index),
+            static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(count),
+            totalLineCount, lines[index], revision,
+            WaveformChunkState::FinalReady}));
+    }
+
+    auto next = std::make_shared<WaveformLineStoreSnapshot>();
+    next->trackGeneration = trackGeneration;
+    next->dataGeneration = revision;
+    next->totalLineCount = totalLineCount;
+    next->chunks = std::move(table);
+    {
+        std::lock_guard lock(m_snapshotMutex);
+        m_snapshot = std::move(next);
+    }
+    return true;
+}
+
 std::shared_ptr<const WaveformLineStoreSnapshot> WaveformLineStore::snapshot() const
 {
     std::lock_guard lock(m_snapshotMutex);

@@ -146,6 +146,34 @@ int main(int argc, char** argv)
     ok &= require(batchSignals == 1,
                   "one guarded cache batch must emit one publication signal");
 
+    WaveformLineStore preparedStore;
+    preparedStore.reset(11, renderChunkSize * 2);
+    const auto beforePrepared = preparedStore.snapshot();
+    auto finalLines = std::make_shared<std::vector<WaveformLine>>(
+        renderChunkSize);
+    for (auto& line : *finalLines)
+        line.flags = waveform_line_flags::kAvailable | waveform_line_flags::kFinal;
+    const std::vector<std::shared_ptr<const std::vector<WaveformLine>>>
+        incompletePrepared{finalLines};
+    ok &= require(!preparedStore.installPreparedFinal(
+                      12, renderChunkSize * 2, incompletePrepared)
+                      && preparedStore.snapshot() == beforePrepared,
+                  "incomplete prepared waveform replaced the visible snapshot");
+    const std::vector<std::shared_ptr<const std::vector<WaveformLine>>>
+        completePrepared{finalLines, finalLines};
+    ok &= require(preparedStore.installPreparedFinal(
+                      12, renderChunkSize * 2, completePrepared),
+                  "complete prepared waveform was not installed");
+    const auto preparedSnapshot = preparedStore.snapshot();
+    ok &= require(preparedSnapshot->trackGeneration == 12
+                      && preparedSnapshot->dataGeneration
+                          > beforePrepared->dataGeneration
+                      && preparedSnapshot->availableChunkCount() == 2
+                      && preparedSnapshot->chunkAt(1)->state
+                          == WaveformChunkState::FinalReady
+                      && beforePrepared->availableChunkCount() == 0,
+                  "prepared installation did not publish immutable final chunks");
+
     TrackData stableNormalization;
     QVector<TrackData::RgbWaveformFrame> finalRgb(4);
     finalRgb[0].rms = 0.82f;

@@ -115,6 +115,14 @@ int main(int argc, char** argv)
         ok &= require(firstDrain.size() == 6 && secondDrain.size() == 4,
                       "progressive mailbox must bound work per owner-thread tick");
 
+        for (int index = 0; index < 4; ++index)
+            mailbox.publishChunk({42, index * 128, 1280,
+                                  emptyWaveform, emptyRgb});
+        const auto playingDrain = mailbox.takeChunks({}, 1200.0, 1);
+        const auto pausedDrain = mailbox.takeChunks({}, 1200.0, 6);
+        ok &= require(playingDrain.size() == 1 && pausedDrain.size() == 3,
+                      "playing drain must defer remaining detail to later ticks");
+
         // A new visible range must jump ahead of older background work, and a
         // later result for the same chunk must coalesce instead of extending a
         // FIFO queue.

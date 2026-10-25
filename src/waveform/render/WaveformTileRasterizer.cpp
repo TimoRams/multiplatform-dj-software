@@ -317,10 +317,13 @@ void WaveformTileRasterizer::cancelPendingTiles()
 
 void WaveformTileRasterizer::setActiveTrackGeneration(std::uint64_t generation)
 {
-    std::lock_guard lock(m_mutex);
-    if (m_activeTrackGeneration == generation)
+    // updatePaintNode calls this on every frame. Skip the worker's queue/cache
+    // mutex when the track has not changed.
+    if (m_activeTrackGeneration.load(std::memory_order_acquire) == generation)
         return;
-    m_activeTrackGeneration = generation;
+    std::lock_guard lock(m_mutex);
+    if (m_activeTrackGeneration.load(std::memory_order_relaxed) == generation)
+        return;
     m_pending.clear();
     m_pendingOverview.reset();
     m_pendingKeys.clear();
@@ -330,6 +333,7 @@ void WaveformTileRasterizer::setActiveTrackGeneration(std::uint64_t generation)
     m_lru.clear();
     m_cacheBytes = 0;
     m_overviewCache.clear();
+    m_activeTrackGeneration.store(generation, std::memory_order_release);
 }
 
 void WaveformTileRasterizer::clear()
@@ -343,7 +347,7 @@ void WaveformTileRasterizer::clear()
     m_cache.clear();
     m_lru.clear();
     m_cacheBytes = 0;
-    m_activeTrackGeneration = 0;
+    m_activeTrackGeneration.store(0, std::memory_order_release);
     m_overviewCache.clear();
 }
 

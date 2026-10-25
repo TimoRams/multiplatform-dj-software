@@ -235,7 +235,7 @@ private:
     std::list<RenderTileKey> m_lru;
     std::size_t m_cacheBytes = 0;
     std::size_t m_cacheByteBudget = defaultCacheByteBudget();
-    std::uint64_t m_activeTrackGeneration = 0;
+    std::atomic<std::uint64_t> m_activeTrackGeneration{0};
     std::vector<std::shared_ptr<const RasterizedOverview>> m_overviewCache;
     std::atomic<bool> m_stopping{false};
     std::thread m_worker;

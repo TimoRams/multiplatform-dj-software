@@ -229,10 +229,12 @@ public:
     }
     std::vector<Chunk> takeChunks(
         const waveform::WaveformDemand& demand = {},
-        double pointsPerSecond = 1200.0)
+        double pointsPerSecond = 1200.0,
+        size_t maxChunksPerDrain = 6)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        constexpr size_t kMaxChunksPerDrain = 6;
+        if (maxChunksPerDrain == 0)
+            return {};
         std::vector<std::pair<ChunkKey, waveform::WaveformPriorityScore>> order;
         order.reserve(m_chunks.size());
         for (const auto& [key, chunk] : m_chunks) {
@@ -262,7 +264,7 @@ public:
                 return m_chunks.at(left.first).publicationSequence
                     < m_chunks.at(right.first).publicationSequence;
             });
-        size_t count = std::min(kMaxChunksPerDrain, m_chunks.size());
+        size_t count = std::min(maxChunksPerDrain, m_chunks.size());
         if (demand.valid() && !m_firstDetailPublished) {
             const auto playhead = std::find_if(
                 order.begin(), order.end(), [](const auto& candidate) {

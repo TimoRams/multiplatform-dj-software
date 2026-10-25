@@ -184,26 +184,11 @@ bool TrackData::installPreparedWaveformLinesLocked(
         return false;
 
     trackGeneration = std::max(trackGeneration, m_waveformLineGeneration + 1);
-    m_waveformLineGeneration = trackGeneration;
-    m_waveformLineStore.reset(trackGeneration, prepared->totalLineCount);
-    std::uint32_t first = 0;
-    std::vector<WaveformLineChunk> publication;
-    publication.reserve(prepared->chunks.size());
-    for (std::uint32_t chunkIndex = 0; chunkIndex < prepared->chunks.size(); ++chunkIndex) {
-        const auto& lines = prepared->chunks[chunkIndex];
-        if (!lines || lines->empty() || first >= prepared->totalLineCount)
-            return false;
-        const auto count = static_cast<std::uint32_t>(lines->size());
-        publication.push_back({
-            trackGeneration, chunkIndex, first, count,
-            prepared->totalLineCount, lines});
-        first += count;
-    }
-    if (first != prepared->totalLineCount
-        || m_waveformLineStore.publishBatch(std::move(publication))
-            != WaveformLineStore::PublishResult::Accepted) {
+    if (!m_waveformLineStore.installPreparedFinal(
+            trackGeneration, prepared->totalLineCount, prepared->chunks)) {
         return false;
     }
+    m_waveformLineGeneration = trackGeneration;
     m_preparedWaveformLines = prepared;
     return true;
 }

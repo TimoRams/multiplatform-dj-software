@@ -43,6 +43,13 @@ public:
     [[nodiscard]] PublishResult publish(WaveformLineChunk chunk);
     [[nodiscard]] PublishResult publishBatch(
         std::vector<WaveformLineChunk> chunks);
+    // Prepared lines were converted to available/final samples on the worker.
+    // Install their chunk table in one swap without rescanning every sample on
+    // the UI thread. The caller must supply a complete prepareWaveformLines()
+    // result; malformed chunk sizes are rejected.
+    [[nodiscard]] bool installPreparedFinal(
+        std::uint64_t trackGeneration, std::uint32_t totalLineCount,
+        const std::vector<std::shared_ptr<const std::vector<WaveformLine>>>& lines);
     [[nodiscard]] std::shared_ptr<const WaveformLineStoreSnapshot> snapshot() const;
 
 private:
