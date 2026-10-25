@@ -95,14 +95,11 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
     const int previousBufferSize = currentBufferSize();
 
     const QString requestedType = !deviceType.isEmpty() ? deviceType : currentDeviceType();
-#if JUCE_LINUX || JUCE_BSD
     const bool jackBackendRequested = requestedType.toLower().contains(QStringLiteral("jack"));
-#else
-    const bool jackBackendRequested = requestedType.toLower().contains(QStringLiteral("jack"));
-#endif
     const int requestedBufferSize = normalizeBufferSize(bufferSize);
-    bufferSize = clampToStableBufferSize(requestedType, requestedBufferSize);
-    if (bufferSize != requestedBufferSize) {
+    bufferSize = jackBackendRequested ? requestedBufferSize
+                                      : clampToStableBufferSize(requestedType, requestedBufferSize);
+    if (!jackBackendRequested && bufferSize != requestedBufferSize) {
         setFallbackMessage(QStringLiteral(
             "%1 requested %2 samples; using %3 samples for stable audio.")
             .arg(requestedType.isEmpty() ? QStringLiteral("This backend") : requestedType)
@@ -154,7 +151,7 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
     if (sanitizedOutput.compare(QStringLiteral("None"), Qt::CaseInsensitive) == 0)
         sanitizedOutput.clear();
 
-    if (sanitizedOutput.isEmpty()) {
+    if (sanitizedOutput.isEmpty() && !jackBackendRequested) {
         manager.closeAudioDevice();
         publishDeviceConfigurationSnapshot(0, 0);
         emit configurationChanged();
@@ -193,17 +190,17 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
         }
 
 #if JUCE_JACK && (JUCE_LINUX || JUCE_BSD)
-        QString jackBufferMsg;
-        int effectiveJackBuffer = bufferSize;
+        // A JACK client must follow the server's period size. Calling
+        // jack_set_buffer_size() here changes the quantum for every client in
+        // the graph (and PipeWire may rebuild that graph), which can cause
+        // audible dropouts. Observe the server configuration instead.
+        int effectiveJackBuffer = 0;
         int effectiveJackSampleRate = 0;
-        if (!requestJackBufferSize(bufferSize, effectiveJackBuffer, effectiveJackSampleRate, jackBufferMsg)) {
-            qWarning() << "[AudioDeviceService]" << jackBufferMsg;
-            setFallbackMessage(jackBufferMsg);
-        } else if (effectiveJackBuffer != bufferSize) {
-            qWarning() << "[AudioDeviceService]" << jackBufferMsg;
-            setFallbackMessage(jackBufferMsg);
-        }
-        bufferSize = effectiveJackBuffer;
+        QString jackServerMsg;
+        if (!readJackServerConfiguration(effectiveJackBuffer, effectiveJackSampleRate, jackServerMsg))
+            return std::unexpected(jackServerMsg);
+        if (effectiveJackBuffer > 0)
+            bufferSize = effectiveJackBuffer;
         if (effectiveJackSampleRate > 0)
             sampleRate = effectiveJackSampleRate;
 #endif
@@ -295,10 +292,13 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
     }
 
     auto* currentDevice = manager.getCurrentAudioDevice();
-    const bool needsReopen = currentDevice != nullptr
+    // JACK's sample rate and period are server-owned. A period mismatch is
+    // expected and must not turn a harmless Apply click into a graph teardown.
+    // setAudioDeviceSetup still performs a reopen when endpoint or channel
+    // routing genuinely changes.
+    const bool needsReopen = currentDevice != nullptr && !jackBackendRequested
         && ((std::abs(currentDevice->getCurrentSampleRate() - static_cast<double>(sampleRate)) > 0.5)
-            || (currentDevice->getCurrentBufferSizeSamples() != setup.bufferSize)
-            || jackBackendRequested);
+            || (currentDevice->getCurrentBufferSizeSamples() != setup.bufferSize));
 
     if (needsReopen)
         manager.closeAudioDevice();
@@ -574,10 +574,6 @@ QStringList AudioDeviceService::availableOutputChannelPairs(const QString& devic
         selectedOutput = currentOutputDevice();
     if (selectedOutput.compare(QStringLiteral("None"), Qt::CaseInsensitive) == 0)
         return { QStringLiteral("None") };
-
-    const QString loweredType = selectedType.trimmed().toLower();
-    if (loweredType == QStringLiteral("jack") || loweredType.contains(QStringLiteral("jack")))
-        return buildChannelPairList(kMaxSupportedOutputChannel);
 
     int channelCount = readCurrentDeviceOutputChannelCount(m_manager, selectedType, selectedOutput);
     if (channelCount < 2)

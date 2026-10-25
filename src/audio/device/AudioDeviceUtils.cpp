@@ -1,9 +1,6 @@
 #include "AudioDeviceUtils.h"
 
 #include <QHash>
-#include <QProcess>
-#include <QStandardPaths>
-#include <QThread>
 
 #include <algorithm>
 #include <cmath>
@@ -175,15 +172,6 @@ int readDeviceOutputChannelCount(const QString& deviceType, const QString& outpu
             return it.value();
     }
 
-#if JUCE_LINUX || JUCE_BSD
-    const QString loweredType = deviceType.trimmed().toLower();
-    if (loweredType == QStringLiteral("jack") || loweredType.contains(QStringLiteral("jack"))) {
-        std::lock_guard<std::mutex> lock(s_outputChannelCountCacheMutex);
-        s_outputChannelCountCache.insert(key, 2);
-        return 2;
-    }
-#endif
-
     const QString selectedOutput = outputDevice.trimmed();
     if (selectedOutput.isEmpty()
         || selectedOutput.compare(QStringLiteral("None"), Qt::CaseInsensitive) == 0) {
@@ -321,133 +309,26 @@ bool probeJackServer(QString& message)
     return true;
 }
 
-int readJackBufferSize(jack_client_t* client)
+bool readJackServerConfiguration(int& bufferFrames, int& sampleRate, QString& message)
 {
-    return client != nullptr ? static_cast<int>(jack_get_buffer_size(client)) : 0;
-}
-
-bool waitForJackBufferSize(jack_client_t* client, int requestedFrames, int& effectiveFrames)
-{
-    for (int attempt = 0; attempt < 20; ++attempt) {
-        effectiveFrames = readJackBufferSize(client);
-        if (effectiveFrames == requestedFrames)
-            return true;
-        QThread::msleep(25);
-    }
-
-    effectiveFrames = readJackBufferSize(client);
-    return effectiveFrames == requestedFrames;
-}
-
-bool forcePipeWireQuantum(int requestedFrames, QString& message)
-{
-    if (requestedFrames <= 0)
-        return false;
-
-    if (QStandardPaths::findExecutable(QStringLiteral("pw-metadata")).isEmpty()) {
-        message = QStringLiteral("PipeWire metadata tool not found; cannot force JACK quantum.");
-        return false;
-    }
-
-    QProcess process;
-    process.start(QStringLiteral("pw-metadata"),
-                  {QStringLiteral("-n"),
-                   QStringLiteral("settings"),
-                   QStringLiteral("0"),
-                   QStringLiteral("clock.force-quantum"),
-                   QString::number(requestedFrames)});
-    if (!process.waitForFinished(700)) {
-        process.kill();
-        process.waitForFinished(100);
-        message = QStringLiteral("Timed out while asking PipeWire for %1 frames/period.")
-            .arg(requestedFrames);
-        return false;
-    }
-
-    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        const QString stderrText = QString::fromUtf8(process.readAllStandardError()).trimmed();
-        message = stderrText.isEmpty()
-            ? QStringLiteral("PipeWire rejected %1 frames/period.").arg(requestedFrames)
-            : stderrText;
-        return false;
-    }
-
-    message = QStringLiteral("PipeWire quantum forced to %1 frames/period.").arg(requestedFrames);
-    return true;
-}
-
-bool requestJackBufferSize(int requestedFrames, int& effectiveFrames, int& effectiveSampleRate, QString& message)
-{
-    effectiveFrames = requestedFrames;
-    effectiveSampleRate = 0;
-
-    if (requestedFrames <= 0) {
-        message.clear();
-        return true;
-    }
+    bufferFrames = 0;
+    sampleRate = 0;
 
     jack_status_t status = JackFailure;
-    jack_client_t* client = jack_client_open("BrockDJBufferSetup", JackNoStartServer, &status);
+    jack_client_t* client = jack_client_open("BrockDJTimingProbe", JackNoStartServer, &status);
     if (client == nullptr) {
-        if (status & JackVersionError)
-            message = QStringLiteral("JACK protocol version mismatch.");
-        else if (status & JackServerError)
-            message = QStringLiteral("JACK server error. Is PipeWire-JACK running?");
-        else if (status & JackServerFailed)
-            message = QStringLiteral("JACK server not running. Start PipeWire or jackd.");
-        else
-            message = QStringLiteral("JACK server not available. Start PipeWire-JACK.");
+        QString probeMessage;
+        probeJackServer(probeMessage);
+        message = probeMessage;
         return false;
     }
 
-    effectiveSampleRate = static_cast<int>(jack_get_sample_rate(client));
-    const jack_nframes_t current = jack_get_buffer_size(client);
-    const int currentFrames = static_cast<int>(current);
-
-    const int requestedForServer = requestedFrames;
-    const jack_nframes_t requested = static_cast<jack_nframes_t>(requestedForServer);
-    if (current == requested) {
-        jack_client_close(client);
-        message = QStringLiteral("JACK already uses %1 frames/period.").arg(effectiveFrames);
-        return true;
-    }
-
-    const int result = jack_set_buffer_size(client, requested);
-
-    if (result != 0) {
-        jack_client_close(client);
-        effectiveFrames = currentFrames > 0 ? currentFrames : requestedFrames;
-        message = QStringLiteral("JACK rejected %1 frames/period. Change it in your JACK or PipeWire settings.")
-            .arg(requestedForServer);
-        return false;
-    }
-
-    waitForJackBufferSize(client, requestedForServer, effectiveFrames);
-    effectiveSampleRate = static_cast<int>(jack_get_sample_rate(client));
-
-    if (effectiveFrames != requestedForServer) {
-        QString pipeWireMsg;
-        if (forcePipeWireQuantum(requestedForServer, pipeWireMsg)) {
-            waitForJackBufferSize(client, requestedForServer, effectiveFrames);
-            if (effectiveFrames == requestedForServer) {
-                effectiveSampleRate = static_cast<int>(jack_get_sample_rate(client));
-                jack_client_close(client);
-                message = pipeWireMsg;
-                return true;
-            }
-        }
-    }
-
+    bufferFrames = static_cast<int>(jack_get_buffer_size(client));
+    sampleRate = static_cast<int>(jack_get_sample_rate(client));
     jack_client_close(client);
-
-    if (effectiveFrames != requestedForServer) {
-        message = QStringLiteral("Requested %1 JACK frames/period, but JACK reports %2.")
-            .arg(requestedForServer)
-            .arg(effectiveFrames);
-    } else {
-        message = QStringLiteral("JACK uses %1 frames/period.").arg(effectiveFrames);
-    }
-    return true;
+    message = QStringLiteral("JACK server: %1 Hz, %2 frames/period.")
+        .arg(sampleRate).arg(bufferFrames);
+    return bufferFrames > 0 && sampleRate > 0;
 }
 
 #endif

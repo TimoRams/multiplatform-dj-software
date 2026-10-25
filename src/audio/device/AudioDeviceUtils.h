@@ -55,8 +55,6 @@ QString describeDeviceState(juce::AudioDeviceManager& manager);
 #include <jack/jack.h>
 
 bool probeJackServer(QString& message);
-int readJackBufferSize(jack_client_t* client);
-bool waitForJackBufferSize(jack_client_t* client, int requestedFrames, int& effectiveFrames);
-bool forcePipeWireQuantum(int requestedFrames, QString& message);
-bool requestJackBufferSize(int requestedFrames, int& effectiveFrames, int& effectiveSampleRate, QString& message);
+// Read the server-owned timing without changing the JACK/PipeWire graph.
+bool readJackServerConfiguration(int& bufferFrames, int& sampleRate, QString& message);
 #endif

@@ -626,7 +626,7 @@ Item {
                 if (warningText) {
                     note = warningText + (jackState ? " Current JACK setting: " + jackState + "." : "")
                 } else {
-                    note = "Applied (JACK). Sample rate follows the JACK server; frames/period request applied"
+                    note = "Applied (JACK). Sample rate and frames/period follow the JACK server"
                         + (jackState ? " (" + jackState + ")." : ".")
                 }
             } else if (warningText) {
@@ -987,7 +987,7 @@ Item {
                             spacing: 16
 
                             Text {
-                                text: settingsWindow.isJackDeviceSelected ? "Frames / Period" : "Buffer Size"
+                                text: settingsWindow.isJackDeviceSelected ? "Server Frames / Period" : "Buffer Size"
                                 color: UiTheme.textLabel
                                 font.pixelSize: 12
                                 Layout.preferredWidth: 130
@@ -999,8 +999,8 @@ Item {
                                 height: 32
                                 model: settingsWindow.bufferSizeOptions
                                 textRole: "label"
-                                enabled: true
-                                opacity: 1.0
+                                enabled: !settingsWindow.isJackDeviceSelected
+                                opacity: settingsWindow.isJackDeviceSelected ? 0.65 : 1.0
 
                                 contentItem: Text {
                                     text: bufferSizeCombo.currentIndex >= 0 ? bufferSizeCombo.displayText : "512 samples"
@@ -1067,7 +1067,7 @@ Item {
 
                         Text {
                             text: settingsWindow.isJackDeviceSelected
-                                ? "JACK sample rate follows the server. Frames/period is requested from JACK/PipeWire and the actual opened value is shown after Apply."
+                                ? "JACK sample rate and frames/period follow the server. Configure latency in JACK/PipeWire; the active value is shown after Apply."
                                 : "Use the lowest stable buffer your device supports. On Windows, ASIO will appear here when available; on macOS and Linux this lists the active system audio backends and outputs."
                             color: settingsWindow.isJackDeviceSelected ? UiTheme.warning : UiTheme.textDim
                             font.pixelSize: 11
