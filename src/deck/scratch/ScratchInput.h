@@ -19,6 +19,7 @@ struct RealtimeScratchSnapshot {
     std::uint64_t generation = 0;
     std::uint64_t motionSequence = 0;
     double cumulativeDeltaSeconds = 0.0;
+    double fittedCumulativeDeltaSeconds = 0.0;
     double velocity = 0.0;
     double eventIntervalSeconds = 0.0;
     double lastEventTimestampSeconds = 0.0;
@@ -55,6 +56,7 @@ public:
         m_generation.store(generation, std::memory_order_relaxed);
         m_motionSequence.store(0, std::memory_order_relaxed);
         m_cumulativeDeltaSeconds.store(0.0, std::memory_order_relaxed);
+        m_fittedCumulativeDeltaSeconds.store(0.0, std::memory_order_relaxed);
         m_velocity.store(0.0, std::memory_order_relaxed);
         m_eventIntervalSeconds.store(0.0, std::memory_order_relaxed);
         m_lastEventTimestampSeconds.store(sanitizedTimestamp(timestampSeconds),
@@ -68,7 +70,8 @@ public:
     void publishTouchMotion(double deltaSeconds,
                             double velocity,
                             double eventIntervalSeconds,
-                            double timestampSeconds) noexcept
+                            double timestampSeconds,
+                            double fittedPositionOffsetSeconds = 0.0) noexcept
     {
         if (!std::isfinite(deltaSeconds) || deltaSeconds == 0.0)
             return;
@@ -79,8 +82,13 @@ public:
 
         beginWrite();
         const double previous = m_cumulativeDeltaSeconds.load(std::memory_order_relaxed);
-        m_cumulativeDeltaSeconds.store(previous + deltaSeconds,
+        const double next = previous + deltaSeconds;
+        m_cumulativeDeltaSeconds.store(next,
                                        std::memory_order_relaxed);
+        m_fittedCumulativeDeltaSeconds.store(next +
+            (std::isfinite(fittedPositionOffsetSeconds)
+                ? fittedPositionOffsetSeconds : 0.0),
+            std::memory_order_relaxed);
         m_velocity.store(sanitizedVelocity(velocity), std::memory_order_relaxed);
         if (std::isfinite(eventIntervalSeconds) && eventIntervalSeconds > 0.0) {
             m_eventIntervalSeconds.store(
@@ -138,6 +146,7 @@ public:
         m_generation.fetch_add(1, std::memory_order_relaxed);
         m_motionSequence.store(0, std::memory_order_relaxed);
         m_cumulativeDeltaSeconds.store(0.0, std::memory_order_relaxed);
+        m_fittedCumulativeDeltaSeconds.store(0.0, std::memory_order_relaxed);
         m_velocity.store(0.0, std::memory_order_relaxed);
         m_eventIntervalSeconds.store(0.0, std::memory_order_relaxed);
         m_lastEventTimestampSeconds.store(sanitizedTimestamp(timestampSeconds),
@@ -160,6 +169,8 @@ public:
         candidate.motionSequence = m_motionSequence.load(std::memory_order_relaxed);
         candidate.cumulativeDeltaSeconds =
             m_cumulativeDeltaSeconds.load(std::memory_order_relaxed);
+        candidate.fittedCumulativeDeltaSeconds =
+            m_fittedCumulativeDeltaSeconds.load(std::memory_order_relaxed);
         candidate.velocity = m_velocity.load(std::memory_order_relaxed);
         candidate.eventIntervalSeconds =
             m_eventIntervalSeconds.load(std::memory_order_relaxed);
@@ -186,6 +197,8 @@ public:
         snapshot.motionSequence = m_motionSequence.load(std::memory_order_relaxed);
         snapshot.cumulativeDeltaSeconds =
             m_cumulativeDeltaSeconds.load(std::memory_order_relaxed);
+        snapshot.fittedCumulativeDeltaSeconds =
+            m_fittedCumulativeDeltaSeconds.load(std::memory_order_relaxed);
         snapshot.velocity = m_velocity.load(std::memory_order_relaxed);
         snapshot.eventIntervalSeconds =
             m_eventIntervalSeconds.load(std::memory_order_relaxed);
@@ -227,6 +240,7 @@ private:
     std::atomic<std::uint64_t> m_generation { 0 };
     std::atomic<std::uint64_t> m_motionSequence { 0 };
     std::atomic<double> m_cumulativeDeltaSeconds { 0.0 };
+    std::atomic<double> m_fittedCumulativeDeltaSeconds { 0.0 };
     std::atomic<double> m_velocity { 0.0 };
     std::atomic<double> m_eventIntervalSeconds { 0.0 };
     std::atomic<double> m_lastEventTimestampSeconds { 0.0 };

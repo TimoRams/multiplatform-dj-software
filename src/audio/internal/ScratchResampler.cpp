@@ -604,7 +604,8 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
                                                 const juce::AudioSourceChannelInfo& output,
                                                 double inputLeadSeconds,
                                                 double accumulatedLeadSamples,
-                                                double maxReferenceCorrectionRate) noexcept
+                                                double maxReferenceCorrectionRate,
+                                                double tickCorrectionTimeSeconds) noexcept
 {
     if (!output.buffer || output.numSamples <= 0) {
         if (output.buffer)
@@ -653,9 +654,8 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     // the following few milliseconds, while the continuous reference below
     // integrates quantised jog events instead of reproducing their edges as
     // audible pitch steps.
-    constexpr double kTrackHz = 56.0;
     constexpr double kTwoPi = 6.28318530717958647692;
-    const double omega = kTwoPi * kTrackHz;
+    const double omega = kTwoPi * 56.0;
 
     // Window must span the path the read head will travel this block.
     const double positionCorrectionRate = (target - m_readPos)
@@ -750,6 +750,25 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     const double referenceStartPos = m_referencePos;
     const double referenceStartVelocity = m_referenceVelocity;
     double referenceEndPos = handNow + referenceVelocity * blockSeconds;
+    if (tickCorrectionTimeSeconds > 0.0
+        && referenceStartVelocity * referenceVelocity > 0.0) {
+        // The physical jog reports whole ticks. At slow and nominal speeds its
+        // absolute target advances in small stair steps, even when the hand
+        // moves uniformly. Spread only the residual position correction over
+        // a few blocks; keep measured velocity and full long-term tick travel.
+        // A direction change bypasses this smoothing so the turn stays sharp.
+        const double normalizedSpeed = std::abs(referenceRate)
+            / normalizedRateScale;
+        const double weight = std::clamp(2.0 - normalizedSpeed, 0.0, 1.0);
+        const double correctionSeconds = std::clamp(tickCorrectionTimeSeconds,
+                                                    0.0, 0.030) * weight;
+        const double uncorrectedEnd = referenceStartPos
+            + referenceStartVelocity * blockSeconds;
+        const double alpha = blockSeconds
+            / (blockSeconds + correctionSeconds);
+        referenceEndPos = uncorrectedEnd
+            + alpha * (referenceEndPos - uncorrectedEnd);
+    }
     if (std::isfinite(maxReferenceCorrectionRate)) {
         // A one-pixel UI event can encode tens of milliseconds of slow hand
         // travel. Spread its position correction over audio blocks rather than

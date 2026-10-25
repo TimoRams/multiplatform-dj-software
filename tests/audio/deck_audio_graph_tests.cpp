@@ -8,6 +8,7 @@
 #include "audio/TimeStretchProcessor.h"
 #include "controllers/flx10/Flx10RealtimeScratchIngress.h"
 #include "deck/scratch/ScratchController.h"
+#include "deck/scratch/ScratchSession.h"
 
 #include <QCoreApplication>
 #include <QTemporaryDir>
@@ -247,6 +248,24 @@ int main(int argc, char** argv)
     ok &= require(reversePeak > 1.0e-5,
                   "full graph reverse produces audible samples");
     graph.playback()->setLoopRangeSamples(1000, 5000, 44'100.0);
+
+    // A coalesced pointer event reports the whole drag since its last event.
+    // The same size MIDI event remains guarded against a bad controller spike.
+    graph.renderModeRouter().configureTrack(44'100.0, 1.0);
+    graph.renderModeRouter().beginScratch(0.2, 44'100.0, 1.0, true, 1.0);
+    engine::scratch::ScratchSession pointerSession;
+    pointerSession.setScrubbing(true);
+    (void) pointerSession.armGrab(0.2, 1.0, {});
+    ok &= require(pointerSession.submitRelative(&graph.renderModeRouter(), 0.15, 44'100.0)
+                      && std::abs(pointerSession.lastRawSec() - 0.35) < 1e-9,
+                  "coalesced pointer scratch preserves the full drag distance");
+    engine::scratch::ScratchSession midiSession;
+    midiSession.setScrubbing(true);
+    (void) midiSession.armGrab(0.2, 1.0, {});
+    ok &= require(midiSession.submitRelativeAtInterval(
+                      &graph.renderModeRouter(), 0.15, 44'100.0, 0.016)
+                      && std::abs(midiSession.lastRawSec() - 0.26) < 1e-9,
+                  "timed MIDI scratch still rejects an oversized event");
 
     graph.renderModeRouter().configureTrack(44'100.0, 1.0);
     graph.renderModeRouter().beginScratch(0.2, 44'100.0, 1.0, true, 1.0);

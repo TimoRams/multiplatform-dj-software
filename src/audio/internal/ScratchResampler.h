@@ -88,7 +88,8 @@ public:
                                   double accumulatedLeadSamples =
                                       std::numeric_limits<double>::quiet_NaN(),
                                   double maxReferenceCorrectionRate =
-                                      std::numeric_limits<double>::infinity()) noexcept;
+                                      std::numeric_limits<double>::infinity(),
+                                  double tickCorrectionTimeSeconds = 0.0) noexcept;
 
     [[nodiscard]] double readPosition() const noexcept { return m_readPos; }
     [[nodiscard]] int deviceBufferSize() const noexcept { return m_deviceBufferSize; }

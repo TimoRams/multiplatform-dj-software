@@ -56,26 +56,20 @@ public:
     static constexpr int kSwitchFadeSamples = 256;
 
     // ── Keylock analysis settings ────────────────────────────────────────────
-    // A phase vocoder's added delay is essentially its analysis window, so the
-    // window length is the one knob that trades latency against how cleanly low
-    // frequencies are resolved. 32 ms resolves down to roughly 30 Hz and adds
-    // about 48 ms in total at 44.1 kHz with the distributed-computation hop —
-    // still noticeably less than the 56 ms the previous 50 ms window cost,
-    // while keeping callback CPU spikes out of the audio deadline.
-    static constexpr double kKeylockWindowSeconds = 0.032;
-    // Hops per window. Four is the library's own default ratio; the previous
-    // eight doubled the CPU cost for no audible gain at keylock-sized shifts.
-    static constexpr int kKeylockOverlap = 4;
-    // Above this frequency the pitch map rolls off instead of transposing
-    // linearly. Cymbals, breath and hiss are noise rather than pitch, so
-    // dragging them along with the shift is what makes wide pitch ranges sound
-    // artificial. Limiting the map keeps that timbre in place and costs no
-    // latency at all — this is the main quality win at large shifts.
-    static constexpr double kKeylockTonalityLimitHz = 8000.0;
+    // Prioritise bass resolution over the former 32 ms low-latency window.
+    // Split computation adds one hop: about 135 ms total at 44.1/48/96 kHz.
+    static constexpr double kKeylockWindowSeconds = 0.120;
+    // Denser overlap reduces steady-tone modulation and stereo error compared
+    // with the library's four-hop default, at the cost of more FFT work.
+    static constexpr int kKeylockOverlap = 8;
+    // This timbre-preserving roll-off is only for manual Key Shift with
+    // keylock off. Keylock must undo the reader's pitch change across the
+    // entire band; using this limit there leaves high notes detuned.
+    static constexpr double kKeyShiftTonalityLimitHz = 8000.0;
     // How much already-played audio is kept around so a freshly activated
     // pipeline can be seeded with what the listener just heard. Big enough for
     // the longest pre-roll any supported sample rate asks for.
-    static constexpr int kOutputHistorySamples = 16384;
+    static constexpr int kOutputHistorySamples = 65536;
     explicit TimeStretchProcessor(juce::AudioSource* inSource);
     ~TimeStretchProcessor() override;
 
@@ -125,6 +119,7 @@ private:
         int prefill = 0;
         int latency = 0;
         double appliedPitchScale = 1.0;
+        float appliedTonalityLimit = 0.0f;
         // Normalised tonality limit for this pipeline's sample rate. Kept here
         // because setTransposeFactor() resets the limit whenever it is called
         // without one, so every later pitch update has to pass it again.

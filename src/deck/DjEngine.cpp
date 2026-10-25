@@ -186,6 +186,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
             if (!m_audioPipeline)
                 return;
             const auto stats = m_audioPipeline->realtimeStats();
+            const auto hardwareXruns = m_audioDeviceService.hardwareXRunCount();
             const auto delta = [](std::uint64_t current, std::uint64_t previous) {
                 return current >= previous ? current - previous : current;
             };
@@ -193,10 +194,14 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
                 && stats.playbackDroppedRequests == m_lastDroppedRequests
                 && stats.scratchStarvationBlocks == m_lastScratchStarvationBlocks
                 && stats.scratchDroppedRequests == m_lastScratchDroppedRequests
+                && hardwareXruns == m_lastHardwareXruns
                 && stats.keylockSeedsOnAudioThread == m_lastKeylockSeedsOnAudioThread)
                 return;
             qInfo().nospace()
                 << "[AudioDiag] deck=" << m_deckId
+                << " backend=" << m_audioDeviceService.currentDeviceType()
+                << " sampleRate=" << m_audioDeviceService.currentSampleRate()
+                << " bufferSamples=" << m_audioDeviceService.currentBufferSize()
                 << " playbackStarvation+="
                 << delta(stats.playbackStarvationBlocks, m_lastStarvationBlocks)
                 << " playbackDropped+="
@@ -209,6 +214,8 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
                 << " scratchMisses=" << stats.scratchPageMisses
                 << " scratchRecoveries=" << stats.scratchRecoveryEvents
                 << " scratchGenerationMismatches=" << stats.scratchGenerationMismatches
+                << " hardwareXruns+="
+                << delta(hardwareXruns, m_lastHardwareXruns)
                 << " diskReadsOnAudioThread=" << stats.diskReadsFromAudioThread
                 << " blockingLocks=" << stats.blockingLockAttempts
                 << " keylockSeeds=" << stats.keylockSeeds
@@ -220,6 +227,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
             m_lastDroppedRequests = stats.playbackDroppedRequests;
             m_lastScratchStarvationBlocks = stats.scratchStarvationBlocks;
             m_lastScratchDroppedRequests = stats.scratchDroppedRequests;
+            m_lastHardwareXruns = hardwareXruns;
             m_lastKeylockSeedsOnAudioThread = stats.keylockSeedsOnAudioThread;
         });
         diagnostics->start();

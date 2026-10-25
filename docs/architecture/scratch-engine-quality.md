@@ -32,7 +32,8 @@ Position and velocity deliberately have different jobs. Every FLX10 tick is
 integrated one-to-one into `cumulativeDeltaSeconds`, so sticker position cannot
 drift with estimator tuning. Velocity predicts where the hand moves between
 events and shapes the sound; it is allowed to be filtered without changing
-total platter travel.
+total platter travel. The audio target also carries a bounded fitted offset
+that removes receive-time jitter; the raw cumulative position remains exact.
 
 ## Input and estimator
 
@@ -48,6 +49,14 @@ timestamps and cumulative ticks.
 - A real sign change resets the velocity history immediately. The first reverse
   frame therefore changes sign instead of waiting for the averaging window.
 - A 60 ms stale/time bound prevents old movement from surviving a stopped hand.
+- The native ingress smooths same-direction velocity over 6 ms after the
+  timestamped estimator. Cumulative ticks remain exact, and a real direction
+  change bypasses this extra filtering.
+- A separate 30 ms fixed-capacity tick history fits position and speed at
+  0-1.5x. Its correction to the audio target is bounded to the greater of one
+  tick or half a millisecond of travel and fades out by 2.5x. A sustained
+  acceleration switches back toward the short-window speed estimate; a
+  reversal clears both histories.
 
 The native ingress publishes before the later Qt/MIDI facade path, so display or
 UI work cannot batch the audio trajectory. `RealtimeScratchInput::tryRead()`
@@ -57,7 +66,7 @@ valid snapshot if it catches a writer in progress.
 ## Audio trajectory
 
 The callback reconstructs the absolute hand target from the grab anchor plus
-cumulative tick travel. It supplies the measured event age and velocity to
+the fitted cumulative tick travel. It supplies the measured event age and velocity to
 `ScratchResampler::processScratchTracking()`.
 
 Each audio block joins the persistent prior hand state to the newest predicted
@@ -66,6 +75,12 @@ is zero. Adjacent blocks are therefore continuous in position, velocity, and
 acceleration (C2). The previous block-constant velocity and linear position
 correction were only C0/C1 at callback boundaries; the servo converted those
 hidden edges into the metallic block-rate chirp heard during fast scratching.
+
+At physical speeds up to 1x, a 15 ms position-correction filter spreads the
+remaining whole-tick staircase over several blocks. It leaves measured speed
+and cumulative hand position intact and bypasses filtering across a real
+direction change. It fades out between 1x and 2x; the faster scratch path and
+UI drag correction are unchanged. Only the FLX10 realtime input enables it.
 
 A 56 Hz critically damped servo follows the moving reference while absolute
 position remains authoritative. Safety shaping is continuous rather than a
@@ -173,6 +188,9 @@ Automated gates cover:
 - 8x release coast at 128, 256, and 512 samples;
 - a deliberately mismatched 2x-rendered/8x-physical release at 128 and 512;
 - full FLX10 estimator-to-audio motion with alternating 0.7/1.3 ms receive jitter;
+- integer-tick FLX10 motion at 0.1x and 1x, including block-rate flutter,
+  rendered sine sidebands, maximum lag, exact travel, and per-sample rate
+  continuity, at 128/256/512-sample buffers;
 - acceleration and jerk bounds for +/-6x turns down to an intentionally
   non-physical eight-millisecond stress case;
 - passband and stopband response through 10x, in both directions;

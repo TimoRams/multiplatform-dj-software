@@ -439,6 +439,9 @@ bool testRealtimeScratchIngress()
     ok &= require(near(first.cumulativeDeltaSeconds,
                        flx10::scratchDeltaSeconds(ticks)),
                   "audio snapshot retains exact one-to-one platter travel");
+    ok &= require(near(first.fittedCumulativeDeltaSeconds,
+                       first.cumulativeDeltaSeconds),
+                  "the first platter packet starts from its exact tick position");
     ok &= require(near(first.velocity, 0.5),
                   "audio snapshot carries the timestamped platter velocity");
 
@@ -464,6 +467,66 @@ bool testRealtimeScratchIngress()
     return ok;
 }
 
+bool testRealtimeVelocitySmoothing()
+{
+    flx10::JogVelocitySmoother smoother;
+    double lowest = 10.0;
+    double highest = -10.0;
+    for (int i = 0; i < 40; ++i) {
+        const double noisyRate = i & 1 ? 0.7 : 1.3;
+        const double rate = smoother.push(noisyRate, 100.0 + i * 0.001);
+        if (i >= 20) {
+            lowest = std::min(lowest, rate);
+            highest = std::max(highest, rate);
+        }
+    }
+    bool ok = require(highest - lowest < 0.12,
+                      "realtime velocity smooths same-direction USB-frame jitter");
+    ok &= require(smoother.push(-0.8, 100.041) == -0.8,
+                  "a real scratch reversal bypasses velocity smoothing");
+    smoother.reset();
+    ok &= require(smoother.current() == 0.0,
+                  "new touch cannot inherit the prior platter speed");
+    return ok;
+}
+
+bool testRealtimeSpeedChange()
+{
+    flx10::Flx10RealtimeScratchIngress ingress;
+    (void) ingress.touchDown(120.0);
+    double pendingTicks = 0.0;
+    double rateAtTenMs = 0.0;
+    double rateAtTwentyMs = 0.0;
+    for (int frame = 1; frame <= 400; ++frame) {
+        const double physicalRate = frame <= 200 ? 0.5 : 1.5;
+        pendingTicks += physicalRate * 0.001
+            / flx10::scratchDeltaSeconds(1.0);
+        const double ticks = std::floor(pendingTicks);
+        pendingTicks -= ticks;
+        if (ticks > 0.0)
+            (void) ingress.platter(ticks, 120.0 + frame * 0.001);
+        if (frame == 210)
+            rateAtTenMs = ingress.stream()->readForControlThread().velocity;
+        if (frame == 220)
+            rateAtTwentyMs = ingress.stream()->readForControlThread().velocity;
+    }
+    const auto afterAcceleration = ingress.stream()->readForControlThread();
+    bool ok = require(rateAtTenMs > 1.1 && rateAtTwentyMs > 1.3,
+                      "realtime estimator follows a deliberate acceleration within 20 ms");
+    ok &= require(near(afterAcceleration.cumulativeDeltaSeconds, 0.4, 0.0002),
+                  "long-window fit does not alter accumulated physical ticks");
+    ok &= require(std::abs(afterAcceleration.fittedCumulativeDeltaSeconds
+                       - afterAcceleration.cumulativeDeltaSeconds) < 0.001,
+                  "fitted audio position stays close to exact platter travel");
+    (void) ingress.platter(-8.0, 120.401);
+    const auto firstReverse = ingress.stream()->readForControlThread();
+    (void) ingress.platter(-8.0, 120.402);
+    const auto secondReverse = ingress.stream()->readForControlThread();
+    ok &= require(firstReverse.velocity <= 0.0 && secondReverse.velocity < -0.5,
+                  "a real scratch turn discards the previous forward velocity");
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -480,5 +543,7 @@ int main()
     ok &= testBatchedReceiveTimestampsAndReversal();
     ok &= testFastSpeedRejectsUsbFrameJitter();
     ok &= testRealtimeScratchIngress();
+    ok &= testRealtimeVelocitySmoothing();
+    ok &= testRealtimeSpeedChange();
     return ok ? 0 : 1;
 }

@@ -223,6 +223,7 @@ bool TimeStretchProcessor::preparePipeline(Pipeline& p, const TimeStretchConfigu
     if (g_inTimeStretchAudioCallback) m_prepareFromAudio.fetch_add(1, std::memory_order_relaxed);
     if (!validConfiguration(c)) return false;
     p.appliedPitchScale = c.keylockEnabled ? 1.0 / c.tempoRatio : 1.0;
+    p.appliedTonalityLimit = 0.0f;
     p.rubberBand.reset();
     p.signalsmith.reset();
     if (c.backend == TimeStretchBackend::RubberBand) {
@@ -235,19 +236,18 @@ bool TimeStretchProcessor::preparePipeline(Pipeline& p, const TimeStretchConfigu
         p.rubberBand->setPitchScale(p.appliedPitchScale);
     } else {
         p.signalsmith = std::make_unique<signalsmith::stretch::SignalsmithStretch<float>>();
-        // A shorter window than the library default keeps keylock responsive
-        // enough for live use; see kKeylockWindowSeconds for the trade-off.
         const int blockSamples = std::clamp(
-            static_cast<int>(std::lround(c.sampleRate * kKeylockWindowSeconds)), 512, 8192);
+            static_cast<int>(std::lround(c.sampleRate * kKeylockWindowSeconds)), 512, 16384);
         const int intervalSamples = std::clamp(blockSamples / kKeylockOverlap, 64, 2048);
         // A single FFT burst can consume most of a 64/128-sample callback on a
         // laptop CPU. Signalsmith can spread the analysis/synthesis steps across
-        // one hop; the ~8 ms added latency is preferable to a deadline miss and
+        // one hop; the added latency is preferable to a deadline miss and
         // an audible keylock crackle.
         p.signalsmith->configure(c.channelCount, blockSamples, intervalSamples, true);
-        p.tonalityLimit = kKeylockTonalityLimitHz / c.sampleRate;
-        p.signalsmith->setTransposeFactor(static_cast<float>(p.appliedPitchScale),
-                                          static_cast<float>(p.tonalityLimit));
+        p.tonalityLimit = kKeyShiftTonalityLimitHz / c.sampleRate;
+        // Keylock undoes the reader's pitch shift. A tonality limit would
+        // leave frequencies above its knee only partly corrected.
+        p.signalsmith->setTransposeFactor(static_cast<float>(p.appliedPitchScale), 0.0f);
     }
     resizeBuffer(p.input, 2, std::max(4096, c.maximumBlockSize));
     resizeBuffer(p.output, 2, kFifoCapacity);
@@ -585,16 +585,21 @@ void TimeStretchProcessor::syncPipelinePitchScale(Pipeline& p) noexcept
     // Key Shift offset stacks on top of whatever pitch is otherwise playing.
     const bool pitchLocked = m_pitchLockEnabled.load(std::memory_order_acquire);
     const double pitchScale = (pitchLocked ? 1.0 / effectiveRate : 1.0) * semitoneRatio;
-    if (std::abs(p.appliedPitchScale - pitchScale) <= 1.0e-7)
+    const float tonalityLimit = pitchLocked ? 0.0f
+        : static_cast<float>(p.tonalityLimit);
+    if (std::abs(p.appliedPitchScale - pitchScale) <= 1.0e-7
+        && (!p.signalsmith || p.appliedTonalityLimit == tonalityLimit))
         return;
     if (p.rubberBand)
         p.rubberBand->setPitchScale(pitchScale);
-    else if (p.signalsmith)
-        // The limit has to be repeated on every update: passing a factor on
-        // its own resets the pitch map back to transposing the full band.
-        p.signalsmith->setTransposeFactor(static_cast<float>(pitchScale),
-                                          static_cast<float>(p.tonalityLimit));
+    else if (p.signalsmith) {
+        // The reader has already shifted every frequency by effectiveRate.
+        // A non-linear map cannot invert that shift at high frequencies, so
+        // reserve Signalsmith's timbre roll-off for manual Key Shift alone.
+        p.signalsmith->setTransposeFactor(static_cast<float>(pitchScale), tonalityLimit);
+    }
     p.appliedPitchScale = pitchScale;
+    p.appliedTonalityLimit = tonalityLimit;
 }
 
 void TimeStretchProcessor::processPipeline(Pipeline& p, const juce::AudioSourceChannelInfo& info) noexcept

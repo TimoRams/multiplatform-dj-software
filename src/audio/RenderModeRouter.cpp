@@ -1154,6 +1154,7 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
         double inputLead = hand.ageSeconds;
         double accumulatedLeadSamples = hand.leadSeconds * sr;
         double maxReferenceCorrectionRate = std::numeric_limits<double>::infinity();
+        double tickCorrectionTimeSeconds = 0.0;
         if (!hand.inputMeasuredRate) {
             const double uiSpeed = std::abs(hand.initialNormalizedRate);
             maxReferenceCorrectionRate =
@@ -1162,7 +1163,7 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
         engine::scratch::RealtimeScratchSnapshot realtimeSnapshot;
         if (readRealtimeScratchInput(realtimeSnapshot)) {
             target = m_audioScratchInputAnchorSamples
-                + realtimeSnapshot.cumulativeDeltaSeconds * sr;
+                + realtimeSnapshot.fittedCumulativeDeltaSeconds * sr;
             commandedRate = decayedRealtimeVelocity(realtimeSnapshot) * oneX;
             inputLead = std::clamp(
                 engine::scratch::RealtimeScratchInput::clockSeconds()
@@ -1170,6 +1171,7 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
                 0.0, 0.030);
             accumulatedLeadSamples = std::numeric_limits<double>::quiet_NaN();
             maxReferenceCorrectionRate = std::numeric_limits<double>::infinity();
+            tickCorrectionTimeSeconds = 0.015;
         }
         const double maxAbsRate = ScratchResampler::kMaximumTrackingRate * oneX;
         // Extrapolate by the target's real age. Using the same half-interval on
@@ -1177,7 +1179,8 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
         // brake against an unchanged target — the audible scratch judder.
         const double usedRate = m_scratchResampler.processScratchTracking(
             target, commandedRate, maxAbsRate, bufferToFill, inputLead,
-            accumulatedLeadSamples, maxReferenceCorrectionRate);
+            accumulatedLeadSamples, maxReferenceCorrectionRate,
+            tickCorrectionTimeSeconds);
         const double readPositionSamples = m_scratchResampler.readPosition();
         const bool staleReleaseBlock = m_audioReleaseCommand.generation != 0
             && m_audioReleaseCommand.generation

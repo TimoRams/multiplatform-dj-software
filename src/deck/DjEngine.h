@@ -652,6 +652,7 @@ private:
     std::uint64_t m_lastDroppedRequests = 0;
     std::uint64_t m_lastScratchStarvationBlocks = 0;
     std::uint64_t m_lastScratchDroppedRequests = 0;
+    std::uint64_t m_lastHardwareXruns = 0;
     std::uint64_t m_lastKeylockSeedsOnAudioThread = 0;
     QString m_currentTrackId;
     QString m_trackFilePath;

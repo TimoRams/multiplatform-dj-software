@@ -10,6 +10,7 @@
 #include "audio/cache/AudioPageCache.h"
 #include "audio/internal/ScratchResampler.h"
 #include "controllers/flx10/Flx10JogRouter.h"
+#include "controllers/flx10/Flx10RealtimeScratchIngress.h"
 #include "deck/scratch/ScratchController.h"
 #include "deck/scratch/ScratchInput.h"
 
@@ -206,9 +207,12 @@ struct MotionResult {
     double startupErrSamples = 0.0;  // worst error during the standing start
     double startupLagMs = 0.0;
     double meanRateX = 0.0;        // achieved mean rate over the run
+    double rmsBlockRateErrorX = 0.0;
+    double toneResidualDb = 0.0;
     double travelRatio = 0.0;      // achieved travel / commanded travel
     bool travelMeaningful = false; // false when the movement nets out to zero
     std::uint64_t leadLimitedBlocks = 0;
+    std::uint64_t starvationBlocks = 0;
     int blocks = 0;
     bool finite = true;
 };
@@ -361,6 +365,7 @@ MotionResult runMotion(AudioPageCache& cache,
     // leadLimitedBlocks is a running counter inside the resampler, so the last
     // read already holds the total for this run.
     result.leadLimitedBlocks = scratch.motionStats().leadLimitedBlocks;
+    result.starvationBlocks = scratch.cacheStats().starvationBlocks;
 
     if (g_verbose) {
         std::cout << "  " << name
@@ -435,7 +440,9 @@ ReleaseResult runBackspinRelease(AudioPageCache& cache,
 
 MotionResult runFlx10JitterMotion(AudioPageCache& cache,
                                   const AudioCacheHandle& handle,
-                                  int blockSize)
+                                  int blockSize,
+                                  double physicalRate = 6.0,
+                                  bool idealInput = false)
 {
     ScratchResampler scratch;
     scratch.prepare(2, blockSize, kSampleRate);
@@ -445,17 +452,17 @@ MotionResult runFlx10JitterMotion(AudioPageCache& cache,
     scratch.reset(startSample);
     scratch.prefetchAround(startSample);
 
-    flx10::Flx10JogRouter router;
+    flx10::Flx10RealtimeScratchIngress ingress;
     constexpr double kTimestampBase = 100.0;
-    (void) router.route({flx10::JogEventType::TouchDown, 0.0,
-                         kTimestampBase, false});
-    constexpr double kPhysicalRate = 6.0;
+    (void) ingress.touchDown(kTimestampBase);
     constexpr double kPacketTravelSeconds = 0.001;
-    const double ticksPerPacket = kPhysicalRate * kPacketTravelSeconds
+    const double ticksPerPacket = physicalRate * kPacketTravelSeconds
         / flx10::scratchDeltaSeconds(1.0);
+    double pendingTicks = 0.0;
     constexpr double receiveIntervals[] = {0.0007, 0.0013};
 
     double targetSample = startSample;
+    double rawTargetSample = startSample;
     double commandedRate = 0.0;
     double lastEventTime = kTimestampBase;
     double nextEventTime = kTimestampBase + receiveIntervals[0];
@@ -466,32 +473,61 @@ MotionResult runFlx10JitterMotion(AudioPageCache& cache,
         1, static_cast<int>(std::ceil(kSettleSeconds / blockSeconds)));
     juce::AudioBuffer<float> out(2, blockSize);
     MotionResult result;
+    int measuredBlocks = 0;
+    std::vector<float> toneSamples;
+    toneSamples.reserve(static_cast<std::size_t>(0.5 * kSampleRate));
 
     while (audioTime < 0.5) {
         const double before = scratch.readPosition();
         scratch.processScratchTracking(
-            targetSample, commandedRate, ScratchResampler::kMaximumTrackingRate,
+            idealInput ? startSample + physicalRate * audioTime * kSampleRate
+                       : targetSample,
+            idealInput ? physicalRate : commandedRate,
+            ScratchResampler::kMaximumTrackingRate,
             {&out, 0, blockSize},
-            std::max(0.0, kTimestampBase + audioTime - lastEventTime));
+            idealInput ? 0.0
+                       : std::max(0.0, kTimestampBase + audioTime - lastEventTime),
+            std::numeric_limits<double>::quiet_NaN(),
+            std::numeric_limits<double>::infinity(), idealInput ? 0.0 : 0.015);
         const double after = scratch.readPosition();
         const auto stats = scratch.motionStats();
         if (result.blocks >= settleBlocks) {
+            // A longer fit has a genuine standing-start transient. Measure
+            // steady pitch sidebands only after that response has settled.
+            if (audioTime >= 0.15)
+                for (int i = 0; i < blockSize; ++i)
+                    toneSamples.push_back(out.getSample(0, i));
             result.maxRateStepX = std::max(result.maxRateStepX, stats.maxRateStep);
             result.maxRateStepDeltaX = std::max(
                 result.maxRateStepDeltaX, stats.maxRateStepDelta);
+            const double blockRate = (after - before) / blockSize;
+            result.rmsBlockRateErrorX += (blockRate - physicalRate)
+                * (blockRate - physicalRate);
+            ++measuredBlocks;
+            const double trueHand = startSample + physicalRate
+                * (audioTime + blockSeconds) * kSampleRate;
+            result.maxLagMs = std::max(result.maxLagMs,
+                std::abs(after - trueHand) / (std::abs(physicalRate) * kSampleRate)
+                    * 1000.0);
         }
         result.meanRateX += after - before;
         ++result.blocks;
 
         const double blockEnd = audioTime + blockSeconds;
         while (nextEventTime <= kTimestampBase + blockEnd) {
-            const auto route = router.route({flx10::JogEventType::Platter,
-                                              ticksPerPacket,
-                                              nextEventTime,
-                                              false});
-            targetSample += route.deltaSeconds * kSampleRate;
-            commandedRate = route.estimatedRate;
-            lastEventTime = nextEventTime;
+            pendingTicks += ticksPerPacket;
+            const double wholeTicks = std::floor(pendingTicks);
+            pendingTicks -= wholeTicks;
+            if (wholeTicks > 0.0) {
+                (void) ingress.platter(wholeTicks, nextEventTime);
+                const auto snapshot = ingress.stream()->readForControlThread();
+                rawTargetSample = startSample
+                    + snapshot.cumulativeDeltaSeconds * kSampleRate;
+                targetSample = startSample
+                    + snapshot.fittedCumulativeDeltaSeconds * kSampleRate;
+                commandedRate = snapshot.velocity;
+                lastEventTime = snapshot.lastEventTimestampSeconds;
+            }
             ++eventIndex;
             nextEventTime += receiveIntervals[eventIndex & 1];
         }
@@ -499,11 +535,36 @@ MotionResult runFlx10JitterMotion(AudioPageCache& cache,
     }
 
     result.meanRateX /= static_cast<double>(result.blocks * blockSize);
-    const double commandedTravel = targetSample - startSample;
+    result.rmsBlockRateErrorX = std::sqrt(result.rmsBlockRateErrorX
+        / std::max(1, measuredBlocks));
+    double bestCoherentEnergy = 0.0;
+    double outputEnergy = 0.0;
+    for (const float sample : toneSamples)
+        outputEnergy += static_cast<double>(sample) * sample;
+    const double centreHz = 1000.0 * result.meanRateX;
+    for (int step = -20; step <= 20; ++step) {
+        const double frequency = centreHz + step * 0.1;
+        double sineProjection = 0.0, cosineProjection = 0.0;
+        for (std::size_t i = 0; i < toneSamples.size(); ++i) {
+            const double phase = 2.0 * M_PI * frequency
+                * static_cast<double>(i) / kSampleRate;
+            sineProjection += toneSamples[i] * std::sin(phase);
+            cosineProjection += toneSamples[i] * std::cos(phase);
+        }
+        const double coherentEnergy = 2.0
+            * (sineProjection * sineProjection + cosineProjection * cosineProjection)
+            / std::max<std::size_t>(1, toneSamples.size());
+        bestCoherentEnergy = std::max(bestCoherentEnergy, coherentEnergy);
+    }
+    result.toneResidualDb = 10.0 * std::log10(
+        std::max(1.0e-12, outputEnergy - bestCoherentEnergy)
+        / std::max(1.0e-12, bestCoherentEnergy));
+    const double commandedTravel = rawTargetSample - startSample;
     const double achievedTravel = scratch.readPosition() - startSample;
     result.travelMeaningful = true;
     result.travelRatio = achievedTravel / commandedTravel;
     result.leadLimitedBlocks = scratch.motionStats().leadLimitedBlocks;
+    result.starvationBlocks = scratch.cacheStats().starvationBlocks;
     for (int ch = 0; ch < out.getNumChannels() && result.finite; ++ch)
         for (int i = 0; i < out.getNumSamples(); ++i)
             if (!std::isfinite(out.getSample(ch, i))) {
@@ -852,6 +913,45 @@ int main(int argc, char** argv)
                 "FLX10 jitter trajectory has no callback-rate acceleration edge");
         require(jitter.leadLimitedBlocks == 0,
                 "FLX10 jitter trajectory never trips the runaway guard");
+    }
+
+    for (const double physicalRate : {0.1, 1.0}) {
+        for (const int blockSize : {128, 256, 512}) {
+            const auto motion = runFlx10JitterMotion(cache, handle, blockSize,
+                                                     physicalRate);
+            if (g_verbose)
+                std::cout << "FLX10 " << physicalRate << "x jitter [" << blockSize
+                          << "] mean=" << motion.meanRateX
+                          << " travel=" << motion.travelRatio
+                          << " rateStep=" << motion.maxRateStepX
+                          << " rateRms=" << motion.rmsBlockRateErrorX
+                          << " toneResidualDb=" << motion.toneResidualDb
+                          << " maxLagMs=" << motion.maxLagMs
+                          << " starvation=" << motion.starvationBlocks
+                          << " accelEdge=" << motion.maxRateStepDeltaX << '\n';
+            require(motion.finite, "slow/nominal FLX10 jitter output stays finite");
+            require(std::abs(motion.travelRatio - 1.0) < 0.01,
+                    "slow/nominal FLX10 preserves exact tick travel");
+            require(motion.maxLagMs < 2.0,
+                    "slow/nominal FLX10 read head stays within two milliseconds of the hand");
+            require(motion.rmsBlockRateErrorX < physicalRate * 0.04,
+                    "slow/nominal FLX10 whole-tick motion has low pitch flutter");
+            require(motion.maxRateStepX < 0.002,
+                    "slow/nominal FLX10 whole-tick motion has no sharp rate step");
+            require(motion.toneResidualDb < (physicalRate < 0.5 ? -20.0 : -25.0),
+                    "slow/nominal FLX10 rendered tone has no strong flanger sidebands");
+            require(motion.starvationBlocks == 0,
+                    "slow/nominal FLX10 renders without scratch cache starvation");
+            require(motion.leadLimitedBlocks == 0,
+                    "slow/nominal FLX10 does not hit the runaway guard");
+        }
+    }
+    {
+        const auto ideal = runFlx10JitterMotion(cache, handle, 512, 1.0, true);
+        require(ideal.toneResidualDb < -80.0,
+                "ideal 1x scratch reader is clean without FLX10 timing jitter");
+        if (g_verbose)
+            std::cout << "ideal 1x tone residual=" << ideal.toneResidualDb << " dB\n";
     }
 
     struct Scenario {

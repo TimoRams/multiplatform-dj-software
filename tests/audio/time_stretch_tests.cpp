@@ -1,11 +1,13 @@
 #include "audio/TimeStretchProcessor.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <iostream>
 #include <random>
 #include <thread>
 #include <cstdlib>
+#include <vector>
 
 namespace {
 class ToneSource final : public juce::AudioSource {
@@ -20,12 +22,15 @@ public:
         }
         for (int i=0;i<info.numSamples;++i) {
             const float value=static_cast<float>(0.2*std::sin(phase));
-            phase += 2.0*juce::MathConstants<double>::pi*220.0/sampleRate;
-            for(int ch=0;ch<info.buffer->getNumChannels();++ch) info.buffer->setSample(ch,info.startSample+i,value);
+            phase += 2.0*juce::MathConstants<double>::pi*frequency/sampleRate;
+            for(int ch=0;ch<info.buffer->getNumChannels();++ch)
+                info.buffer->setSample(ch,info.startSample+i,value * (ch == 0 ? 1.0f : rightGain));
         }
     }
     [[nodiscard]] std::uint64_t getRenderCalls() const noexcept { return renderCalls; }
     bool playing = true;
+    double frequency = 220.0;
+    float rightGain = 1.0f;
 private:
     double sampleRate=48000.0, phase=0.0;
     std::uint64_t renderCalls=0;
@@ -38,6 +43,153 @@ bool waitForGeneration(TimeStretchProcessor& source,std::uint64_t oldGeneration)
     while(std::chrono::steady_clock::now()<until){source.getNextAudioBlock({&b,0,256});if(source.activeConfigurationGeneration()>oldGeneration)return true;std::this_thread::sleep_for(std::chrono::milliseconds(1));}
     return false;
 }
+
+bool checkKeylockToneQuality()
+{
+    bool ok = true;
+    constexpr int blockSize = 128;
+    for (const double sampleRate : {44100.0, 48000.0, 96000.0})
+    for (const double frequency : {55.0, 220.0, 1000.0, 10000.0}) {
+        ToneSource tone;
+        tone.rightGain = -0.5f;
+        tone.frequency = frequency * 0.8;
+        TimeStretchProcessor source(&tone);
+        source.setTempoRatio(0.8);
+        source.setPitchLockEnabled(true);
+        source.prepareToPlay(blockSize, sampleRate);
+        juce::AudioBuffer<float> block(2, blockSize);
+        const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (source.getLatencySamples() == 0 && std::chrono::steady_clock::now() < until) {
+            source.getNextAudioBlock({&block, 0, blockSize});
+            std::this_thread::sleep_for(std::chrono::duration<double>(blockSize / sampleRate));
+        }
+        ok &= require(source.getLatencySamples() > 0, "Signalsmith engages for quality measurement");
+        const auto seeds = source.realtimeStats().keylockSeeds;
+        // Reuse the live pipeline to exercise pitch updates in both directions.
+        for (const double tempo : {0.8, 0.9, 1.0, 1.1, 1.2, 0.8}) {
+            tone.frequency = frequency * tempo;
+            source.setTempoRatio(tempo);
+            const int settleSamples = 3 * source.getLatencySamples() + blockSize;
+            for (int i = 0; i < settleSamples; i += blockSize)
+                source.getNextAudioBlock({&block, 0, blockSize});
+            double energy = 0.0;
+            double stereoError = 0.0;
+            int crossings = 0;
+            double firstCrossing = 0.0, lastCrossing = 0.0;
+            float previous = block.getSample(0, blockSize - 1);
+            const int measuredSamples = static_cast<int>(sampleRate);
+            std::vector<float> output;
+            output.reserve(measuredSamples);
+            const double expectedStep = 2.0 * juce::MathConstants<double>::pi * frequency / sampleRate;
+            for (int offset = 0; offset < measuredSamples; offset += blockSize) {
+                const int count = std::min(blockSize, measuredSamples - offset);
+                source.getNextAudioBlock({&block, 0, count});
+                for (int i = 0; i < count; ++i) {
+                    const double value = block.getSample(0, i);
+                    if (previous < 0.0f && value >= 0.0) {
+                        // Sine interpolation avoids the substantial timing bias
+                        // of a straight-line crossing near Nyquist.
+                        const double crossingPhase = std::atan2(
+                            value * std::sin(expectedStep), value * std::cos(expectedStep) - previous);
+                        lastCrossing = offset + i - crossingPhase / expectedStep;
+                        if (crossings++ == 0)
+                            firstCrossing = lastCrossing;
+                    }
+                    previous = static_cast<float>(value);
+                    output.push_back(static_cast<float>(value));
+                    energy += value * value;
+                    const double error = block.getSample(1, i) - tone.rightGain * value;
+                    stereoError += error * error;
+                }
+            }
+            energy /= measuredSamples;
+            if (!require(crossings > 2, "quality measurement contains a sustained audible tone")) {
+                ok = false;
+                continue;
+            }
+            const double measuredHz = (crossings - 1) * sampleRate / (lastCrossing - firstCrossing);
+            double sinProjection = 0.0, cosProjection = 0.0;
+            double ss = 0.0, cc = 0.0, sc = 0.0;
+            for (int i = 0; i < measuredSamples; ++i) {
+                const double phase = 2.0 * juce::MathConstants<double>::pi * measuredHz * i / sampleRate;
+                const double s = std::sin(phase), c = std::cos(phase);
+                sinProjection += output[i] * s;
+                cosProjection += output[i] * c;
+                ss += s * s;
+                cc += c * c;
+                sc += s * c;
+            }
+            const double determinant = ss * cc - sc * sc;
+            const double a = (sinProjection * cc - cosProjection * sc) / determinant;
+            const double b = (cosProjection * ss - sinProjection * sc) / determinant;
+            const double coherentEnergy = (a * sinProjection + b * cosProjection) / measuredSamples;
+            const double gainDb = 10.0 * std::log10(std::max(1.0e-20, energy) / 0.02);
+            const double residualDb = 10.0 * std::log10(std::max(1.0e-20, energy - coherentEnergy)
+                                                       / std::max(1.0e-20, energy));
+            const double pitchCents = 1200.0 * std::log2(measuredHz / frequency);
+            // Regression limits, not a perceptual transparency guarantee. The
+            // spectral peak mapper is less pitch-accurate for deep bass.
+            const double pitchLimitCents = frequency < 100.0 ? 25.0 : 10.0;
+            const bool quality = std::isfinite(gainDb) && std::isfinite(residualDb)
+                && std::abs(gainDb) < 0.5 && residualDb < -40.0
+                && std::isfinite(pitchCents) && std::abs(pitchCents) < pitchLimitCents;
+            if (!quality || std::getenv("BROCKDJ_TIME_STRETCH_BENCHMARK"))
+                std::cout << "keylock rate=" << sampleRate << " tone-hz=" << frequency
+                          << " tempo=" << tempo << " gain-db=" << gainDb
+                          << " residual-db=" << residualDb << " pitch-cents=" << pitchCents
+                          << " stereo-error=" << stereoError / measuredSamples << '\n';
+            ok &= require(quality, "Signalsmith preserves tone level and spectral purity across +/-20%");
+            ok &= require(stereoError / measuredSamples < 1.0e-9,
+                          "Signalsmith preserves stereo polarity and channel balance");
+        }
+        ok &= require(source.realtimeStats().keylockSeeds == seeds,
+                      "tempo sweeps do not reseed the quality measurement pipeline");
+    }
+    return ok;
+}
+
+bool checkKeyShiftTonalitySwitch()
+{
+    ToneSource tone;
+    tone.frequency = 10000.0;
+    TimeStretchProcessor source(&tone);
+    source.setKeySemitoneOffset(12.0 * std::log2(1.2));
+    source.setPitchLockEnabled(true);
+    source.prepareToPlay(128, 48000.0);
+    juce::AudioBuffer<float> block(2, 128);
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (source.getLatencySamples() == 0 && std::chrono::steady_clock::now() < until) {
+        source.getNextAudioBlock({&block, 0, 128});
+        std::this_thread::sleep_for(std::chrono::duration<double>(128.0 / 48000.0));
+    }
+    bool ok = require(source.getLatencySamples() > 0, "Key Shift engages its pipeline");
+    const auto seeds = source.realtimeStats().keylockSeeds;
+    // At unity tempo the pitch factor stays identical across these toggles.
+    // The frequency map must still change, without reseeding or rebuilding.
+    for (const bool locked : {true, false, true}) {
+        source.setPitchLockEnabled(locked);
+        for (int i = 0; i < 3 * source.getLatencySamples() + 128; i += 128)
+            source.getNextAudioBlock({&block, 0, 128});
+        int crossings = 0;
+        float previous = block.getSample(0, 127);
+        for (int offset = 0; offset < 48000; offset += 128) {
+            const int count = std::min(128, 48000 - offset);
+            source.getNextAudioBlock({&block, 0, count});
+            for (int i = 0; i < count; ++i) {
+                const float value = block.getSample(0, i);
+                crossings += previous < 0.0f && value >= 0.0f;
+                previous = value;
+            }
+        }
+        const double expectedHz = locked ? 12000.0
+            : 10000.0 + 0.2 * TimeStretchProcessor::kKeyShiftTonalityLimitHz / std::sqrt(1.2);
+        ok &= require(std::abs(crossings - expectedHz) < 5.0,
+                      "keylock/Key Shift toggles update tonality even at an unchanged pitch factor");
+    }
+    ok &= require(source.realtimeStats().keylockSeeds == seeds,
+                  "Key Shift tonality toggles preserve the running spectral state");
+    return ok;
+}
 }
 
 static_assert(noexcept(std::declval<TimeStretchProcessor&>().getNextAudioBlock(
@@ -45,6 +197,8 @@ static_assert(noexcept(std::declval<TimeStretchProcessor&>().getNextAudioBlock(
 
 int main(){
     bool ok=true;
+    ok &= checkKeylockToneQuality();
+    ok &= checkKeyShiftTonalitySwitch();
     for (const auto backend : {TimeStretchBackend::Signalsmith, TimeStretchBackend::RubberBand}) {
         ToneSource tone;
         TimeStretchProcessor source(&tone);
@@ -372,6 +526,50 @@ int main(){
     for(int i=0;i<1000;++i){if(i%7==0)stress.setPitchLockEnabled((i/7)%2);stress.setTempoRatio(0.25+(rng()%700)/100.0);if(i%31==0)stress.enterScratchBypass();if(i%31==2)stress.endScratchBypass();const int sizes[]={64,128,256,512,1024,2048,4096,8192};juce::AudioBuffer<float>b(2,sizes[rng()%8]);stress.getNextAudioBlock({&b,0,b.getNumSamples()});ok&=require(finite(b),"stress finite");}
     const auto stats=stress.realtimeStats();ok&=require(stats.prepareCallsFromAudioThread+stats.resetCallsFromAudioThread+stats.prewarmCallsFromAudioThread+stats.bufferGrowthsFromAudioThread+stats.blockingLockAttempts==0,"all realtime counters zero");
     if(std::getenv("BROCKDJ_TIME_STRETCH_BENCHMARK")){
+        for (const int blockSize : {64, 128, 512})
+        for (const double tempo : {0.8, 1.2}) {
+            std::array<ToneSource, 4> tones;
+            std::array<std::unique_ptr<TimeStretchProcessor>, 4> decks;
+            juce::AudioBuffer<float> output(2, blockSize);
+            for (int i = 0; i < 4; ++i) {
+                tones[i].frequency = (110.0 + 55.0 * i) * tempo;
+                decks[i] = std::make_unique<TimeStretchProcessor>(&tones[i]);
+                decks[i]->setTempoRatio(tempo);
+                decks[i]->setPitchLockEnabled(true);
+                decks[i]->prepareToPlay(blockSize, 48000.0);
+            }
+            const auto period = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>(blockSize / 48000.0));
+            auto deadline = std::chrono::steady_clock::now();
+            const auto render = [&] {
+                deadline += period;
+                std::this_thread::sleep_until(deadline);
+                const auto start = std::chrono::steady_clock::now();
+                for (auto& deck : decks)
+                    deck->getNextAudioBlock({&output, 0, blockSize});
+                return std::chrono::duration<double, std::micro>(
+                    std::chrono::steady_clock::now() - start).count();
+            };
+            const auto until = deadline + std::chrono::seconds(5);
+            bool engaged = false;
+            while (!engaged && std::chrono::steady_clock::now() < until) {
+                render();
+                engaged = std::all_of(decks.begin(), decks.end(),
+                    [](const auto& deck) { return deck->getLatencySamples() > 0; });
+            }
+            ok &= require(engaged, "four-deck benchmark actually renders through Signalsmith");
+            double total = 0.0, worst = 0.0;
+            constexpr int measuredBlocks = 200;
+            for (int i = 0; i < measuredBlocks; ++i) {
+                const double micros = render();
+                total += micros;
+                worst = std::max(worst, micros);
+            }
+            std::cout << "keylock four-deck block=" << blockSize << " tempo=" << tempo
+                      << " latency-samples=" << decks[0]->getLatencySamples()
+                      << " budget-us=" << (1.0e6 * blockSize / 48000.0)
+                      << " mean-us=" << total / measuredBlocks << " worst-us=" << worst << '\n';
+        }
         juce::AudioBuffer<float>b(2,512);double total=0.0,worst=0.0;
         for(int i=0;i<1000;++i){const auto start=std::chrono::steady_clock::now();stress.getNextAudioBlock({&b,0,512});const auto us=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-start).count();total+=us;worst=std::max(worst,us);}
         std::cout<<"time-stretch 512-block mean-us="<<total/1000.0<<" worst-us="<<worst<<'\n';

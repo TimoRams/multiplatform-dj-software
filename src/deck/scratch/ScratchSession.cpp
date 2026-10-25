@@ -71,32 +71,40 @@ bool ScratchSession::submitRelative(engine::audio::RenderModeRouter* bridge,
                                     double deltaSec,
                                     double sampleRate) noexcept
 {
-    // Preserve high-rate controller timing. Hardware-specific filtering happens
-    // before this compatibility delta path, not by stretching fast events.
+    // Use the actual interval between pointer events to estimate hand speed.
     const double dtSec = m_lastMoveClock.isValid()
         ? std::clamp(static_cast<double>(m_lastMoveClock.nsecsElapsed()) * 1e-9, 1e-6, 0.120)
         : 0.016;
-    return submitRelativeAtInterval(bridge, deltaSec, sampleRate, dtSec);
+    // Mouse movement can be coalesced by the window system. Its delta is the
+    // complete distance since the previous event, so clipping one event loses
+    // real drag distance (especially on Linux with sparse pointer events).
+    return submitRelativeAtInterval(bridge, deltaSec, sampleRate, dtSec,
+                                    std::numeric_limits<double>::quiet_NaN(), false);
 }
 
 bool ScratchSession::submitRelativeAtInterval(engine::audio::RenderModeRouter* bridge,
                                               double deltaSec,
                                               double sampleRate,
                                               double eventIntervalSeconds,
-                                              double measuredRate) noexcept
+                                              double measuredRate,
+                                              bool clampEventSpike) noexcept
 {
     if (!bridge || deltaSec == 0.0)
         return false;
 
-    const double clamped = std::clamp(deltaSec, -kEventSpikeClampSec, kEventSpikeClampSec);
+    // MIDI deltas still need spike protection; pointer deltas are measured
+    // positions and must remain lossless even when events are coalesced.
+    const double acceptedDelta = clampEventSpike
+        ? std::clamp(deltaSec, -kEventSpikeClampSec, kEventSpikeClampSec)
+        : deltaSec;
     const double dtSec = std::clamp(
         std::isfinite(eventIntervalSeconds) ? eventIntervalSeconds : 0.016,
         1e-6,
         0.120);
     m_lastMoveClock.restart();
 
-    bridge->submitHandDeltaSeconds(clamped, dtSec, measuredRate);
-    m_lastRawSec += clamped;
+    bridge->submitHandDeltaSeconds(acceptedDelta, dtSec, measuredRate);
+    m_lastRawSec += acceptedDelta;
     // Audio position is owned by the tracker on the audio thread (driven by the
     // platter target updated in submitHandDeltaSeconds). Only publish the display.
     bridge->publishScratchDisplay(m_lastRawSec);

@@ -319,6 +319,20 @@ worker shutdown. There is no cross-launch parsed-analysis cache.
 
 ### Keylock and tempo
 
+- `time_stretch` measures Signalsmith at 0.8x, 0.9x, 1.0x, 1.1x and 1.2x,
+  then returns to 0.8x on the same running pipeline. At 44.1/48/96 kHz it checks
+  55/220/1000/10000 Hz tones, level error below 0.5 dB, tone-fit residual energy
+  below -40 dB, pitch error below 25 cents for deep bass and 10 cents otherwise,
+  and stereo polarity/balance. These are regression bounds, not audibility
+  thresholds. `BROCKDJ_TIME_STRETCH_BENCHMARK=1` prints the measurements and
+  callback/seed timings. Key Shift toggles also exercise unchanged pitch factors.
+- Compare real drum-heavy, vocal, bass and sustained/polyphonic tracks at -20%,
+  -10%, unity, +10% and +20% against a trusted offline stretch, with matched
+  loudness. Listen for bass detuning, kick/hi-hat smearing, vocal warble, stereo
+  image movement and clicks during slow/fast tempo sweeps. Repeat with manual
+  Key Shift and in a two-/four-deck session at 64/128/512-sample buffers.
+  The 120 ms/eight-hop configuration intentionally trades latency (about 135 ms
+  at 44.1/48/96 kHz) for quality; check cueing and scratch-release behaviour too.
 - Enable keylock on two to four decks and make large positive/negative tempo
   changes, including rapid backend or keylock toggles.
 - Verify finite audio, plausible reported latency, bounded transition time,
@@ -359,7 +373,7 @@ worker shutdown. There is no cross-launch parsed-analysis cache.
   feel, and latency separately; a generic "sounds better" result is not enough
   to tune estimator or DSP constants.
 - With `BROCKDJ_AUDIO_DIAGNOSTICS=1`, confirm whether a click coincides with
-  `scratchStarvation`, `scratchDropped`, or callback/device XRun growth before
+  `scratchStarvation`, `scratchDropped`, or `hardwareXruns` growth before
   changing DSP or handoff behavior.
 - Use `docs/architecture/scratch-engine-quality.md` as the implementation and
   measurement reference; update it whenever a scratch constant or owner moves.

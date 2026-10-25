@@ -651,7 +651,7 @@ add_executable(BrockDJ_deck_audio_graph_tests
     src/audio/DeckAudioPipeline.cpp
     src/audio/cache/AudioPageCache.cpp src/audio/cache/CachedPlaybackAudioSource.cpp
     src/audio/RenderModeRouter.cpp src/audio/internal/ScratchResampler.cpp src/audio/internal/HermiteResamplingAudioSource.cpp
-    src/deck/scratch/ScratchController.cpp
+    src/deck/scratch/ScratchController.cpp src/deck/scratch/ScratchSession.cpp
     src/audio/TimeStretchProcessor.cpp src/audio/DeckChannelProcessor.cpp
     src/fx/FxProcessor.cpp src/audio/internal/BrickwallLimiter.cpp
 )

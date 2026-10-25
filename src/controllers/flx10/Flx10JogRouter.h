@@ -101,9 +101,15 @@ class JogSpeedEstimator {
 public:
     static constexpr std::size_t kCapacity = 32;
 
+    struct MotionFit {
+        double rate = 0.0;
+        double positionOffsetTicks = 0.0;
+    };
+
     void reset(double timestampSeconds = 0.0) noexcept
     {
         m_count = 0;
+        m_fitCount = 0;
         m_cumulativeTicks = 0.0;
         m_cumulativeAbsTicks = 0.0;
         m_baseTicks = 0.0;
@@ -154,6 +160,28 @@ public:
 
         m_cumulativeTicks += ticks;
         m_cumulativeAbsTicks += std::abs(ticks);
+        if (m_fitCount > 0 && timestampSeconds
+                - m_fitSamples[m_fitCount - 1].timestampSeconds
+                    <= kJogTimestampCoalesceSeconds) {
+            auto& newestFit = m_fitSamples[m_fitCount - 1];
+            newestFit.timestampSeconds = std::max(newestFit.timestampSeconds,
+                                                  timestampSeconds);
+            newestFit.cumulativeTicks = m_cumulativeTicks;
+        } else {
+            if (m_fitCount == kCapacity) {
+                for (std::size_t i = 1; i < m_fitCount; ++i)
+                    m_fitSamples[i - 1] = m_fitSamples[i];
+                --m_fitCount;
+            }
+            m_fitSamples[m_fitCount++] = {
+                timestampSeconds, m_cumulativeTicks, m_cumulativeAbsTicks};
+        }
+        while (m_fitCount > 4 && timestampSeconds
+                - m_fitSamples[0].timestampSeconds > 0.030) {
+            for (std::size_t i = 1; i < m_fitCount; ++i)
+                m_fitSamples[i - 1] = m_fitSamples[i];
+            --m_fitCount;
+        }
         if (coalesced) {
             auto& newest = m_samples[m_count - 1];
             newest.timestampSeconds = std::max(newest.timestampSeconds, timestampSeconds);
@@ -208,6 +236,51 @@ public:
 
         const double ticks = newest.cumulativeTicks - m_baseTicks;
         return scratchDeltaSeconds(ticks) / elapsedSeconds;
+    }
+
+    [[nodiscard]] MotionFit motionFit(double nowSeconds) const noexcept
+    {
+        const double measuredRate = rate(nowSeconds);
+        const double fitWeight = std::clamp(2.5 - std::abs(measuredRate),
+                                            0.0, 1.0);
+        if (m_fitCount < 4 || fitWeight == 0.0)
+            return {measuredRate, 0.0};
+
+        const double newestTime = m_fitSamples[m_fitCount - 1].timestampSeconds;
+        if (newestTime - m_fitSamples[0].timestampSeconds < 0.0035)
+            return {measuredRate, 0.0};
+
+        // Regress cumulative ticks against receive time. The slope estimates
+        // velocity, while the fitted endpoint removes one packet's receive
+        // jitter from the audio target. Exact raw ticks remain untouched.
+        double sumTime = 0.0, sumTicks = 0.0;
+        for (std::size_t i = 0; i < m_fitCount; ++i) {
+            sumTime += m_fitSamples[i].timestampSeconds - newestTime;
+            sumTicks += m_fitSamples[i].cumulativeTicks;
+        }
+        const double meanTime = sumTime / static_cast<double>(m_fitCount);
+        const double meanTicks = sumTicks / static_cast<double>(m_fitCount);
+        double timeVariance = 0.0, covariance = 0.0;
+        for (std::size_t i = 0; i < m_fitCount; ++i) {
+            const double time = m_fitSamples[i].timestampSeconds
+                - newestTime - meanTime;
+            const double ticks = m_fitSamples[i].cumulativeTicks - meanTicks;
+            timeVariance += time * time;
+            covariance += time * ticks;
+        }
+        if (timeVariance < 1.0e-12)
+            return {measuredRate, 0.0};
+
+        const double fittedRate = scratchDeltaSeconds(covariance / timeVariance);
+        const double rawEndpoint = m_fitSamples[m_fitCount - 1].cumulativeTicks;
+        const double fittedEndpoint = meanTicks - covariance / timeVariance
+            * meanTime;
+        const double maxOffsetTicks = std::max(1.0,
+            std::abs(measuredRate) * 0.0005 / scratchDeltaSeconds(1.0));
+        return {std::clamp(measuredRate
+                + fitWeight * (fittedRate - measuredRate), -8.0, 8.0),
+                fitWeight * std::clamp(fittedEndpoint - rawEndpoint,
+                                       -maxOffsetTicks, maxOffsetTicks)};
     }
 
     [[nodiscard]] std::size_t sampleCount() const noexcept { return m_count; }
@@ -268,7 +341,9 @@ private:
     }
 
     std::array<Sample, kCapacity> m_samples {};
+    std::array<Sample, kCapacity> m_fitSamples {};
     std::size_t m_count = 0;
+    std::size_t m_fitCount = 0;
     double m_cumulativeTicks = 0.0;
     double m_cumulativeAbsTicks = 0.0;
     double m_baseTimestampSeconds = 0.0;
@@ -277,6 +352,43 @@ private:
     double m_lastEventIntervalSeconds = 0.0;
     bool m_hasBase = false;
     int m_lastDirection = 0;
+};
+
+// Smooth USB-frame rate variation without changing cumulative platter ticks.
+// A physical turn switches direction immediately; only same-direction jitter
+// is averaged, so a baby scratch does not wait for the previous stroke.
+class JogVelocitySmoother {
+public:
+    [[nodiscard]] double current() const noexcept { return m_rate; }
+
+    void reset() noexcept
+    {
+        m_rate = 0.0;
+        m_lastTimestampSeconds = 0.0;
+        m_hasTimestamp = false;
+    }
+
+    [[nodiscard]] double push(double rate, double timestampSeconds) noexcept
+    {
+        if (!std::isfinite(rate) || !std::isfinite(timestampSeconds))
+            return m_rate;
+        if (!m_hasTimestamp || m_rate == 0.0 || m_rate * rate < 0.0) {
+            m_rate = rate;
+        } else {
+            constexpr double kJitterTimeSeconds = 0.006;
+            const double dt = std::clamp(timestampSeconds - m_lastTimestampSeconds,
+                                         0.0, 0.120);
+            m_rate += -std::expm1(-dt / kJitterTimeSeconds) * (rate - m_rate);
+        }
+        m_lastTimestampSeconds = timestampSeconds;
+        m_hasTimestamp = true;
+        return m_rate;
+    }
+
+private:
+    double m_rate = 0.0;
+    double m_lastTimestampSeconds = 0.0;
+    bool m_hasTimestamp = false;
 };
 
 class Flx10JogRouter {
