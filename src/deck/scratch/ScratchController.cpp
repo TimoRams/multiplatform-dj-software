@@ -47,6 +47,7 @@ void ScratchController::startScratch(double audioSamplePos,
     m_rawSpeed.store(0.0, std::memory_order_relaxed);
     m_smoothedSpeed.store(0.0, std::memory_order_relaxed);
     m_commandedHandSpeed.store(0.0, std::memory_order_relaxed);
+    m_inputMeasuredRate.store(true, std::memory_order_relaxed);
     m_releaseSpeedEstimate.store(0.0, std::memory_order_relaxed);
     m_pendingOppositeReleaseSpeed.store(0.0, std::memory_order_relaxed);
     m_oppositeReleaseSampleCount.store(0, std::memory_order_relaxed);
@@ -74,6 +75,7 @@ void ScratchController::stopScratch() noexcept
     m_rawSpeed.store(0.0, std::memory_order_relaxed);
     m_smoothedSpeed.store(0.0, std::memory_order_relaxed);
     m_commandedHandSpeed.store(0.0, std::memory_order_relaxed);
+    m_inputMeasuredRate.store(true, std::memory_order_relaxed);
     m_releaseSpeedEstimate.store(0.0, std::memory_order_relaxed);
     m_pendingOppositeReleaseSpeed.store(0.0, std::memory_order_relaxed);
     m_oppositeReleaseSampleCount.store(0, std::memory_order_relaxed);
@@ -295,7 +297,11 @@ void ScratchController::submitHandDelta(double deltaTrackSec,
     raw = std::clamp(raw, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
 
     const double target = m_handPositionSec.load(std::memory_order_relaxed) + deltaTrackSec;
-    const double oldVelocity = m_smoothedSpeed.load(std::memory_order_relaxed);
+    // UI input is filtered against the previous hand command. The audio thread
+    // also publishes its measured read-head speed to m_smoothedSpeed; using
+    // that feedback here feeds callback lag back into the hand estimator and
+    // makes small, alternating movements depend on callback timing.
+    const double oldVelocity = m_commandedHandSpeed.load(std::memory_order_relaxed);
 
     // UI/MIDI deltas are already integrated into position — keep rate close to
     // the instantaneous delta/dt so audio integration does not drift far ahead
@@ -307,9 +313,12 @@ void ScratchController::submitHandDelta(double deltaTrackSec,
     // already clean — a second filter on the same quantity is what makes slow,
     // deliberate movement feel rubbery rather than precise.
     double velocity = raw;
-    if ((oldVelocity * raw) < 0.0 && std::abs(raw) > 0.04)
+    const bool clearReversal = (oldVelocity * raw) < 0.0
+        && std::abs(raw) > 0.04;
+    if (inputMeasuredRate && clearReversal)
         velocity = oldVelocity + (raw - oldVelocity) * 0.45;
-    else if (!inputMeasuredRate && std::abs(raw) < m_config.slowSpeedThreshold)
+    else if (!inputMeasuredRate && !clearReversal
+             && std::abs(raw) < m_config.slowSpeedThreshold)
         velocity = oldVelocity + (raw - oldVelocity) * 0.72;
     velocity = std::clamp(velocity, -m_config.maxScratchSpeed, m_config.maxScratchSpeed);
 
@@ -317,6 +326,7 @@ void ScratchController::submitHandDelta(double deltaTrackSec,
     m_rawSpeed.store(raw, std::memory_order_relaxed);
     m_smoothedSpeed.store(velocity, std::memory_order_relaxed);
     m_commandedHandSpeed.store(velocity, std::memory_order_relaxed);
+    m_inputMeasuredRate.store(inputMeasuredRate, std::memory_order_relaxed);
 
     const double previousRelease =
         m_releaseSpeedEstimate.load(std::memory_order_relaxed);
@@ -368,8 +378,13 @@ void ScratchController::submitHandDelta(double deltaTrackSec,
 
 double ScratchController::commandedHandSpeed() const noexcept
 {
+    return handPrediction().normalizedRate;
+}
+
+ScratchHandPrediction ScratchController::handPrediction() const noexcept
+{
     const double commanded = m_commandedHandSpeed.load(std::memory_order_relaxed);
-    const double idleMs = timeSinceLastMoveMs();
+    const double idleMs = std::clamp(timeSinceLastMoveMs(), 0.0, 120.0);
 
     // The configured hold and decay are sized for a jog ring reporting every
     // couple of milliseconds. Applied unchanged to an on-screen drag, which can
@@ -380,14 +395,18 @@ double ScratchController::commandedHandSpeed() const noexcept
     // floors: a jog ring sees exactly the behaviour it always did.
     const double intervalMs = m_eventIntervalMs.load(std::memory_order_relaxed);
     const double holdMs = std::max(m_config.commandVelocityHoldMs, intervalMs * 1.25);
-    if (idleMs <= holdMs)
-        return commanded;
-
     const double tauMs = std::max({1.0, m_config.commandVelocityDecayTauMs,
                                    intervalMs * 0.5});
-    const double gain = std::exp(-(idleMs - holdMs) / tauMs);
+    const double decayMs = std::max(0.0, idleMs - holdMs);
+    const double gain = decayMs > 0.0 ? std::exp(-decayMs / tauMs) : 1.0;
     const double decayed = commanded * gain;
-    return std::abs(decayed) < m_config.minScratchSpeed ? 0.0 : decayed;
+    const double integratedMs = std::min(idleMs, holdMs)
+        + tauMs * (-std::expm1(-decayMs / tauMs));
+    return {std::abs(decayed) < m_config.minScratchSpeed ? 0.0 : decayed,
+            commanded,
+            commanded * integratedMs * 0.001,
+            idleMs * 0.001,
+            m_inputMeasuredRate.load(std::memory_order_relaxed)};
 }
 
 double ScratchController::releaseSpeedEstimate() const noexcept

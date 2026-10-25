@@ -279,7 +279,12 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
     m_transport->publishScratchPosition(m_scratch.armGrab(grabSec, len, loopCtx));
 
     if (m_audioPipeline->renderModeRouterPtr()) {
-        m_audioPipeline->renderModeRouter().beginScratch(m_transport->heldPosition(),
+        // The UI supplied this exact visual/playhead anchor at pointer-down.
+        // heldPosition can still be one control tick behind while a deck is
+        // playing (and is also changed when stopAudio() above runs). Starting
+        // the audio reader from it made both waveform and virtual-platter
+        // scratches jump to an older cursor before their first drag delta.
+        m_audioPipeline->renderModeRouter().beginScratch(grabSec,
                                     m_transport->sourceSampleRate(),
                                     std::max(0.0, len),
                                     wasPlayingBeforeGrab,
@@ -294,7 +299,8 @@ void DjEngine::pauseForScrub(double anchorPositionSec)
                                            m_transport->sourceSampleRate());
         m_audioPipeline->renderModeRouter().setReverse(m_transport->reverse());
         m_audioPipeline->renderModeRouter().setKeylockEnabled(false);
-        m_audioPipeline->renderModeRouter().syncScratchReadPosition(m_transport->heldPosition(), m_transport->sourceSampleRate());
+        m_audioPipeline->renderModeRouter().syncScratchReadPosition(
+            grabSec, m_transport->sourceSampleRate());
     }
 
     emit scrubbingChanged();
@@ -314,6 +320,7 @@ void DjEngine::scratchBySeconds(double deltaSeconds, bool vinylOneToOnePosition)
 
     if (!m_scratch.submitRelative(m_audioPipeline->renderModeRouterPtr(), deltaSeconds, m_transport->sourceSampleRate()))
         return;
+    m_audioPipeline->renderModeRouter().prefetchScratchTarget();
 }
 
 
@@ -337,6 +344,7 @@ void DjEngine::scratchBySecondsTimed(double deltaSeconds,
         m_transport->sourceSampleRate(),
         interval,
         measuredRate);
+    m_audioPipeline->renderModeRouter().prefetchScratchTarget();
 }
 
 

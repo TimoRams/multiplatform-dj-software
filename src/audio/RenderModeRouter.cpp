@@ -105,6 +105,10 @@ void RenderModeRouter::beginScratch(double anchorSeconds,
     const double audioAnchorSamples = audioAnchorSec * trackSampleRate;
     const double targetSamples = audioAnchorSec * trackSampleRate;
     m_scratchResampler.prefetchAround(audioAnchorSamples);
+    m_lastScratchPrefetchPage.store(
+        static_cast<std::int64_t>(audioAnchorSamples)
+            / AudioPage::kSamplesPerChannel,
+        std::memory_order_relaxed);
     const double playbackSpeed = m_reverse.load(std::memory_order_relaxed)
         ? -std::abs(normalPlaybackSpeed)
         : std::abs(normalPlaybackSpeed);
@@ -211,6 +215,22 @@ void RenderModeRouter::addTargetDeltaSeconds(double deltaSeconds, double trackSa
     const double next = m_scratchDisplaySec.load(std::memory_order_relaxed) + deltaSeconds;
     m_scratchDisplaySec.store(next, std::memory_order_relaxed);
     juce::ignoreUnused(trackSampleRate);
+}
+
+void RenderModeRouter::prefetchScratchTarget() noexcept
+{
+    const double samplePosition = m_platter.targetSamplePosition();
+    if (!std::isfinite(samplePosition) || samplePosition < 0.0)
+        return;
+    const auto page = static_cast<std::int64_t>(samplePosition)
+        / AudioPage::kSamplesPerChannel;
+    auto previous = m_lastScratchPrefetchPage.load(std::memory_order_relaxed);
+    if (previous >= 0 && std::abs(page - previous) <= 1)
+        return;
+    if (!m_lastScratchPrefetchPage.compare_exchange_strong(
+            previous, page, std::memory_order_relaxed, std::memory_order_relaxed))
+        return;
+    m_scratchResampler.prefetchAround(samplePosition);
 }
 
 void RenderModeRouter::submitHandDeltaSeconds(double deltaSeconds,
@@ -1129,8 +1149,16 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
         // read head to the hand target. Exact tracking for slow/precise moves,
         // momentum across sparse UI events, no overshoot/snap-back warble.
         double target = m_platter.targetSamplePosition();
-        double commandedRate = m_controller.commandedHandSpeed() * oneX;
-        double inputLead = m_controller.eventAgeSeconds();
+        const auto hand = m_controller.handPrediction();
+        double commandedRate = hand.normalizedRate * oneX;
+        double inputLead = hand.ageSeconds;
+        double accumulatedLeadSamples = hand.leadSeconds * sr;
+        double maxReferenceCorrectionRate = std::numeric_limits<double>::infinity();
+        if (!hand.inputMeasuredRate) {
+            const double uiSpeed = std::abs(hand.initialNormalizedRate);
+            maxReferenceCorrectionRate =
+                (0.05 + 0.5 * uiSpeed + uiSpeed * uiSpeed) * oneX;
+        }
         engine::scratch::RealtimeScratchSnapshot realtimeSnapshot;
         if (readRealtimeScratchInput(realtimeSnapshot)) {
             target = m_audioScratchInputAnchorSamples
@@ -1140,13 +1168,16 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
                 engine::scratch::RealtimeScratchInput::clockSeconds()
                     - realtimeSnapshot.lastEventTimestampSeconds,
                 0.0, 0.030);
+            accumulatedLeadSamples = std::numeric_limits<double>::quiet_NaN();
+            maxReferenceCorrectionRate = std::numeric_limits<double>::infinity();
         }
         const double maxAbsRate = ScratchResampler::kMaximumTrackingRate * oneX;
         // Extrapolate by the target's real age. Using the same half-interval on
         // every callback made blocks between MIDI events alternately coast and
         // brake against an unchanged target — the audible scratch judder.
         const double usedRate = m_scratchResampler.processScratchTracking(
-            target, commandedRate, maxAbsRate, bufferToFill, inputLead);
+            target, commandedRate, maxAbsRate, bufferToFill, inputLead,
+            accumulatedLeadSamples, maxReferenceCorrectionRate);
         const double readPositionSamples = m_scratchResampler.readPosition();
         const bool staleReleaseBlock = m_audioReleaseCommand.generation != 0
             && m_audioReleaseCommand.generation

@@ -63,6 +63,9 @@ public:
     void submitScratchReleaseSpeed(double normalizedReleaseSpeed) noexcept;
     void engageScratchDuringInertia() noexcept;
     void addTargetDeltaSeconds(double deltaSeconds, double trackSampleRate) noexcept;
+    // Control-thread hint: warm cache pages as the hand moves so the audio
+    // callback does not discover a cold region and fade out mid-scratch.
+    void prefetchScratchTarget() noexcept;
     // measuredRate: hand speed in playback rates as measured by the input, or
     // a non-finite value when the input cannot measure it better than the
     // per-event quotient. See ScratchController::submitHandDelta.
@@ -187,6 +190,7 @@ private:
     std::atomic<double> m_trackLengthSeconds { 0.0 };
     std::atomic<double> m_scratchDisplaySec { 0.0 };
     std::atomic<double> m_audioScratchReadPositionSamples { 0.0 };
+    std::atomic<std::int64_t> m_lastScratchPrefetchPage {-1};
 
     double m_outputSampleRate = 44100.0;
     int m_blockSize = 512;

@@ -2902,6 +2902,7 @@ int main(int argc, char** argv)
                           != std::string::npos
                       && turntableIndicator.find("root.engine.scratchBySeconds(deltaSec)")
                           != std::string::npos
+                      && turntableIndicator.find("preventStealing: true") != std::string::npos
                       && turntableIndicator.find("onCanceled: {") != std::string::npos,
                   "exclusive turntable and crossfader controls are local to their owning QML hosts");
     ok &= require(workspace.find("DeckControl") != std::string::npos, "workspace uses shared deck component");

@@ -333,6 +333,16 @@ bool ScratchResampler::refillWindowFromCache(double rate, int outputBlockSize) n
     if (count < kMinWindowSamples) return false;
     const auto firstPage = AudioPage::pageIndexForSample(start);
     const auto lastPage = AudioPage::pageIndexForSample(start + count - 1);
+    // Pin every required page before touching the active audio window. A
+    // speculative page can be missing while the old window still contains the
+    // entire current block. Copying the resident prefix first would corrupt
+    // that old window even though the refill cannot be committed.
+    constexpr std::size_t kMaximumWindowPages =
+        kMaximumSourceBufferSamples / AudioPage::kSamplesPerChannel + 1;
+    std::array<AudioPageReadGuard, kMaximumWindowPages> pages;
+    const auto pageCount = static_cast<std::size_t>(lastPage - firstPage + 1);
+    if (pageCount > pages.size())
+        return false;
     bool complete = true;
     for (auto pageIndex = firstPage; pageIndex <= lastPage; ++pageIndex) {
         auto page = m_cache->tryGetPage(m_cacheHandle, pageIndex);
@@ -351,6 +361,12 @@ bool ScratchResampler::refillWindowFromCache(double rate, int outputBlockSize) n
             continue;
         }
         m_pageHits.fetch_add(1, std::memory_order_relaxed);
+        pages[static_cast<std::size_t>(pageIndex - firstPage)] = std::move(page);
+    }
+    if (!complete) return false;
+
+    for (auto pageIndex = firstPage; pageIndex <= lastPage; ++pageIndex) {
+        const auto& page = pages[static_cast<std::size_t>(pageIndex - firstPage)];
         const auto copyStart = std::max<std::int64_t>(start, page->firstSample);
         const auto copyEnd = std::min<std::int64_t>(start + count,
             page->firstSample + page->validSampleCount);
@@ -364,7 +380,6 @@ bool ScratchResampler::refillWindowFromCache(double rate, int outputBlockSize) n
                             m_sourceBuffer.getWritePointer(channel) + targetOffset);
         }
     }
-    if (!complete) return false;
     m_bufferOriginSample = static_cast<double>(start);
     m_sourceSize = static_cast<int>(count);
     return true;
@@ -402,8 +417,11 @@ bool ScratchResampler::ensureWindow(double rate, int outputBlockSize) noexcept
     else if (maxRate <= 0.0)
         refillRate = minRate;
 
-    if (!refillWindowFromCache(refillRate, outputBlockSize))
-        return false;
+    if (!refillWindowFromCache(refillRate, outputBlockSize)) {
+        // A missed read-ahead page does not invalidate samples already in the
+        // local window. Keep playing until the head actually reaches its edge.
+        return positionInWindow(clampedMin) && positionInWindow(clampedMax);
+    }
     // A caller may legally provide a block larger than the prepared device
     // size. Never claim the whole path is resident when the fixed RT buffer is
     // too small; the starvation fade is safer than reading a partial window.
@@ -565,9 +583,11 @@ void ScratchResampler::processBlock(double rate,
         }
 
         m_readPos = wrapPosition(m_readPos);
+        // A predicted endpoint may miss the window while the first part of
+        // this block is still resident. Render those samples and fade only
+        // when the read head actually reaches unavailable audio.
         writeScratchOutput(out0, out1, i,
-                           windowReady && positionInWindow(m_readPos),
-                           m_smoothedRate);
+                           positionInWindow(m_readPos), m_smoothedRate);
 
         m_readPos += m_smoothedRate;
     }
@@ -582,7 +602,9 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
                                                 double commandedRate,
                                                 double maxAbsRate,
                                                 const juce::AudioSourceChannelInfo& output,
-                                                double inputLeadSeconds) noexcept
+                                                double inputLeadSeconds,
+                                                double accumulatedLeadSamples,
+                                                double maxReferenceCorrectionRate) noexcept
 {
     if (!output.buffer || output.numSamples <= 0) {
         if (output.buffer)
@@ -707,7 +729,10 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
                                    m_leadSpeedEnvelope * std::exp(-blockSeconds / 0.25));
     // Where the hand is estimated to be right now, given the event we have and
     // how old it already is.
-    const double handNow = target + referenceVelocity * kInputLeadSeconds;
+    const double handNow = target +
+        (std::isfinite(accumulatedLeadSamples)
+             ? accumulatedLeadSamples
+             : referenceVelocity * kInputLeadSeconds);
 
     // Join the persistent reference state to the newest predicted hand state
     // with a minimum-jerk quintic Hermite curve. The former linear correction
@@ -716,14 +741,27 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
     // acceleration makes adjacent curves C2, while the absolute position and
     // velocity endpoints still prevent sticker drift and preserve hand speed.
     if (!m_referenceValid) {
-        m_referencePos = handNow;
-        m_referenceVelocity = referenceVelocity;
+        m_referencePos = std::isfinite(maxReferenceCorrectionRate)
+            ? m_readPos : handNow;
+        m_referenceVelocity = std::isfinite(maxReferenceCorrectionRate)
+            ? m_trackVel : referenceVelocity;
         m_referenceValid = true;
     }
     const double referenceStartPos = m_referencePos;
     const double referenceStartVelocity = m_referenceVelocity;
-    const double referenceEndPos = target
-        + referenceVelocity * (kInputLeadSeconds + blockSeconds);
+    double referenceEndPos = handNow + referenceVelocity * blockSeconds;
+    if (std::isfinite(maxReferenceCorrectionRate)) {
+        // A one-pixel UI event can encode tens of milliseconds of slow hand
+        // travel. Spread its position correction over audio blocks rather than
+        // forcing that entire step through one 2-10 ms Hermite curve.
+        const double uncorrectedEnd = referenceStartPos
+            + referenceStartVelocity * blockSeconds;
+        const double maxCorrection = std::max(0.0, maxReferenceCorrectionRate)
+            * static_cast<double>(numSamples);
+        referenceEndPos = uncorrectedEnd + std::clamp(
+            referenceEndPos - uncorrectedEnd,
+            -maxCorrection, maxCorrection);
+    }
     const double referenceEndVelocity = referenceVelocity;
     const double positionDelta = referenceEndPos - referenceStartPos;
     const double velocityStartBlock = referenceStartVelocity * blockSeconds;
@@ -818,7 +856,7 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
 
         m_readPos = wrapPosition(m_readPos);
         writeScratchOutput(out0, out1, i,
-                           windowReady && positionInWindow(m_readPos), rate);
+                           positionInWindow(m_readPos), rate);
         m_readPos += rate;
 
         if (!m_loopActive) {

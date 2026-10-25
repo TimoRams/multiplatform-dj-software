@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <mutex>
 
 namespace engine::audio {
@@ -77,12 +78,17 @@ public:
     // sparse events without a hard snap. Returns the rate used (track samples
     // per output sample).
     // inputLeadSeconds is the measured age of the supplied target when the
-    // block starts. It defaults to a typical hardware jog cadence.
+    // block starts. accumulatedLeadSamples is the integrated motion since
+    // that input event, when the input path has a decaying velocity command.
     double processScratchTracking(double targetPosSamples,
                                   double commandedRate,
                                   double maxAbsRate,
                                   const juce::AudioSourceChannelInfo& output,
-                                  double inputLeadSeconds = 0.002) noexcept;
+                                  double inputLeadSeconds = 0.002,
+                                  double accumulatedLeadSamples =
+                                      std::numeric_limits<double>::quiet_NaN(),
+                                  double maxReferenceCorrectionRate =
+                                      std::numeric_limits<double>::infinity()) noexcept;
 
     [[nodiscard]] double readPosition() const noexcept { return m_readPos; }
     [[nodiscard]] int deviceBufferSize() const noexcept { return m_deviceBufferSize; }

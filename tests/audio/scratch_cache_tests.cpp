@@ -221,6 +221,35 @@ int main(int argc, char** argv)
     scratch.processBlock(1.0, {&loopOut, 0, 512});
     ok &= require(scratch.cacheStats().recoveryEvents > 0, "recovery fade counted");
 
+    // The next speculative page is absent, but the previously decoded local
+    // window still covers this block. A failed refill must neither overwrite
+    // that window nor fade a playable scratch to silence.
+    AudioPageCache boundaryCache(8 * 1024 * 1024);
+    auto boundaryHandle = boundaryCache.openTrack({stereo});
+    ok &= require(waitResident(boundaryCache, boundaryHandle, 1, 1),
+                  "boundary fixture's current page resident");
+    engine::audio::ScratchResampler boundaryScratch;
+    boundaryScratch.prepare(2, 128, 48000);
+    boundaryScratch.setTrackLengthSamples(boundaryHandle.lengthInSamples());
+    boundaryScratch.setTrackCacheSource(&boundaryCache, boundaryHandle);
+    boundaryScratch.reset(24'000);
+    juce::AudioBuffer<float> boundaryOut(2, 128);
+    for (int block = 0; block < 3; ++block)
+        boundaryScratch.processScratchTracking(
+            24'000, 0.0, 8.0, {&boundaryOut, 0, 128}, 0.0);
+    const auto starvationBeforeBoundary = boundaryScratch.cacheStats().starvationBlocks;
+    const auto missesBeforeBoundary = boundaryScratch.cacheStats().pageMisses;
+    boundaryScratch.setReadPositionSamples(28'870);
+    boundaryScratch.processBlock(0.05, {&boundaryOut, 0, 128});
+    double boundaryEnergy = 0.0;
+    for (int i = 0; i < 128; ++i)
+        boundaryEnergy += std::abs(boundaryOut.getSample(0, i));
+    ok &= require(boundaryScratch.cacheStats().pageMisses > missesBeforeBoundary,
+                  "boundary refill observes the missing speculative page");
+    ok &= require(boundaryScratch.cacheStats().starvationBlocks == starvationBeforeBoundary
+                      && boundaryEnergy > 1.0,
+                  "missing speculative page keeps the current scratch window audible");
+
     cache.releaseTrack(monoHandle);
     scratch.setTrackCacheSource(&cache, handle);
     scratch.reset(1000);

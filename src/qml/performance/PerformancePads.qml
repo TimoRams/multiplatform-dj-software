@@ -860,6 +860,7 @@ Item {
             anchors.fill: parent
             hoverEnabled: true
             acceptedButtons: Qt.LeftButton
+            preventStealing: true
             cursorShape: root.dragActive ? Qt.ClosedHandCursor : Qt.OpenHandCursor
 
             function inPlatter(mouse) {
@@ -911,9 +912,13 @@ Item {
                 root._lastCursorAngle = cur
 
                 if (!root._scratchEngaged) {
-                    root._accumDragAngle += Math.abs(delta)
-                    if (root._accumDragAngle < root.scratchDeadzoneDeg) return
+                    // Keep the signed travel while filtering pointer jitter.
+                    // Once the drag is intentional, send all motion since press.
+                    root._accumDragAngle += delta
+                    if (Math.abs(root._accumDragAngle) < root.scratchDeadzoneDeg) return
                     root._scratchEngaged = true
+                    delta = root._accumDragAngle
+                    root._accumDragAngle = 0.0
                 }
 
                 root._totalScratchedAngle += delta

@@ -62,6 +62,14 @@ enum class ScratchPhase : std::uint8_t {
     HandoffPending
 };
 
+struct ScratchHandPrediction {
+    double normalizedRate = 0.0;
+    double initialNormalizedRate = 0.0;
+    double leadSeconds = 0.0;
+    double ageSeconds = 0.0;
+    bool inputMeasuredRate = true;
+};
+
 // Virtual turntable controller. Hand movement drives playback velocity
 // directly, with light adaptive smoothing for fast throws and clean slow drags.
 // The release path ramps toward the current deck speed instead of decaying
@@ -197,6 +205,10 @@ public:
     // producing ticks. Unlike smoothedSpeed(), audio feedback never overwrites
     // this value, so the position tracker can interpolate sparse MIDI events.
     [[nodiscard]] double commandedHandSpeed() const noexcept;
+    // Integrate the decaying hand command from its last event. Multiplying the
+    // current (already decayed) speed by event age would make a still-moving
+    // estimated hand run backwards as the command fades between sparse UI moves.
+    [[nodiscard]] ScratchHandPrediction handPrediction() const noexcept;
     // Stable control-side throw estimate. Unlike the audio feedback velocity,
     // one isolated opposite-signed pointer sample cannot reverse its direction.
     [[nodiscard]] double releaseSpeedEstimate() const noexcept;
@@ -239,6 +251,7 @@ private:
     std::atomic<double> m_rawSpeed { 0.0 };
     std::atomic<double> m_smoothedSpeed { 0.0 };
     std::atomic<double> m_commandedHandSpeed { 0.0 };
+    std::atomic<bool> m_inputMeasuredRate { true };
     std::atomic<double> m_releaseSpeedEstimate { 0.0 };
     std::atomic<double> m_pendingOppositeReleaseSpeed { 0.0 };
     std::atomic<int> m_oppositeReleaseSampleCount { 0 };

@@ -21,7 +21,9 @@
 #include <cmath>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -630,6 +632,128 @@ int main(int argc, char** argv)
         std::cout << "scratch motion scenarios:\n";
 
     const double start = 4.0 * kSampleRate;
+
+    {
+        // A slow UI drag may advance just one pixel every 100 ms. Its velocity
+        // decays between events, but the distance already predicted since the
+        // last event must never shrink: that would play the same grain backwards
+        // before the next forward pixel arrives.
+        constexpr double eventInterval = 0.100;
+        constexpr double speed = 0.100;
+        constexpr double hold = 0.050;
+        constexpr double decay = 0.020;
+        const double blockSeconds = 128.0 / kSampleRate;
+        const auto runQuantizedUi = [&](bool integrateLead) {
+            ScratchResampler scratch;
+            scratch.prepare(2, 128, kSampleRate);
+            scratch.setTrackLengthSamples(static_cast<double>(kFixtureSamples));
+            scratch.setTrackCacheSource(&cache, handle);
+            scratch.reset(start);
+            juce::AudioBuffer<float> out(2, 128);
+            double worstReverseRate = 0.0;
+            double peakForwardRate = 0.0;
+            for (int block = 0; block < 110; ++block) {
+                const double time = block * blockSeconds;
+                const int eventIndex = static_cast<int>(time / eventInterval);
+                const double target = start
+                    + (eventIndex + 1) * speed * kSampleRate * eventInterval;
+                const double age = time - eventIndex * eventInterval;
+                const double fadingAge = std::max(0.0, age - hold);
+                const double rate = speed * std::exp(-fadingAge / decay);
+                const double lead = speed * kSampleRate *
+                    (std::min(age, hold) + decay * (-std::expm1(-fadingAge / decay)));
+                scratch.processScratchTracking(target, rate,
+                    ScratchResampler::kMaximumTrackingRate,
+                    {&out, 0, 128}, age,
+                    integrateLead ? lead : std::numeric_limits<double>::quiet_NaN(),
+                    integrateLead ? 0.11 : std::numeric_limits<double>::infinity());
+                if (age > 0.040 && age < 0.098)
+                    worstReverseRate = std::min(worstReverseRate,
+                                                 scratch.motionStats().minRate);
+                if (block > 40)
+                    peakForwardRate = std::max(peakForwardRate,
+                                                scratch.motionStats().maxRate);
+            }
+            const double trueHandAtEnd = start + speed * kSampleRate
+                * (eventInterval + 110 * blockSeconds);
+            return std::tuple {worstReverseRate, peakForwardRate,
+                               std::abs(scratch.readPosition() - trueHandAtEnd)};
+        };
+        const auto previous = runQuantizedUi(false);
+        const auto corrected = runQuantizedUi(true);
+        if (g_verbose)
+            std::cout << "slow quantized UI reverse rate=" << std::get<0>(previous)
+                      << "x before, " << std::get<0>(corrected) << "x after; peak="
+                      << std::get<1>(corrected) << "x error="
+                      << std::get<2>(corrected) << " samples\n";
+        require(std::get<0>(previous) < -0.025,
+                "sparse UI fixture reproduces unwanted backward playback");
+        require(std::get<0>(corrected) > -0.025,
+                "slow forward UI steps do not repeatedly play backwards");
+        require(std::get<1>(corrected) < 0.30,
+                "one-pixel UI steps do not produce a fast pitch burst");
+        require(std::get<2>(corrected) < 160.0,
+                "slow UI prediction stays close to the moving hand");
+
+        ScratchResampler reversingScratch;
+        reversingScratch.prepare(2, 128, kSampleRate);
+        reversingScratch.setTrackLengthSamples(static_cast<double>(kFixtureSamples));
+        reversingScratch.setTrackCacheSource(&cache, handle);
+        reversingScratch.reset(start);
+        juce::AudioBuffer<float> reverseOut(2, 128);
+        double establishedReverseRate = 0.0;
+        for (int block = 0; block < 210; ++block) {
+            const double time = block * blockSeconds;
+            const int eventIndex = static_cast<int>(time / eventInterval);
+            const double direction = eventIndex < 3 ? 1.0 : -1.0;
+            const double stepIndex = eventIndex < 3
+                ? eventIndex + 1.0 : 5.0 - eventIndex;
+            const double target = start + stepIndex * speed * kSampleRate
+                * eventInterval;
+            const double age = time - eventIndex * eventInterval;
+            const double fadingAge = std::max(0.0, age - hold);
+            const double rate = direction * speed * std::exp(-fadingAge / decay);
+            const double lead = direction * speed * kSampleRate *
+                (std::min(age, hold) + decay * (-std::expm1(-fadingAge / decay)));
+            reversingScratch.processScratchTracking(target, rate,
+                ScratchResampler::kMaximumTrackingRate,
+                {&reverseOut, 0, 128}, age, lead, 0.11);
+            if (time > 0.36)
+                establishedReverseRate = std::min(establishedReverseRate,
+                                                   reversingScratch.motionStats().minRate);
+        }
+        require(establishedReverseRate < -0.04,
+                "slow UI scratch follows a deliberate reverse gesture");
+    }
+
+    {
+        engine::scratch::ScratchController controller;
+        controller.setTrackSampleRate(kSampleRate);
+        controller.startScratch(start, false, 1.0);
+        controller.submitHandDelta(0.0016, 0.016);
+        controller.submitHandDelta(-0.0016, 0.016);
+        require(controller.commandedHandSpeed() < -0.09,
+                "slow UI reversal takes effect on the first opposite movement");
+    }
+
+    {
+        // A delayed audio callback may report the previous read-head speed
+        // between two pointer events. That feedback must not change the hand
+        // velocity estimated from the same sequence of pointer movements.
+        engine::scratch::ScratchController reference;
+        engine::scratch::ScratchController withAudioFeedback;
+        for (auto* controller : {&reference, &withAudioFeedback}) {
+            controller->setTrackSampleRate(kSampleRate);
+            controller->startScratch(start, false, 1.0);
+            controller->submitHandDelta(0.008, 0.016);
+        }
+        withAudioFeedback.setMeasuredNormalizedSpeed(-2.0);
+        reference.submitHandDelta(-0.004, 0.016);
+        withAudioFeedback.submitHandDelta(-0.004, 0.016);
+        require(std::abs(reference.commandedHandSpeed()
+                         - withAudioFeedback.commandedHandSpeed()) < 1e-12,
+                "audio read-head feedback cannot alter UI hand tracking");
+    }
 
     {
         engine::scratch::ScratchController controller;

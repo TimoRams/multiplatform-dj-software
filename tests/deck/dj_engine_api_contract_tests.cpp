@@ -34,6 +34,8 @@ int main(int argc, char** argv)
         QStringLiteral(SOURCE_DIR "/src/fx/FxTypes.h"));
     bool ok = require(!header.isEmpty(), "DjEngine public contract header is readable");
     const auto deckSource = readFile(QStringLiteral(SOURCE_DIR "/src/deck/DjEngine.cpp"));
+    const auto performanceSource = readFile(
+        QStringLiteral(SOURCE_DIR "/src/deck/DjEnginePerformance.cpp"));
     const auto transportSource = readFile(QStringLiteral(SOURCE_DIR "/src/deck/DjEngineTransport.cpp"));
     const auto librarySource = readFile(QStringLiteral(SOURCE_DIR "/src/library/LibraryAnalysisManager.cpp"));
     const auto bootstrapSource = readFile(QStringLiteral(SOURCE_DIR "/src/app/ApplicationBootstrap.cpp"));
@@ -45,6 +47,17 @@ int main(int argc, char** argv)
     const auto fxSource = readFile(QStringLiteral(SOURCE_DIR "/src/fx/FxManager.cpp"));
     const auto mappingSource = readFile(
         QStringLiteral(SOURCE_DIR "/src/controllers/mappings/DDJ-FLX10.brockdj.xml"));
+    const auto pauseForScrubBegin = performanceSource.indexOf(
+        QStringLiteral("void DjEngine::pauseForScrub"));
+    const auto scratchBySecondsBegin = performanceSource.indexOf(
+        QStringLiteral("void DjEngine::scratchBySeconds"));
+    const auto pauseForScrub = performanceSource.mid(
+        pauseForScrubBegin, scratchBySecondsBegin - pauseForScrubBegin);
+    ok &= require(pauseForScrubBegin >= 0 && scratchBySecondsBegin > pauseForScrubBegin
+                      && pauseForScrub.contains(QStringLiteral("beginScratch(grabSec,"))
+                      && pauseForScrub.contains(QStringLiteral("syncScratchReadPosition(\n            grabSec,"))
+                      && !pauseForScrub.contains(QStringLiteral("beginScratch(m_transport->heldPosition()")),
+                  "UI scratch starts the audio reader at the exact pointer-down anchor");
     for (const QChar deck : {QLatin1Char('A'), QLatin1Char('B'), QLatin1Char('C'), QLatin1Char('D')}) {
         const auto entry = QStringLiteral("paramId=\"deck%1_reverse\" status=\"0x9%2\" control=\"0x38\" type=\"toggle\"")
             .arg(deck).arg(deck.toLatin1() - 'A');

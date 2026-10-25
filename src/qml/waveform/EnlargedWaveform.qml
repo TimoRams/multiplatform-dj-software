@@ -363,6 +363,7 @@ Item {
             // Let clicks pass through to the grid overlay on the left strip.
             anchors.leftMargin: root.showBeatgridEditor ? beatgridPanel.occupiedWidth : 0
             preventStealing: true
+            acceptedButtons: Qt.LeftButton
 
             property real pressMouseX: 0
             property real pressPlayheadSec: 0
@@ -391,8 +392,8 @@ Item {
                     if (Math.abs(dragPx) < scrubDeadzonePx)
                         return
                     scrubEngaged = true
-                    lastDragPx = dragPx
-                    return
+                    // The first move is already measured from pointer-down.
+                    // Dropping it makes a short, precise drag produce no sound.
                 }
 
                 if (waveItem.effectivePixelsPerSecond <= 0.0)
