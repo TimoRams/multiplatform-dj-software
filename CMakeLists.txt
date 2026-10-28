@@ -1010,6 +1010,7 @@ add_test(NAME immediate_long_track_playback COMMAND BrockDJ_track_loader_tests)
 add_executable(BrockDJ_waveform_motion_tests
     tests/waveform/waveform_motion_tests.cpp
 )
+target_include_directories(BrockDJ_waveform_motion_tests PRIVATE src)
 target_compile_features(BrockDJ_waveform_motion_tests PRIVATE cxx_std_23)
 add_test(NAME waveform_motion COMMAND BrockDJ_waveform_motion_tests)
 

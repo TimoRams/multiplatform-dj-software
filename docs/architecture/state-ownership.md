@@ -46,3 +46,21 @@ not emit tempo-fader changes or restart controller waveform uploads. Beatgrid
 edits invalidate immutable render snapshots and move tempo nodes with the grid.
 Changing the downbeat on a dynamic grid preserves its variable spacing.
 The built-in analyzer still produces constant-tempo grids only.
+
+Normal playback position is counted in rendered output samples by
+`DeckAudioPipeline`, not inferred from the decoder/read-ahead cursor.
+`AudioEngine` supplies the same block-end timestamp to all four decks.
+The coherent presentation snapshot carries source seconds, signed tempo/jog
+rate, loop bounds, track and seek generations. `DeckTransport` extrapolates
+that snapshot for display and applies rate-scaled output latency; it never
+trims a deck's visual speed independently. Direct playback, Signalsmith and
+Rubber Band therefore share one output-time reference, including when their
+input buffers pull different amounts of source audio. Tempo, nudge and reverse
+settings are consumed together with their presentation rate at the audio
+block boundary. Scratch retains its audio-owned cursor and explicitly hands
+that cursor back to normal playback.
+
+Equal exact effective BPM gives equal beat spacing and scroll speed, not
+automatic phase alignment: a manual offset is preserved until the user
+nudges or enables phase sync. Rounded BPM labels and genuinely variable
+imported beat intervals are not treated as proof of equal tempo.

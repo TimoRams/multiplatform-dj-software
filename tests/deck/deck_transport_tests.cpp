@@ -3,6 +3,7 @@
 #include "app/ControlClock.h"
 #include "audio/cache/AudioPageCache.h"
 #include "audio/DeckAudioPipeline.h"
+#include "audio/TimeStretchProcessor.h"
 #include "deck/sync/DeckSync.h"
 
 #include <QCoreApplication>
@@ -28,10 +29,10 @@ bool require(bool value, const char* message)
     return value;
 }
 
-bool writeWave(const QString& path, double frequency)
+bool writeWave(const QString& path, double frequency, int durationSeconds = 1)
 {
     constexpr double sampleRate = 48'000.0;
-    constexpr int sampleCount = 48'000;
+    const int sampleCount = 48'000 * durationSeconds;
     juce::WavAudioFormat format;
     std::unique_ptr<juce::OutputStream> stream =
         std::make_unique<juce::FileOutputStream>(juce::File(path.toStdString()));
@@ -102,6 +103,126 @@ struct DeckFixture {
     DeckTransport transport;
 };
 
+bool testMatchedPresentation(AudioPageCache& cache, const QString& path)
+{
+    bool ok = true;
+    for (int mode = 0; mode < 3; ++mode) {
+        for (const double speed : {0.5, 1.0, 1.5}) {
+            DeckFixture first(cache), second(cache);
+            for (auto* fixture : {&first, &second}) {
+                auto handle = cache.openTrack({path});
+                ok &= require(waitForPage(cache, handle), "presentation track is cached");
+                ok &= require(fixture->transport.installPreparedTrack(
+                                  handle, {1, 48'000.0, 8.0}),
+                              "presentation track is installed");
+                fixture->graph.setTimeStretchBackend(mode == 2
+                    ? TimeStretchBackend::RubberBand : TimeStretchBackend::Signalsmith);
+                fixture->graph.setKeylockEnabled(mode != 0);
+            }
+            first.transport.setPlaybackRate(speed);
+            second.transport.setPlaybackRate(speed * 0.5);
+            first.transport.seekToSeconds(1.0);
+            second.transport.seekToSeconds(0.5);
+            first.transport.setPlaying(true);
+            second.transport.setPlaying(true);
+            juce::AudioBuffer<float> buffer(2, 512);
+            double time = 1000.0;
+            for (int block = 0; block < 320; ++block) {
+                const int samples = std::array {64, 127, 256, 511}[block % 4];
+                time += samples / 48'000.0;
+                first.graph.getNextAudioBlockAtTime({&buffer, 0, samples}, time);
+                second.graph.getNextAudioBlockAtTime({&buffer, 0, samples}, time);
+                // Control delivery is intentionally different. Neither cadence
+                // may trim the display independently of rendered output time.
+                if (block % 2 == 0)
+                    first.transport.updateControlState({}, false, false);
+                if (block % 7 == 0)
+                    second.transport.updateControlState({}, false, false);
+                const auto a = first.graph.presentationPosition();
+                const auto b = second.graph.presentationPosition();
+                const double now = time + (block % 5) * 0.0013;
+                ok &= require(std::abs(a.positionAt(now, 0.025) * 80.0
+                                     - b.positionAt(now, 0.025) * 160.0) < 1e-8,
+                              "matched BPM phase is stable with direct and both keylock backends");
+                ok &= require(a.rate == speed && b.rate == speed * 0.5,
+                              "presentation speed has no independent deck correction");
+                if (block == 160) {
+                    first.transport.seekToSeconds(1.3);
+                    second.transport.seekToSeconds(0.65);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            if (mode != 0) {
+                ok &= require(first.graph.timeStretch().activeBackend()
+                                  == (mode == 2 ? TimeStretchBackend::RubberBand
+                                                : TimeStretchBackend::Signalsmith)
+                                  && first.graph.realtimeStats().keylockSeeds > 0,
+                              "matched presentation actually exercised the requested stretcher");
+            }
+            first.transport.setPlaying(false);
+            first.graph.getNextAudioBlockAtTime({&buffer, 0, 128}, time + 0.01);
+            const auto paused = first.graph.presentationPosition();
+            ok &= require(paused.rate == 0.0
+                              && paused.positionAt(time + 1.0) == paused.seconds,
+                          "pause freezes the output timeline");
+            first.transport.seekToSeconds(2.0);
+            first.transport.setReverse(true);
+            first.transport.setPlaying(true);
+            first.graph.getNextAudioBlockAtTime({&buffer, 0, 480}, time + 0.02);
+            const auto reversed = first.graph.presentationPosition();
+            ok &= require(std::abs(reversed.seconds - (2.0 - 0.01 * speed)) < 1e-10
+                              && reversed.rate == -speed,
+                          "seek and reverse re-anchor the presentation at the audio boundary");
+            ok &= require(realtimeCountersAreZero(first.graph)
+                              && realtimeCountersAreZero(second.graph),
+                          "presentation clock introduces no realtime violations");
+        }
+    }
+    return ok;
+}
+
+bool testConcurrentPresentation(AudioPageCache& cache, const QString& path)
+{
+    DeckFixture fixture(cache);
+    auto handle = cache.openTrack({path});
+    if (!require(waitForPage(cache, handle), "concurrent presentation track is cached")
+        || !require(fixture.transport.installPreparedTrack(handle, {1, 48'000.0, 8.0}),
+                    "concurrent presentation track is installed"))
+        return false;
+    fixture.transport.seekToSeconds(2.0);
+    fixture.transport.setPlaying(true);
+    std::atomic<bool> stop {false};
+    std::atomic<int> blocks {0};
+    std::thread audio([&] {
+        juce::AudioBuffer<float> buffer(2, 128);
+        while (!stop.load(std::memory_order_acquire)) {
+            fixture.graph.getNextAudioBlock({&buffer, 0, 128});
+            blocks.fetch_add(1, std::memory_order_release);
+            std::this_thread::yield();
+        }
+    });
+    while (blocks.load(std::memory_order_acquire) == 0)
+        std::this_thread::yield();
+    bool ok = true;
+    for (int tick = 0; tick < 2000; ++tick) {
+        fixture.transport.setPlaybackRate(tick % 2 == 0 ? 0.75 : 1.25);
+        fixture.transport.setReverse((tick % 31) < 15);
+        fixture.transport.setJogNudgeRatio(tick % 3 == 0 ? 1.02 : 1.0);
+        const auto state = fixture.graph.transportSnapshot();
+        ok &= require(state.presentationCurrent
+                          && state.positionSeconds == state.presentation.seconds
+                          && std::isfinite(fixture.transport.visualPositionSeconds(0.025)),
+                      "concurrent display reads use one coherent rendered block");
+        fixture.transport.updateControlState({}, false, false);
+        std::this_thread::yield();
+    }
+    stop.store(true, std::memory_order_release);
+    audio.join();
+    return ok && require(blocks.load(std::memory_order_relaxed) > 1
+                             && realtimeCountersAreZero(fixture.graph),
+                         "concurrent tempo/direction updates remain realtime safe");
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -162,6 +283,10 @@ int main(int argc, char** argv)
     }
 
     AudioPageCache cache(32 * 1024 * 1024);
+    const auto presentationPath = directory.filePath(QStringLiteral("presentation.wav"));
+    ok &= require(writeWave(presentationPath, 220.0, 8), "presentation fixture created");
+    ok &= testMatchedPresentation(cache, presentationPath);
+    ok &= testConcurrentPresentation(cache, presentationPath);
     DeckFixture deck(cache);
     auto& transport = deck.transport;
 

@@ -269,9 +269,13 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
     float callbackPeakR = 0.0f;
     float minimumGainReduction = 1.0f;
     const AudioParameters parameters = s_parameterStore.snapshot();
+    const double callbackTime = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    const double sampleRate = m_sampleRate.load(std::memory_order_relaxed);
     for (int offset = 0; offset < totalSamples; offset += kProcessingChunkSize) {
         const int chunkSamples = std::min(kProcessingChunkSize, totalSamples - offset);
-        processChunk(*output, start + offset, chunkSamples, endpoints, aux, parameters,
+        processChunk(*output, start + offset, chunkSamples,
+                     callbackTime + (offset + chunkSamples) / sampleRate,
+                     endpoints, aux, parameters,
                      callbackPeakL, callbackPeakR, minimumGainReduction);
     }
 
@@ -337,6 +341,7 @@ float AudioEngine::masterVuR_s() noexcept
 
 void AudioEngine::processChunk(
     juce::AudioBuffer<float>& output, int outputStart, int samples,
+    double blockEndTimeSeconds,
     const std::array<DeckAudioPipeline*, kMaximumDecks>& endpoints,
     IAuxAudioEndpoint* aux, const AudioParameters& parameters,
     float& peakL, float& peakR,
@@ -353,7 +358,7 @@ void AudioEngine::processChunk(
         deckBuffer.clear(0, 0, samples);
         deckBuffer.clear(1, 0, samples);
         juce::AudioSourceChannelInfo info(&deckBuffer, 0, samples);
-        endpoint->getNextAudioBlock(info);
+        endpoint->getNextAudioBlockAtTime(info, blockEndTimeSeconds);
         bool nonFinite = sanitizeStereo(deckBuffer, samples);
         const auto& preFader = endpoint->preFaderBuffer();
         if (preFader.getNumChannels() < 1 || preFader.getNumSamples() < samples) {

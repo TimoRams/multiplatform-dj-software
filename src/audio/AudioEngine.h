@@ -140,6 +140,7 @@ private:
     void unregisterAux(std::uint64_t generation, IAuxAudioEndpoint* endpoint) noexcept;
     void waitForEndpointReaders() const noexcept;
     void processChunk(juce::AudioBuffer<float>& output, int outputStart, int samples,
+                      double blockEndTimeSeconds,
                       const std::array<DeckAudioPipeline*, kMaximumDecks>& endpoints,
                       IAuxAudioEndpoint* aux,
                       const AudioParameters& parameters,

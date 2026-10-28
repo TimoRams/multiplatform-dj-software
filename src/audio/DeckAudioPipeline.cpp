@@ -40,8 +40,20 @@ struct DeckAudioPipeline::Impl {
     // while the control thread retired it during a track handover.
     std::atomic<bool> trackSwapInProgress { false };
     std::atomic<unsigned int> audioCallbacksActive { 0 };
-    double basePlaybackRate = 1.0;
-    double jogNudgeRatio = 1.0;
+    struct PlaybackSettings {
+        double baseRate = 1.0;
+        double jogRatio = 1.0;
+        bool reverse = false;
+    };
+    RealtimeSnapshotStore<PlaybackSettings> playbackSettings;
+    PlaybackSettings appliedPlaybackSettings;
+    double outputSampleRate = 44100.0;
+    double presentationSeconds = 0.0;
+    double loopStart = 0.0;
+    double loopEnd = 0.0;
+    bool presentationRunning = false;
+    bool presentationWasScratch = false;
+    AudioPresentationClock presentation;
     AudioCommandQueue<64> commands;
 
     void beginTrackSwap() noexcept
@@ -75,12 +87,25 @@ struct DeckAudioPipeline::Impl {
 
     void consumeCommands() noexcept
     {
+        const auto settings = playbackSettings.snapshot();
+        if (settings.baseRate != appliedPlaybackSettings.baseRate
+            || settings.jogRatio != appliedPlaybackSettings.jogRatio
+            || settings.reverse != appliedPlaybackSettings.reverse) {
+            if (playback)
+                playback->setReverse(settings.reverse);
+            renderModeRouter->setReverse(settings.reverse);
+            renderModeRouter->setDeckTempoRatio(settings.baseRate);
+            renderModeRouter->setJogNudgeRatio(settings.jogRatio);
+            timeStretch->setTempoRatio(settings.baseRate * settings.jogRatio);
+            appliedPlaybackSettings = settings;
+        }
         AudioCommand command;
         while (commands.pop(command)) {
             if (command.generation != 0 && command.generation != trackGeneration)
                 continue;
             switch (command.type) {
             case AudioCommandType::Play:
+                presentationRunning = true;
                 // Both flags must flip on the same audio callback: TimeStretchProcessor
                 // pulls its input from RenderModeRouter, so if setInputPlaybackActive
                 // won races ahead of setNormalPlaybackEnabled (e.g. called synchronously
@@ -93,6 +118,7 @@ struct DeckAudioPipeline::Impl {
                     transport.start();
                 break;
             case AudioCommandType::Pause:
+                presentationRunning = false;
                 renderModeRouter->setNormalPlaybackEnabled(false);
                 timeStretch->setInputPlaybackActive(false);
                 break;
@@ -102,6 +128,8 @@ struct DeckAudioPipeline::Impl {
                 break;
             }
             case AudioCommandType::SetLoop: {
+                loopStart = command.valueA;
+                loopEnd = command.valueB;
                 const double sampleRate = handle.sampleRate();
                 if (playback && sampleRate > 0.0) {
                     playback->setLoopRangeSamples(
@@ -114,6 +142,7 @@ struct DeckAudioPipeline::Impl {
                 break;
             }
             case AudioCommandType::ClearLoop:
+                loopStart = loopEnd = 0.0;
                 if (playback)
                     playback->clearLoopRangeSamples();
                 renderModeRouter->setLoopRangeSeconds(0.0, 0.0, false,
@@ -131,6 +160,7 @@ struct DeckAudioPipeline::Impl {
         const auto pendingSeek = seekGeneration.load(std::memory_order_acquire);
         if (pendingSeek != appliedSeekGeneration.load(std::memory_order_relaxed)) {
             const double seconds = commandedPositionSeconds.load(std::memory_order_acquire);
+            presentationSeconds = seconds;
             if (playback) {
                 playback->setCommandedReadPosition(static_cast<std::int64_t>(
                     std::llround(seconds * handle.sampleRate())));
@@ -158,6 +188,7 @@ DeckAudioPipeline::~DeckAudioPipeline()
 
 void DeckAudioPipeline::prepareToPlay(int block, double rate)
 {
+    m_impl->outputSampleRate = std::max(1.0, rate);
     m_impl->mixer->prepareToPlay(block, rate);
 }
 
@@ -167,6 +198,12 @@ void DeckAudioPipeline::releaseResources()
 }
 
 void DeckAudioPipeline::getNextAudioBlock(const juce::AudioSourceChannelInfo& info) noexcept
+{
+    getNextAudioBlockAtTime(info, juce::Time::getMillisecondCounterHiRes() * 0.001);
+}
+
+void DeckAudioPipeline::getNextAudioBlockAtTime(
+    const juce::AudioSourceChannelInfo& info, double blockEndTimeSeconds) noexcept
 {
     struct CallbackActivity final {
         explicit CallbackActivity(std::atomic<unsigned int>& count) noexcept
@@ -191,6 +228,37 @@ void DeckAudioPipeline::getNextAudioBlock(const juce::AudioSourceChannelInfo& in
 
     m_impl->consumeCommands();
     m_impl->mixer->getNextAudioBlock(info);
+    const bool scratching = m_impl->renderModeRouter->activeRenderMode()
+        == engine::audio::RenderMode::Scratch;
+    const double length = m_impl->handle.sampleRate() > 0.0
+        ? m_impl->handle.lengthInSamples() / m_impl->handle.sampleRate() : 0.0;
+    const double rate = m_impl->presentationRunning
+        ? m_impl->appliedPlaybackSettings.baseRate * m_impl->appliedPlaybackSettings.jogRatio
+            * (m_impl->appliedPlaybackSettings.reverse ? -1.0 : 1.0)
+        : 0.0;
+    if (scratching || m_impl->presentationWasScratch) {
+        m_impl->presentationSeconds = m_impl->renderModeRouter->displayPositionSeconds();
+    }
+    if (!scratching) {
+        m_impl->presentationSeconds += info.numSamples / m_impl->outputSampleRate * rate;
+    }
+    m_impl->presentationWasScratch = scratching;
+    AudioPresentationPosition position {
+        m_impl->presentationSeconds, blockEndTimeSeconds, scratching ? 0.0 : rate,
+        length, m_impl->loopStart, m_impl->loopEnd, m_impl->trackGeneration,
+        m_impl->appliedSeekGeneration.load(std::memory_order_relaxed)
+    };
+    position.seconds = position.positionAt(blockEndTimeSeconds);
+    m_impl->presentationSeconds = position.seconds;
+    if ((rate > 0.0 && position.seconds >= length)
+        || (rate < 0.0 && position.seconds <= 0.0))
+        position.rate = 0.0;
+    m_impl->presentation.publish(position);
+}
+
+AudioPresentationPosition DeckAudioPipeline::presentationPosition() const noexcept
+{
+    return m_impl->presentation.snapshot();
 }
 
 const juce::AudioBuffer<float>& DeckAudioPipeline::preFaderBuffer() const noexcept
@@ -234,23 +302,21 @@ void DeckAudioPipeline::seekToSeconds(double seconds) noexcept
 
 void DeckAudioPipeline::setReverse(bool enabled) noexcept
 {
-    if (m_impl->playback)
-        m_impl->playback->setReverse(enabled);
-    m_impl->renderModeRouter->setReverse(enabled);
+    m_impl->playbackSettings.update([enabled](auto& settings) { settings.reverse = enabled; });
 }
 
 void DeckAudioPipeline::setPlaybackRate(double rate) noexcept
 {
-    m_impl->basePlaybackRate = std::clamp(rate, 0.01, 8.0);
-    m_impl->renderModeRouter->setDeckTempoRatio(m_impl->basePlaybackRate);
-    m_impl->timeStretch->setTempoRatio(m_impl->basePlaybackRate * m_impl->jogNudgeRatio);
+    m_impl->playbackSettings.update([rate](auto& settings) {
+        settings.baseRate = std::clamp(rate, 0.01, 8.0);
+    });
 }
 
 void DeckAudioPipeline::setJogNudgeRatio(double ratio) noexcept
 {
-    m_impl->jogNudgeRatio = std::clamp(ratio, 0.94, 1.06);
-    m_impl->renderModeRouter->setJogNudgeRatio(m_impl->jogNudgeRatio);
-    m_impl->timeStretch->setTempoRatio(m_impl->basePlaybackRate * m_impl->jogNudgeRatio);
+    m_impl->playbackSettings.update([ratio](auto& settings) {
+        settings.jogRatio = std::clamp(ratio, 0.94, 1.06);
+    });
 }
 
 void DeckAudioPipeline::setKeylockEnabled(bool enabled) noexcept
@@ -291,16 +357,21 @@ int DeckAudioPipeline::keylockLatencySamples() const noexcept
 
 DeckAudioPipeline::TransportSnapshot DeckAudioPipeline::transportSnapshot() const noexcept
 {
+    const auto presentation = presentationPosition();
+    const auto seek = m_impl->seekGeneration.load(std::memory_order_acquire);
+    const bool presentationCurrent = presentation.trackGeneration == m_impl->trackGeneration
+        && presentation.seekGeneration == seek;
     return {
         m_impl->playback != nullptr,
         m_impl->playback != nullptr
             && m_impl->transportRequestedRunning.load(std::memory_order_acquire),
-        m_impl->seekGeneration.load(std::memory_order_acquire)
+        seek
                 != m_impl->appliedSeekGeneration.load(std::memory_order_acquire)
             ? m_impl->commandedPositionSeconds.load(std::memory_order_acquire)
-            : m_impl->transport.getCurrentPosition(),
+            : presentationCurrent
+                ? presentation.seconds : m_impl->transport.getCurrentPosition(),
         m_impl->transport.getLengthInSeconds(),
-        m_impl->trackGeneration
+        m_impl->trackGeneration, presentation, presentationCurrent
     };
 }
 
@@ -328,7 +399,12 @@ void DeckAudioPipeline::installPreparedTrack(PreparedTrack track)
 
     m_impl->handle = track.cacheHandle;
     m_impl->playback = std::make_unique<CachedPlaybackAudioSource>(m_impl->cache, m_impl->handle);
+    m_impl->playback->setReverse(m_impl->appliedPlaybackSettings.reverse);
     m_impl->trackGeneration = track.trackGeneration;
+    m_impl->presentationSeconds = 0.0;
+    m_impl->presentationWasScratch = false;
+    m_impl->loopStart = m_impl->loopEnd = 0.0;
+    m_impl->presentation.publish({});
     m_impl->hasEverHadTrack.store(true, std::memory_order_release);
     m_impl->transport.setSource(m_impl->playback.get(), 0, nullptr, track.sourceSampleRate);
     m_impl->renderModeRouter->setPlaybackSource(m_impl->playback.get());
@@ -340,6 +416,7 @@ void DeckAudioPipeline::installPreparedTrack(PreparedTrack track)
     m_impl->appliedSeekGeneration.store(installedSeekGeneration, std::memory_order_release);
     const bool shouldRun =
         m_impl->transportRequestedRunning.load(std::memory_order_acquire);
+    m_impl->presentationRunning = shouldRun;
     m_impl->timeStretch->setInputPlaybackActive(shouldRun);
     m_impl->renderModeRouter->setNormalPlaybackEnabled(shouldRun);
     if (shouldRun)
@@ -355,6 +432,9 @@ void DeckAudioPipeline::clearTrack(std::uint64_t invalidThroughGeneration,
     Impl::ScopedTrackSwap trackSwap { *m_impl };
     m_impl->trackGeneration = std::max(m_impl->trackGeneration, invalidThroughGeneration);
     m_impl->transportRequestedRunning.store(false, std::memory_order_release);
+    m_impl->presentationRunning = false;
+    m_impl->presentationSeconds = 0.0;
+    m_impl->presentation.publish({});
     m_impl->commandedPositionSeconds.store(0.0, std::memory_order_release);
     const auto clearedSeekGeneration = m_impl->seekGeneration.load(std::memory_order_acquire);
     m_impl->appliedSeekGeneration.store(clearedSeekGeneration, std::memory_order_release);

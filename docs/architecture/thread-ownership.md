@@ -50,6 +50,7 @@ or change the staged startup and shutdown ordering.
 | Physical channel mapping | `AudioOutputRouter` inside `AudioEngine` | audio callback reads prepared routing snapshot | device queries are control-only |
 | Per-deck source chain | one `DeckAudioPipeline` | callback processes; control installs/clears | pipeline gate drains the complete callback, including command consumption, before source retirement |
 | Playback policy and position | `DeckTransport` | one Qt/control writer; audio publishes atomic playhead | snapshots contain values only |
+| Normal-playback presentation cursor | `DeckAudioPipeline` | audio integrates output sample durations; GUI reads a coherent atomic snapshot | common block-end timestamp across decks; track/seek generations reject old positions |
 | Cue/loop state | `DeckCueLoopController` | Qt/QML/MIDI/controller | persistence and transport commands remain outside callback |
 | Scratch session policy | `ScratchSession`/`ScratchController` | control-to-audio atomic commands | `RenderModeRouter` owns callback rendering state |
 | Time-stretch pipelines | `TimeStretchProcessor` | preparation worker publishes; callback claims active slot | worker joined and slots destroyed outside callback |

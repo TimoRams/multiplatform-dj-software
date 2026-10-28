@@ -40,6 +40,17 @@ endpoint clamping and independence from LEVEL/DEPTH and ON/OFF.
 Tests-only builds omit these application-dependent
 CTest entries.
 
+`deck_transport` checks matched output-BPM phase at slower, unity and faster
+rates using Direct, Signalsmith and Rubber Band, unequal control-tick delivery,
+varying audio-block sizes, seeks, pause and reverse. It also overlaps audio
+rendering with control-side tempo/direction changes and coherent display reads.
+`waveform_motion` checks the production presentation snapshot and timeline
+scale over a minute of unequal source-BPM playback: matched effective BPM must
+retain phase and equal beat spacing; a manual offset must remain unchanged.
+For a visual hardware check, align two correct grids, match their exact BPM,
+then observe with Keylock off/on and different original track BPM. Do not
+accept periodic relative rocking or a display-only pull into alignment.
+
 `qml_component` combines source contracts with runtime checks of the shared
 slider (mouse/touch travel, inverted vertical range, disable/cancel and
 context-unbinding teardown) and the production Library deck-selection and

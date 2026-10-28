@@ -122,7 +122,6 @@ public:
 private:
     void publishSnapshot() noexcept;
     void setSnapAnchor(double seconds, bool valid) noexcept;
-    void reconcileVisualAnchor(double authoritativePositionSeconds) noexcept;
     void startPreRoll(double seconds) noexcept;
 
     DeckAudioPipeline& m_audioPipeline;
@@ -140,9 +139,6 @@ private:
     double m_playbackRate = 1.0;
     double m_jogNudgeRatio = 1.0;
     double m_preRollStartSeconds = 0.0;
-    double m_snapPositionSeconds = 0.0;
-    double m_snapPlaybackRate = 1.0;
-    double m_visualRateCorrection = 0.0;
     bool m_snapValid = false;
     std::uint64_t m_trackGeneration = 0;
     std::uint64_t m_stateGeneration = 0;

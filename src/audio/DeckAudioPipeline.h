@@ -1,6 +1,7 @@
 #pragma once
 
 #include "audio/AudioParameters.h"
+#include "audio/AudioPresentationClock.h"
 #include "audio/cache/AudioCacheTypes.h"
 
 #include <atomic>
@@ -65,6 +66,8 @@ public:
         double positionSeconds = 0.0;
         double lengthSeconds = 0.0;
         std::uint64_t trackGeneration = 0;
+        AudioPresentationPosition presentation;
+        bool presentationCurrent = false;
     };
 
     explicit DeckAudioPipeline(AudioPageCache& cache);
@@ -75,6 +78,9 @@ public:
     void prepareToPlay(int maximumBlockSize,double sampleRate) override;
     void releaseResources() override;
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) noexcept override;
+    void getNextAudioBlockAtTime(const juce::AudioSourceChannelInfo& info,
+                                double blockEndTimeSeconds) noexcept;
+    [[nodiscard]] AudioPresentationPosition presentationPosition() const noexcept;
     [[nodiscard]] const juce::AudioBuffer<float>& preFaderBuffer() const noexcept;
     [[nodiscard]] const juce::AudioBuffer<float>& postFaderTailBuffer() const noexcept;
 

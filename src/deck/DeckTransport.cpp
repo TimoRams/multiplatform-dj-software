@@ -308,17 +308,13 @@ DeckTransport::ControlUpdate DeckTransport::updateControlState(
                 result.enteredPreRoll = true;
             }
         }
-        // The audio cursor is authoritative, but continuously hard-resetting
-        // the visual clock here turns control-tick jitter into visible waveform
-        // jitter.  Only discontinuities use setSnapAnchor(); normal playback
-        // converges with a bounded correction below.
         if (!m_reverse && !loop.active && m_trackLengthSeconds > 0.0
             && m_audiblePositionSeconds >= m_trackLengthSeconds - kEndEpsilonSeconds) {
             m_audiblePositionSeconds = m_trackLengthSeconds;
             m_heldPositionSeconds = m_trackLengthSeconds;
             setSnapAnchor(m_trackLengthSeconds, false);
         } else {
-            reconcileVisualAnchor(m_audiblePositionSeconds);
+            m_snapClock.restart();
         }
         result.positionChanged = true;
     } else if (m_preRollActive) {
@@ -490,9 +486,9 @@ double DeckTransport::visualPositionSeconds(double latencyCompensationSeconds) c
     if (!m_snapValid || !graph.running)
         return positionSeconds();
 
-    const double elapsed = static_cast<double>(m_snapClock.nsecsElapsed()) * 1.0e-9
-        * std::max(0.0001, m_snapPlaybackRate);
-    double position = m_reverse ? m_snapPositionSeconds - elapsed : m_snapPositionSeconds + elapsed;
+    const auto& presentation = graph.presentation;
+    if (!graph.presentationCurrent)
+        return graph.positionSeconds;
     double latencyBlend = 1.0;
     if (m_visualSeekSettleClock.isValid()) {
         constexpr double settleSeconds = 0.090;
@@ -502,8 +498,9 @@ double DeckTransport::visualPositionSeconds(double latencyCompensationSeconds) c
             latencyBlend = t * t * (3.0 - 2.0 * t);
         }
     }
-    position += m_reverse ? latencyCompensationSeconds * latencyBlend
-                          : -latencyCompensationSeconds * latencyBlend;
+    const double position = presentation.positionAt(
+        juce::Time::getMillisecondCounterHiRes() * 0.001,
+        latencyCompensationSeconds * latencyBlend);
     return std::clamp(position, -TransportLimits::kPreRollSeconds,
                       m_trackLengthSeconds > 0.0 ? m_trackLengthSeconds : position);
 }
@@ -608,50 +605,9 @@ void DeckTransport::publishSnapshot() noexcept
 
 void DeckTransport::setSnapAnchor(double seconds, bool valid) noexcept
 {
-    m_snapPositionSeconds = seconds;
-    m_snapPlaybackRate = m_playbackRate * m_jogNudgeRatio;
-    m_visualRateCorrection = 0.0;
     m_snapClock.restart();
     m_snapValid = valid;
     m_audioPlayhead.store(seconds, std::memory_order_release);
-}
-
-void DeckTransport::reconcileVisualAnchor(double authoritativePositionSeconds) noexcept
-{
-    if (!m_snapValid || !std::isfinite(authoritativePositionSeconds)) {
-        setSnapAnchor(authoritativePositionSeconds, true);
-        return;
-    }
-
-    constexpr double hardSnapThresholdSeconds = 0.080;
-    const double elapsed = std::max(0.0,
-        static_cast<double>(m_snapClock.nsecsElapsed()) * 1.0e-9
-            * std::max(0.0001, m_snapPlaybackRate));
-    const double predicted = m_reverse ? m_snapPositionSeconds - elapsed
-                                       : m_snapPositionSeconds + elapsed;
-    const double error = authoritativePositionSeconds - predicted;
-    if (std::abs(error) > hardSnapThresholdSeconds) {
-        setSnapAnchor(authoritativePositionSeconds, true);
-        return;
-    }
-
-    // Keep the position continuous and close the small audio-clock error by
-    // gently trimming visual velocity. Applying a fraction of `error` directly
-    // to the position at every 125 Hz control tick made every fixed waveform
-    // marker visibly step forwards and backwards.
-    const double baseRate = std::max(0.0001, m_playbackRate * m_jogNudgeRatio);
-    const double direction = m_reverse ? -1.0 : 1.0;
-    constexpr double correctionWindowSeconds = 0.75;
-    constexpr double maximumRateTrim = 0.015;
-    constexpr double smoothing = 0.08;
-    const double targetCorrection = std::clamp(
-        direction * error / correctionWindowSeconds,
-        -baseRate * maximumRateTrim,
-        baseRate * maximumRateTrim);
-    m_visualRateCorrection += (targetCorrection - m_visualRateCorrection) * smoothing;
-    m_snapPositionSeconds = predicted;
-    m_snapPlaybackRate = std::max(0.0001, baseRate + m_visualRateCorrection);
-    m_snapClock.restart();
 }
 
 void DeckTransport::startPreRoll(double seconds) noexcept
