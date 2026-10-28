@@ -161,8 +161,11 @@ blocking-lock calls from the audio thread.
 
 Both backends are primed exclusively on the worker, including large device
 buffers. `serviceSeedRequest()` refreshes pitch, resets the stretcher, and
-processes the bridge history as ordinary streaming pre-roll while discarding
-its output. Signalsmith's `outputSeek()` is only used for preparation-time
+processes the snapshot as ordinary streaming pre-roll while discarding its
+output. Signalsmith snapshots contain cached past and future input, ending at
+the target output position plus the backend's input/output latency. Rubber
+Band and sources without positioned access retain streaming history priming.
+Signalsmith's `outputSeek()` is only used for preparation-time
 workspace prewarming: its synthesized onset is not a substitute for continuous
 streaming history and can introduce a later splice when live input reaches the
 output.
@@ -176,32 +179,66 @@ input boundary; no bridge block may be skipped. A lag beyond the fixed history
 capacity restarts worker-side priming rather than accessing overwritten data.
 The callback never cancels a pending seed to do the work inline.
 
+Each snapshot carries a `TimeStretchPositionStamp`: track, seek, and transport
+generations, output frame, and target track position. The audio thread checks
+the complete stamp before accepting a ready result. A matching generation
+with a later output frame requires worker catch-up; a different generation or
+a different position at the same frame discards the result. No late result
+may move the audible cursor. `positionStamp()` is an audio-thread-only query;
+the worker reads only the private published snapshot. A test-only worker gate
+allows deterministic delayed-worker and stale-result tests without blocking
+the callback.
+
 An in-flight seed pins its pipeline slot through `Requested`, `Seeding`, and
 `Ready`. Backend activation must wait for that handshake to return to `Idle`
 before retiring a slot; otherwise preparation could destroy a stretcher the
 seed worker still owns. Bypass and track/playback discontinuities invalidate
-old seed results. Transition ramps start at the last emitted sample, not at
-the beginning of a replayed tail, which would itself introduce a waveform jump.
+old seed results. Positioned Signalsmith entry/exit blends the aligned dry and
+wet samples over 256 samples. Actual discontinuities and pause use a tail
+anchored at the last emitted sample, never a replayed earlier tail.
+
+`TempoTimeline` commits future sample positions and rates in a fixed-capacity
+ring. Tempo commands change only the uncommitted end of this trajectory, with
+a linear ramp lasting at least the current callback or 10 ms. The Hermite
+direct reader and Signalsmith's cached lookahead use the same trajectory;
+recomputing `current position + latency * new tempo` at every callback is
+forbidden because it skips or repeats input on every fader move. The scheduled
+Hermite path starts at source sample zero rather than skipping two samples.
+The presentation clock publishes the consumed trajectory, including its rate,
+instead of integrating the latest control target separately.
+
+Signalsmith pitch correction follows the trajectory at the analysis time
+(input cursor minus input latency). Tempo correction and Key Shift update per
+sample; Key Shift ramps for at least a callback or 10 ms. Tempo, jog, and Key
+Shift do not increment generations or reset/reseed an active stretcher.
+Seeks/hot cues increment the seek generation; track, loop, direction,
+play/pause, and scratch handovers invalidate transport/track generations.
+
+The compensated track position has no backend delay. Automation response is
+separate: previously committed lookahead must play before a new tempo ramp.
+The sweep test prints command-to-first-response and command-to-settled times
+from the audible presentation cursor, excluding hardware output latency.
 
 Key Shift (`TimeStretchProcessor::setKeySemitoneOffset()`) stores its offset in
 a plain `std::atomic<double>` and never allocates or locks. It composes with
-keylock rather than depending on it: `syncPipelinePitchScale()` multiplies the
+keylock rather than depending on it: the pitch update multiplies the
 keylock correction (`1/rate`, applied only while the keylock toggle is on) by
 `pow(2, semitones/12)` (applied whenever the offset is non-zero), so a Key
 Shift offset always lands relative to whatever pitch the deck would otherwise
 play. Because a non-zero offset must reach the stretcher even with keylock
-off, `getNextAudioBlock()`'s `keylockRequested` gate is `pitchLockEnabled ||
-keySemitoneActive` — both flags route through the same seed/crossfade
-handshake described above, so the same refresh-before-worker-pre-roll rule
-applies to Key Shift pitch changes as to keylock ones.
+off, a nonzero Key Shift enters the same seed/crossfade handshake. At unity
+tempo, enabling keylock alone leaves an inactive stretcher bypassed; an
+already active stretcher stays continuous when tempo crosses unity.
 
 A loaded but paused deck sets `TimeStretchProcessor::setInputPlaybackActive(false)`.
 Keylock then renders the direct router path once, which preserves scratch and FX
 tail semantics without running a phase vocoder over silence. Resuming marks the
 next keylock entry for the existing bounded seed/crossfade handshake. After a
 paused callback, the worker must receive a complete pre-roll of fresh playback
-history: paused silence and the previous playback segment are not valid seed
-material. Until then the callback continues the direct bridge without blocking.
+history for non-positioned sources: paused silence and the previous playback
+segment are not valid seed material. Positioned sources instead prime from
+the paused track position, so resume neither skips prefetched samples nor
+replays a previous segment. Until ready, the callback bridges directly.
 
 `TimeStretchProcessor` pulls its input directly from `RenderModeRouter`
 (`TimeStretchProcessor(renderModeRouter.get())`), so `setInputPlaybackActive()`

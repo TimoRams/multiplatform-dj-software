@@ -2,6 +2,7 @@
 
 #include "audio/cache/CachedPlaybackAudioSource.h"
 #include "audio/internal/HermiteResamplingAudioSource.h"
+#include "audio/internal/HermiteKernel.h"
 
 #include <utility>
 
@@ -22,6 +23,7 @@ void RenderModeRouter::prepareToPlay(int samplesPerBlockExpected, double sampleR
 {
     m_outputSampleRate = std::max(1.0, sampleRate);
     m_blockSize = std::max(64, samplesPerBlockExpected);
+    m_timelineReady = false;
     if (m_hermite)
         m_hermite->prepareToPlay(samplesPerBlockExpected, sampleRate);
     else if (m_transport)
@@ -44,6 +46,15 @@ void RenderModeRouter::applyDeckTempoToHermite() noexcept
         return;
 
     m_hermite->setResamplingRatio(effectiveDeckTempoRatio());
+}
+
+void RenderModeRouter::resetNormalPlaybackAfterSeek() noexcept
+{
+    m_timelineReady = false;
+    if (m_hermite) {
+        m_hermite->resetStream();
+        m_hermite->snapSmoothedRatio();
+    }
 }
 
 double RenderModeRouter::effectiveDeckTempoRatio() const noexcept
@@ -75,6 +86,7 @@ void RenderModeRouter::beginScratch(double anchorSeconds,
                                      bool wasPlayingBeforeScratch,
                                      double normalPlaybackSpeed)
 {
+    m_readerHandoffGeneration.fetch_add(1, std::memory_order_acq_rel);
     // A re-grab supersedes any release that the callback has not consumed yet.
     m_cancelledHandoffGeneration.store(
         m_handoffCommandGeneration.load(std::memory_order_acquire),
@@ -375,7 +387,107 @@ void RenderModeRouter::setLoopRangeSeconds(double loopInSec, double loopOutSec, 
 
 void RenderModeRouter::setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle)
 {
+    m_readAheadCache = cache;
+    m_readAheadHandle = handle;
+    m_timelineReady = false;
     m_scratchResampler.setTrackCacheSource(cache, handle);
+}
+
+void RenderModeRouter::setReadAheadPosition(double seconds, double rate, int frames, int horizon) noexcept
+{
+    if (!m_timelineReady || std::signbit(rate) != std::signbit(m_readAheadDirection)) {
+        m_tempoTimeline.reset(seconds * m_outputSampleRate, rate);
+        m_timelineReady = true;
+    }
+    m_readAheadDirection = rate;
+    m_tempoTimeline.setTarget(rate, std::max(frames, static_cast<int>(m_outputSampleRate * 0.01)));
+    m_tempoTimeline.ensure(frames + horizon);
+}
+
+double RenderModeRouter::readAheadTempo(int offset) noexcept
+{
+    return std::abs(m_tempoTimeline.rate(offset));
+}
+
+double RenderModeRouter::readAheadPosition() noexcept
+{
+    return normalPlaybackPositionSeconds();
+}
+
+double RenderModeRouter::normalPlaybackPositionSeconds() noexcept
+{
+    double position = m_tempoTimeline.position(0) / m_outputSampleRate;
+    const double sampleRate = m_readAheadHandle.sampleRate();
+    if (sampleRate > 0.0 && m_loopActive.load(std::memory_order_acquire)) {
+        const double start = m_loopInSample.load(std::memory_order_relaxed) / sampleRate;
+        const double end = m_loopOutSample.load(std::memory_order_relaxed) / sampleRate;
+        if (end > start && ((m_readAheadDirection >= 0.0 && position >= end)
+                           || (m_readAheadDirection < 0.0 && position < start)))
+            position = start + std::fmod(std::fmod(position - start, end - start) + end - start, end - start);
+    }
+    return std::clamp(position, 0.0, m_readAheadHandle.lengthInSamples() / std::max(1.0, sampleRate));
+}
+
+double RenderModeRouter::normalPlaybackTempo() noexcept
+{
+    return m_tempoTimeline.rate(0);
+}
+
+bool RenderModeRouter::readAhead(int offset, juce::AudioBuffer<float>& destination,
+                                int count) noexcept
+{
+    if (!m_readAheadCache || !m_readAheadHandle.isValid() || count < 0
+        || count > destination.getNumSamples() || destination.getNumChannels() < 2)
+        return false;
+    const bool loopEnabled = m_loopActive.load(std::memory_order_acquire);
+    const auto loopStart = static_cast<std::int64_t>(m_loopInSample.load(std::memory_order_relaxed));
+    const auto loopEnd = static_cast<std::int64_t>(m_loopOutSample.load(std::memory_order_relaxed));
+    AudioPageReadGuard page;
+    std::int64_t pageIndex = -1;
+    bool available = true;
+    const auto readSample = [&](std::int64_t sample, int channel) {
+        if (loopEnabled && loopEnd > loopStart
+            && ((m_readAheadDirection >= 0.0 && sample >= loopEnd)
+                || (m_readAheadDirection < 0.0 && sample < loopStart))) {
+            const auto length = loopEnd - loopStart;
+            sample = loopStart + ((sample - loopStart) % length + length) % length;
+        }
+        if (sample < 0 || sample >= m_readAheadHandle.lengthInSamples())
+            return 0.0f;
+        const auto wantedPage = AudioPage::pageIndexForSample(sample);
+        if (wantedPage != pageIndex) {
+            page = m_readAheadCache->tryGetPage(m_readAheadHandle, wantedPage);
+            pageIndex = wantedPage;
+            if (!page) {
+                available = false;
+                (void) m_readAheadCache->requestPage(m_readAheadHandle, wantedPage,
+                                                     AudioCachePriority::PlaybackReadAhead);
+                return 0.0f;
+            }
+        }
+        if (!page || sample - page->firstSample >= page->validSampleCount) {
+            available = false;
+            return 0.0f;
+        }
+        const auto sourceChannel = std::min(channel, static_cast<int>(page->channelCount) - 1);
+        return page->channelData(static_cast<unsigned>(sourceChannel))[sample - page->firstSample];
+    };
+    for (int sample = 0; sample < count; ++sample) {
+        const double position = m_tempoTimeline.position(offset + sample)
+            * m_readAheadHandle.sampleRate() / m_outputSampleRate;
+        const auto base = static_cast<std::int64_t>(std::floor(position));
+        const float fraction = static_cast<float>(position - base);
+        for (int channel = 0; channel < 2; ++channel) {
+            const float value = cubicHermite(readSample(base - 1, channel),
+                                             readSample(base, channel),
+                                             readSample(base + 1, channel),
+                                             readSample(base + 2, channel), fraction);
+            destination.setSample(channel, sample, value);
+        }
+        if (!available)
+            return false;
+    }
+    return true;
 }
 
 void RenderModeRouter::setRealtimeScratchInput(
@@ -476,6 +588,9 @@ bool RenderModeRouter::applyReaderHandoff(double positionSeconds,
 
     const double sr = std::max(1.0, trackSampleRate);
     const double position = std::max(0.0, positionSeconds);
+    m_tempoTimeline.reset(position * m_outputSampleRate, signedDeckTempoRatio());
+    m_timelineReady = true;
+    m_readerHandoffGeneration.fetch_add(1, std::memory_order_acq_rel);
     // AudioTransportSource's PositionableAudioSource API is expressed in its
     // prepared output-rate samples and converts to the track rate internally.
     // Passing track samples here applies the conversion twice (e.g. 44.1/48)
@@ -1115,7 +1230,14 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
         // 1 and applies the inverse pitch scale, preserving pitch without
         // losing reader speed.
         if (m_hermite) {
-            m_hermite->getNextAudioBlock(bufferToFill);
+            if (m_readAheadEnabled.load(std::memory_order_acquire)
+                && m_readAheadHandle.isValid() && bufferToFill.numSamples <= static_cast<int>(m_normalRates.size())) {
+                for (int sample = 0; sample < bufferToFill.numSamples; ++sample)
+                    m_normalRates[static_cast<std::size_t>(sample)] = std::abs(m_tempoTimeline.rate(sample));
+                m_hermite->getNextAudioBlockWithRates(bufferToFill, m_normalRates.data());
+            } else {
+                m_hermite->getNextAudioBlock(bufferToFill);
+            }
         } else {
             m_transport->getNextAudioBlock(bufferToFill);
         }
@@ -1136,6 +1258,7 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
             m_normalSeekTailPending = false;
         }
         captureNormalTail(bufferToFill);
+        m_tempoTimeline.advance(bufferToFill.numSamples);
         m_normalPlaybackWasEnabled = true;
         return;
     }

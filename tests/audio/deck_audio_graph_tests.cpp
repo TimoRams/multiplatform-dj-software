@@ -85,6 +85,23 @@ bool writeSampleRampWave(const QString& path, double sampleRate, int channels)
     return writer->writeFromAudioSampleBuffer(buffer, 0, buffer.getNumSamples());
 }
 
+bool writeTransientWave(const QString& path)
+{
+    juce::WavAudioFormat format;
+    std::unique_ptr<juce::OutputStream> stream =
+        std::make_unique<juce::FileOutputStream>(juce::File(path.toStdString()));
+    auto writer = format.createWriterFor(
+        stream, juce::AudioFormatWriterOptions{}.withSampleRate(48'000.0)
+                    .withNumChannels(2).withBitsPerSample(24));
+    if (!writer)
+        return false;
+    juce::AudioBuffer<float> buffer(2, 48'000);
+    buffer.clear();
+    buffer.setSample(0, 19'200, 0.8f);
+    buffer.setSample(1, 19'200, 0.8f);
+    return writer->writeFromAudioSampleBuffer(buffer, 0, buffer.getNumSamples());
+}
+
 bool waitForPage(AudioPageCache& cache, const AudioCacheHandle& handle)
 {
     cache.requestRange(handle, 0, handle.pageCount() - 1, AudioCachePriority::PlaybackReadAhead);
@@ -178,6 +195,103 @@ Timing measureDirectMixer(DeckAudioPipeline& graph, int blockSize, int iteration
     return {totalUs / iterations, worstUs};
 }
 
+bool testTempoSweeps(const QString& path)
+{
+    bool ok = true;
+    AudioPageCache cache(4 * 1024 * 1024);
+    for (const double rate : {44'100.0, 48'000.0})
+    for (const int blockSize : {64, 256, 1024})
+    for (const double range : {0.08, 0.16}) {
+        const auto handle = cache.openTrack({path});
+        (void) cache.requestRange(handle, 0, handle.pageCount() - 1, AudioCachePriority::PlaybackReadAhead);
+        ok &= require(cache.waitForPageRange(handle, 0, handle.pageCount() - 1,
+                                            std::chrono::seconds(5)), "sweep fixture resident");
+        DeckAudioPipeline graph(cache);
+        graph.prepareToPlay(blockSize, rate);
+        graph.installPreparedTrack({handle, 48'000.0, 1});
+        graph.setLoopRangeSeconds(0.0, 1.0, true, 48'000.0);
+        graph.setPlaybackRate(0.99);
+        graph.setKeylockEnabled(true);
+        graph.setTransportRunning(true);
+        juce::AudioBuffer<float> output(2, blockSize);
+        const auto period = std::chrono::duration<double>(blockSize / rate);
+        for (int block = 0; block < static_cast<int>(rate * 0.18 / blockSize) + 1; ++block) {
+            graph.getNextAudioBlock({&output, 0, blockSize});
+            std::this_thread::sleep_for(period);
+        }
+        ok &= require(graph.timeStretch().getLatencySamples() > 0, "sweep begins with active keylock");
+        const auto seedsBefore = graph.timeStretch().realtimeStats().keylockSeeds;
+        const auto generationsBefore = graph.timeStretch().positionStamp();
+        float previous = output.getSample(0, blockSize - 1);
+        float maximumStep = 0.0f;
+        int clicks = 0;
+        int quietBlocks = 0;
+        for (int block = 0; block < static_cast<int>(rate * 0.8 / blockSize) + 1; ++block) {
+            const double elapsed = block * blockSize / rate;
+            const double halfPeriod = elapsed < 0.4 ? 0.05 : 0.2;
+            const double phase = std::fmod(elapsed / halfPeriod, 2.0);
+            const double triangle = phase < 1.0 ? -1.0 + 2.0 * phase : 3.0 - 2.0 * phase;
+            graph.setPlaybackRate(1.0 + range * triangle);
+            if (elapsed >= 0.6) {
+                graph.setJogNudgeRatio(1.0 + 0.05 * triangle);
+                graph.setKeySemitoneOffset(triangle);
+            }
+            graph.getNextAudioBlock({&output, 0, blockSize});
+            ok &= require(graph.timeStretch().getLatencySamples() > 0,
+                          "tempo/jog/key changes keep the stretched path active");
+            for (int sample = 0; sample < blockSize; ++sample) {
+                const float value = output.getSample(0, sample);
+                const float step = std::abs(value - previous);
+                maximumStep = std::max(maximumStep, step);
+                clicks += step > 0.035f;
+                previous = value;
+            }
+            quietBlocks += output.getRMSLevel(0, 0, blockSize) < 0.04f;
+            std::this_thread::sleep_for(period);
+        }
+        std::cout << "tempo-sweep rate=" << rate << " block=" << blockSize
+                  << " range=" << range << " clicks=" << clicks
+                  << " maximum-step=" << maximumStep << " quiet-blocks=" << quietBlocks << '\n';
+        ok &= require(clicks == 0 && quietBlocks == 0, "tempo sweeps have no clicks or envelope holes");
+        ok &= require(graph.timeStretch().realtimeStats().keylockSeeds == seedsBefore,
+                      "tempo sweeps never reseed keylock");
+        const auto generationsAfter = graph.timeStretch().positionStamp();
+        ok &= require(generationsBefore.trackGeneration == generationsAfter.trackGeneration
+                      && generationsBefore.seekGeneration == generationsAfter.seekGeneration
+                      && generationsBefore.transportGeneration == generationsAfter.transportGeneration,
+                      "tempo/jog/key automation does not change generations");
+        graph.setJogNudgeRatio(1.0);
+        graph.setKeySemitoneOffset(0.0);
+        graph.setPlaybackRate(0.92);
+        for (int block = 0; block < static_cast<int>(rate * 0.12 / blockSize) + 1; ++block)
+            graph.getNextAudioBlock({&output, 0, blockSize});
+        const double oldRate = graph.presentationPosition().rate;
+        graph.setPlaybackRate(1.08);
+        int firstResponse = -1, settledResponse = -1;
+        for (int block = 0; block < static_cast<int>(rate * 0.2 / blockSize) + 1; ++block) {
+            graph.getNextAudioBlock({&output, 0, blockSize});
+            const double actualRate = graph.presentationPosition().rate;
+            if (firstResponse < 0 && std::abs(actualRate - oldRate) > 0.00001)
+                firstResponse = (block + 1) * blockSize;
+            if (std::abs(actualRate - 1.08) < 0.00001) {
+                settledResponse = (block + 1) * blockSize;
+                break;
+            }
+        }
+        std::cout << "tempo-response rate=" << rate << " block=" << blockSize
+                  << " first-ms=" << firstResponse * 1000.0 / rate
+                  << " settled-ms=" << settledResponse * 1000.0 / rate << '\n';
+        ok &= require(firstResponse >= 0 && settledResponse > 0
+                      && settledResponse <= graph.timeStretch().readAheadHorizon() + 3 * blockSize
+                                             + static_cast<int>(rate * 0.011),
+                      "tempo response is bounded independently of track alignment");
+        ok &= require(realtimeCountersAreZero(graph), "tempo sweep stays realtime safe");
+        graph.clearTrack();
+        graph.releaseResources();
+    }
+    return ok;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -187,9 +301,67 @@ int main(int argc, char** argv)
     QTemporaryDir directory;
     const auto mono44 = directory.filePath("mono-44.wav");
     const auto stereo96 = directory.filePath("stereo-96.wav");
+    const auto transientPath = directory.filePath("transient.wav");
+    const auto sweepPath = directory.filePath("sweep.wav");
     ok &= require(writeSampleRampWave(mono44, 44'100.0, 1),
                   "sample-coded ramp fixture");
     ok &= require(writeWave(stereo96, 96'000.0, 2, 330.0), "stereo fixture");
+    ok &= require(writeTransientWave(transientPath), "transient fixture");
+    ok &= require(writeWave(sweepPath, 48'000.0, 2, 220.0), "sweep fixture");
+    ok &= testTempoSweeps(sweepPath);
+    if (std::getenv("BROCKDJ_KEYLOCK_SWEEP_ONLY") != nullptr)
+        return ok ? 0 : 1;
+
+    {
+        AudioPageCache transientCache(4 * 1024 * 1024);
+        const auto directHandle = transientCache.openTrack({transientPath});
+        const auto lockedHandle = transientCache.openTrack({transientPath});
+        (void) transientCache.requestRange(directHandle, 0, directHandle.pageCount() - 1,
+                                           AudioCachePriority::PlaybackReadAhead);
+        ok &= require(transientCache.waitForPageRange(directHandle, 0,
+                        directHandle.pageCount() - 1, std::chrono::seconds(5)),
+                      "transient pages ready");
+        DeckAudioPipeline direct(transientCache), locked(transientCache);
+        direct.prepareToPlay(128, 48'000.0);
+        locked.prepareToPlay(128, 48'000.0);
+        direct.installPreparedTrack({directHandle, 48'000.0, 1});
+        locked.installPreparedTrack({lockedHandle, 48'000.0, 1});
+        direct.setPlaybackRate(0.8);
+        locked.setPlaybackRate(0.8);
+        direct.setTransportRunning(true);
+        locked.setTransportRunning(true);
+        juce::AudioBuffer<float> directBlock(2, 128), lockedBlock(2, 128);
+        float directPeak = 0.0f, lockedPeak = 0.0f;
+        int directPosition = -1, lockedPosition = -1;
+        bool engaged = false;
+        for (int block = 0; block < 300; ++block) {
+            if (block == 32)
+                locked.setKeylockEnabled(true);
+            direct.getNextAudioBlock({&directBlock, 0, 128});
+            locked.getNextAudioBlock({&lockedBlock, 0, 128});
+            engaged |= locked.timeStretch().getLatencySamples() > 0;
+            for (int sample = 0; sample < 128; ++sample) {
+                if (std::abs(directBlock.getSample(0, sample)) > directPeak) {
+                    directPeak = std::abs(directBlock.getSample(0, sample));
+                    directPosition = block * 128 + sample;
+                }
+                if (std::abs(lockedBlock.getSample(0, sample)) > lockedPeak) {
+                    lockedPeak = std::abs(lockedBlock.getSample(0, sample));
+                    lockedPosition = block * 128 + sample;
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::duration<double>(128.0 / 48'000.0));
+        }
+        std::cout << "deck keylock transient offset=" << lockedPosition - directPosition << " samples\n";
+        ok &= require(engaged && directPeak > 0.001f && lockedPeak > 0.001f,
+                      "deck keylock transient test exercises both paths");
+        ok &= require(std::abs(lockedPosition - directPosition) <= 1,
+                      "deck keylock transient remains aligned within one sample");
+        direct.clearTrack();
+        locked.clearTrack();
+        direct.releaseResources();
+        locked.releaseResources();
+    }
 
     AudioPageCache cache(4 * 1024 * 1024);
     DeckAudioPipeline graph(cache);
@@ -211,6 +383,24 @@ int main(int argc, char** argv)
     ok &= require(waitForPage(cache, trackA), "track A cached");
     graph.installPreparedTrack({trackA, 44'100.0, 1});
     ok &= require(graph.playback() != nullptr, "track A installed");
+    {
+        auto& router = graph.renderModeRouter();
+        juce::AudioBuffer<float> lookahead(2, 32);
+        router.setReadAheadPosition(0.1, 1.0);
+        ok &= require(router.readAhead(-16, lookahead, 32),
+                      "cache lookahead reads before and after the cursor");
+        const auto rampAt = [](double position) {
+            return -0.6 + position * 1.2 / 47'999.0;
+        };
+        ok &= require(std::abs(lookahead.getSample(0, 0) - rampAt(4'395.3)) < 0.0001,
+                      "cache lookbehind starts at the requested position");
+        ok &= require(std::abs(lookahead.getSample(0, 31) - rampAt(4'423.78125)) < 0.0001,
+                      "cache lookahead follows the track/device sample-rate ratio");
+        router.setReadAheadPosition(0.1, -1.0);
+        ok &= require(router.readAhead(0, lookahead, 32), "reverse cache lookahead succeeds");
+        ok &= require(lookahead.getSample(0, 31) < lookahead.getSample(0, 0),
+                      "reverse cache lookahead moves backwards");
+    }
     graph.setTransportRunning(true);
 
     for (const int size : {64, 128, 256, 512, 1024, 2048, 4096, 8192}) {

@@ -22,8 +22,11 @@ public:
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
     void releaseResources() override;
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override;
+    void getNextAudioBlockWithRates(const juce::AudioSourceChannelInfo& bufferToFill,
+                                    const double* rates);
 
 private:
+    void render(const juce::AudioSourceChannelInfo& bufferToFill, const double* rates);
     void ensureSourceBuffer(int minSamples);
     float readHermite(int channel, double position) const;
     void handleDirectionFade(float* ch0, float* ch1, int numSamples);

@@ -39,7 +39,8 @@ void configureWorkerPriority() noexcept
 }
 }
 
-TimeStretchProcessor::TimeStretchProcessor(juce::AudioSource* inSource) : source(inSource) {}
+TimeStretchProcessor::TimeStretchProcessor(juce::AudioSource* inSource)
+    : source(inSource), m_readAheadSource(dynamic_cast<TimeStretchReadAheadSource*>(inSource)) {}
 TimeStretchProcessor::~TimeStretchProcessor() { releaseResources(); }
 
 bool TimeStretchProcessor::validConfiguration(const TimeStretchConfiguration& c) noexcept
@@ -79,7 +80,7 @@ void TimeStretchProcessor::setKeySemitoneOffset(double semitones) noexcept
 void TimeStretchProcessor::setInputPlaybackActive(bool active) noexcept
 {
     if (m_inputPlaybackActive.exchange(active, std::memory_order_acq_rel) != active)
-        m_keylockSeedPending.store(true, std::memory_order_release);
+        notifyTransportDiscontinuity();
 }
 
 void TimeStretchProcessor::setBackend(TimeStretchBackend backend) noexcept
@@ -90,7 +91,8 @@ void TimeStretchProcessor::setBackend(TimeStretchBackend backend) noexcept
 
 void TimeStretchProcessor::setScratchBypass(bool enabled) noexcept
 {
-    m_scratchBypass.store(enabled, std::memory_order_release);
+    if (m_scratchBypass.exchange(enabled, std::memory_order_acq_rel) != enabled)
+        notifyTransportDiscontinuity();
 }
 
 void TimeStretchProcessor::setTrackGeneration(std::uint64_t generation) noexcept
@@ -101,12 +103,26 @@ void TimeStretchProcessor::setTrackGeneration(std::uint64_t generation) noexcept
     // Re-seeding clears the previous track's spectral state on the next keylock
     // block instead.
     if (m_trackGeneration.exchange(generation, std::memory_order_acq_rel) != generation)
-        m_keylockSeedPending.store(true, std::memory_order_release);
+        notifyTransportDiscontinuity();
+}
+
+void TimeStretchProcessor::notifyInputDiscontinuity() noexcept
+{
+    m_seekGeneration.fetch_add(1, std::memory_order_acq_rel);
+    m_inputDiscontinuityPending.store(true, std::memory_order_release);
+    m_keylockSeedPending.store(true, std::memory_order_release);
+}
+
+void TimeStretchProcessor::notifyTransportDiscontinuity() noexcept
+{
+    m_transportGeneration.fetch_add(1, std::memory_order_acq_rel);
+    m_inputDiscontinuityPending.store(true, std::memory_order_release);
+    m_keylockSeedPending.store(true, std::memory_order_release);
 }
 
 void TimeStretchProcessor::enterScratchBypass() noexcept
 {
-    m_scratchBypass.store(true, std::memory_order_release);
+    setScratchBypass(true);
     m_reportedLatencySamples.store(0, std::memory_order_relaxed);
 }
 
@@ -115,8 +131,21 @@ void TimeStretchProcessor::endScratchBypass() noexcept
     // The keylock pipeline survived the scratch, so normal playback resumes on
     // the very next block. Only the stretcher's continuity has to be restored,
     // which the render path does by seeding it with the audio just heard.
-    m_keylockSeedPending.store(true, std::memory_order_release);
-    m_scratchBypass.store(false, std::memory_order_release);
+    setScratchBypass(false);
+}
+
+void TimeStretchProcessor::setSeedPreparationGateForTesting(std::atomic<bool>* gate) noexcept
+{
+    m_seedPreparationGate.store(gate, std::memory_order_release);
+    wakeWorker();
+}
+
+TimeStretchPositionStamp TimeStretchProcessor::positionStamp() const noexcept
+{
+    return { m_trackGeneration.load(std::memory_order_acquire),
+             m_seekGeneration.load(std::memory_order_acquire),
+             m_transportGeneration.load(std::memory_order_acquire), m_historySamples,
+             m_readAheadSource ? m_readAheadSource->readAheadPosition() : 0.0 };
 }
 
 TimeStretchConfiguration TimeStretchProcessor::desiredConfiguration() const noexcept
@@ -155,6 +184,8 @@ void TimeStretchProcessor::prepareToPlay(int blockSize, double sr)
     m_scratchBypass.store(false, std::memory_order_release);
     m_keylockSeedPending.store(true, std::memory_order_release);
     m_keylockRenderActive = false;
+    m_signalsmithMix = 0.0;
+    m_fadingToDirect = false;
     m_accepting.store(true, std::memory_order_release);
     m_prepared.store(true, std::memory_order_release);
     m_stopRequested.store(false, std::memory_order_release);
@@ -183,6 +214,7 @@ void TimeStretchProcessor::prepareToPlay(int blockSize, double sr)
         m_activeSlot.store(0, std::memory_order_release);
         m_activeGeneration.store(1, std::memory_order_release);
         m_activeBackend.store(initial.backend, std::memory_order_release);
+        m_preparedLatencySamples.store(m_pipelines[0].latency, std::memory_order_release);
     }
     m_pipelines[1].state.store(SlotState::Empty, std::memory_order_release);
     m_worker = std::thread([this] {
@@ -223,6 +255,9 @@ bool TimeStretchProcessor::preparePipeline(Pipeline& p, const TimeStretchConfigu
     if (g_inTimeStretchAudioCallback) m_prepareFromAudio.fetch_add(1, std::memory_order_relaxed);
     if (!validConfiguration(c)) return false;
     p.appliedPitchScale = c.keylockEnabled ? 1.0 / c.tempoRatio : 1.0;
+    p.smoothedTempo = p.tempoTarget = c.tempoRatio;
+    p.smoothedSemitones = p.semitoneTarget = m_keySemitoneOffset.load(std::memory_order_acquire);
+    p.tempoRampRemaining = p.semitoneRampRemaining = 0;
     p.rubberBand.reset();
     p.signalsmith.reset();
     if (c.backend == TimeStretchBackend::RubberBand) {
@@ -372,6 +407,7 @@ void TimeStretchProcessor::activatePreparedPipelineAtBlockBoundary() noexcept
         const int old = m_activeSlot.exchange(i, std::memory_order_acq_rel);
         m_activeGeneration.store(next.config.configurationGeneration, std::memory_order_release);
         m_activeBackend.store(next.config.backend, std::memory_order_release);
+        m_preparedLatencySamples.store(next.latency, std::memory_order_release);
         // The freshly built stretcher has no history. Seeding is deferred to the
         // render path so it only costs anything when keylock is actually in use.
         m_keylockSeedPending.store(true, std::memory_order_release);
@@ -419,15 +455,25 @@ bool TimeStretchProcessor::requestKeylockSeed(int slot, std::uint64_t catchupSam
     // After pause, the history ring still contains silence and the previous
     // playback segment. Wait for a complete fresh pre-roll before handing it
     // to the worker; otherwise that silence emerges after the vocoder latency.
-    if (m_requireFreshPlaybackHistory
+    const bool useReadAhead = p.signalsmith && m_readAheadSource;
+    if (!useReadAhead && m_requireFreshPlaybackHistory
         && m_historySamples - m_playbackHistoryStart < static_cast<std::uint64_t>(length))
         return false;
     // Hand the worker a private copy so the audio thread stays free to keep
     // writing history while the seed runs.
-    readOutputHistory(m_seedSnapshot, length);
+    if (useReadAhead) {
+        if (!m_readAheadSource->readAhead(p.latency - length, m_seedSnapshot, length))
+            return false;
+        for (int sample = 0; sample < length; ++sample)
+            m_seedTempos[static_cast<std::size_t>(sample)] = m_readAheadSource->readAheadTempo(
+                p.latency - length + sample - p.signalsmith->inputLatency());
+    } else {
+        readOutputHistory(m_seedSnapshot, length);
+    }
     m_seedSnapshotLength = length;
     m_seedValid = true;
     m_seedHistoryEnd = m_historySamples;
+    m_seedStamp = positionStamp();
     m_seedSlot.store(slot, std::memory_order_relaxed);
     m_seedState.store(SeedState::Requested, std::memory_order_release);
     wakeWorker();
@@ -440,11 +486,28 @@ bool TimeStretchProcessor::serviceSeedRequest() noexcept
     if (!m_seedState.compare_exchange_strong(expected, SeedState::Seeding,
                                              std::memory_order_acq_rel))
         return false;
+    m_seedJobsStarted.fetch_add(1, std::memory_order_release);
+    while (!m_stopRequested.load(std::memory_order_acquire)) {
+        auto* gate = m_seedPreparationGate.load(std::memory_order_acquire);
+        if (!gate || gate->load(std::memory_order_acquire))
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    if (m_stopRequested.load(std::memory_order_acquire))
+        return false;
     const int slot = m_seedSlot.load(std::memory_order_relaxed);
     if (slot >= 0 && slot < static_cast<int>(m_pipelines.size()) && m_seedSnapshotLength > 0) {
         auto& p = m_pipelines[slot];
         const auto started = std::chrono::steady_clock::now();
-        syncPipelinePitchScale(p);
+        if (p.rubberBand)
+            syncPipelinePitchScale(p);
+        if (m_seedNeedsReset) {
+            p.smoothedTempo = p.tempoTarget = m_targetTempoRatio.load(std::memory_order_acquire);
+            p.smoothedSemitones = p.semitoneTarget = m_keySemitoneOffset.load(std::memory_order_acquire);
+            p.tempoRampRemaining = p.semitoneRampRemaining = 0;
+        } else if (p.signalsmith) {
+            beginParameterRamp(p, p.config.maximumBlockSize);
+        }
         if (m_seedNeedsReset) {
             if (p.fifo) p.fifo->reset();
             if (p.signalsmith)
@@ -463,7 +526,14 @@ bool TimeStretchProcessor::serviceSeedRequest() noexcept
             const float* input[2] { m_seedSnapshot.getReadPointer(0, offset),
                                     m_seedSnapshot.getReadPointer(1, offset) };
             if (p.signalsmith) {
-                p.signalsmith->process(input, count, p.trim.getArrayOfWritePointers(), count);
+                for (int sample = 0; sample < count; ++sample) {
+                    const double tempo = m_readAheadSource
+                        ? m_seedTempos[static_cast<std::size_t>(offset + sample)] : 0.0;
+                    updateSignalsmithPitch(p, tempo);
+                    const float* sampleInput[2] { input[0] + sample, input[1] + sample };
+                    float* sampleOutput[2] { p.trim.getWritePointer(0), p.trim.getWritePointer(1) };
+                    p.signalsmith->process(sampleInput, 1, sampleOutput, 1);
+                }
             } else if (p.rubberBand) {
                 p.rubberBand->process(input, count, false);
                 for (int available = p.rubberBand->available(); available > 0;
@@ -478,6 +548,7 @@ bool TimeStretchProcessor::serviceSeedRequest() noexcept
             recordSeedDuration(started);
     }
     m_seedState.store(SeedState::Ready, std::memory_order_release);
+    m_seedJobsCompleted.fetch_add(1, std::memory_order_release);
     return true;
 }
 
@@ -487,35 +558,78 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
     if (!source || !info.buffer || info.numSamples <= 0) { info.clearActiveBufferRegion(); return; }
     activatePreparedPipelineAtBlockBoundary();
 
+    if (m_readAheadSource
+        && m_activeBackend.load(std::memory_order_acquire) == TimeStretchBackend::Signalsmith) {
+        const auto generation = m_readAheadSource->readAheadTransportGeneration();
+        if (generation != m_seenReadAheadGeneration) {
+            m_seenReadAheadGeneration = generation;
+            notifyTransportDiscontinuity();
+        }
+    }
+
+    if (m_inputDiscontinuityPending.exchange(false, std::memory_order_acq_rel)) {
+        m_playbackHistoryStart = m_historySamples;
+        m_requireFreshPlaybackHistory = true;
+        m_seedValid = false;
+    }
+
     const int active = m_activeSlot.load(std::memory_order_acquire);
     // A manual semitone offset (Key Shift) needs the stretcher active even
     // when the keylock toggle itself is off, since it is the only path that
     // can move pitch independently of tempo.
     const bool keySemitoneActive = std::abs(m_keySemitoneOffset.load(std::memory_order_acquire)) > 1.0e-9;
+    const bool pitchCorrectionNeeded = m_keylockRenderActive
+        || std::abs(m_targetTempoRatio.load(std::memory_order_acquire) - 1.0) > 1.0e-9;
     const bool keylockRequested = active >= 0
-        && (m_pitchLockEnabled.load(std::memory_order_acquire) || keySemitoneActive)
+        && ((m_pitchLockEnabled.load(std::memory_order_acquire) && pitchCorrectionNeeded)
+            || keySemitoneActive)
         && m_inputPlaybackActive.load(std::memory_order_acquire)
+        && (!m_readAheadSource || m_activeBackend.load(std::memory_order_acquire) != TimeStretchBackend::Signalsmith
+            || m_readAheadSource->readAheadPlaybackActive())
         && !m_scratchBypass.load(std::memory_order_acquire);
 
-    const auto renderDirect = [&] {
+    const auto renderDirect = [&](bool silenceInput = false) {
         m_reportedLatencySamples.store(0, std::memory_order_relaxed);
         source->getNextAudioBlock(info);
+        if (silenceInput)
+            info.clearActiveBufferRegion();
         applySwitchFade(info);
         appendOutputHistory(info);
     };
 
     if (!keylockRequested) {
+        if (m_keylockRenderActive && active >= 0 && m_pipelines[active].signalsmith
+            && m_readAheadSource && m_inputPlaybackActive.load(std::memory_order_acquire)
+            && m_readAheadSource->readAheadPlaybackActive()
+            && !m_scratchBypass.load(std::memory_order_acquire)
+            && !m_keylockSeedPending.load(std::memory_order_acquire)) {
+            m_fadingToDirect = true;
+            processPipeline(m_pipelines[active], info);
+            m_fadingToDirect = false;
+            if (m_signalsmithMix <= 0.0) {
+                m_keylockRenderActive = false;
+                m_reportedLatencySamples.store(0, std::memory_order_relaxed);
+            }
+            applySwitchFade(info);
+            appendOutputHistory(info);
+            return;
+        }
+        const bool fadeStoppedKeylock = m_keylockRenderActive
+            && !m_inputPlaybackActive.load(std::memory_order_acquire)
+            && (!m_readAheadSource || !m_readAheadSource->readAheadScratchActive())
+            && !m_scratchBypass.load(std::memory_order_acquire);
         if (m_keylockRenderActive) {
             m_keylockRenderActive = false;
             beginTransitionFade();
         }
         m_seedValid = false;
+        m_signalsmithMix = 0.0;
         // A seed that finished after keylock was switched off describes audio
         // that is no longer the tail of the output; using it later would splice
         // in stale material.
         auto stale = SeedState::Ready;
         m_seedState.compare_exchange_strong(stale, SeedState::Idle, std::memory_order_acq_rel);
-        renderDirect();
+        renderDirect(fadeStoppedKeylock);
         if (!m_inputPlaybackActive.load(std::memory_order_acquire)) {
             m_playbackHistoryStart = m_historySamples;
             m_requireFreshPlaybackHistory = true;
@@ -526,6 +640,7 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
     auto& pipeline = m_pipelines[active];
     if (m_keylockSeedPending.exchange(false, std::memory_order_acq_rel)) {
         m_seedValid = false;
+        m_signalsmithMix = 0.0;
         if (m_keylockRenderActive)
             beginTransitionFade();
         m_keylockRenderActive = false;
@@ -543,6 +658,21 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
             break;
         case SeedState::Ready:
             seeded = m_seedValid && m_seedSlot.load(std::memory_order_relaxed) == active;
+            {
+                const auto current = positionStamp();
+                const bool generationMatches = current.trackGeneration == m_seedStamp.trackGeneration
+                    && current.seekGeneration == m_seedStamp.seekGeneration
+                    && current.transportGeneration == m_seedStamp.transportGeneration;
+                if (!generationMatches) {
+                    seeded = false;
+                    m_discardedSeeds.fetch_add(1, std::memory_order_relaxed);
+                }
+                if (seeded && current.outputFrame == m_seedStamp.outputFrame
+                    && current.trackPosition != m_seedStamp.trackPosition) {
+                    seeded = false;
+                    m_discardedSeeds.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
             catchupSeed = seeded && m_seedHistoryEnd != m_historySamples;
             seeded = seeded && !catchupSeed;
             m_seedState.store(SeedState::Idle, std::memory_order_release);
@@ -567,7 +697,7 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
         }
 
         beginTransitionFade();
-        if (pipeline.fifo) pipeline.fifo->reset();
+        if (pipeline.rubberBand && pipeline.fifo) pipeline.fifo->reset();
         m_keylockRenderActive = true;
     }
     m_reportedLatencySamples.store(pipeline.latency, std::memory_order_relaxed);
@@ -599,11 +729,12 @@ void TimeStretchProcessor::syncPipelinePitchScale(Pipeline& p) noexcept
 
 void TimeStretchProcessor::processPipeline(Pipeline& p, const juce::AudioSourceChannelInfo& info) noexcept
 {
-    syncPipelinePitchScale(p);
     if (p.signalsmith) {
+        beginParameterRamp(p, info.numSamples);
         processSignalsmithPipeline(p, info);
         return;
     }
+    syncPipelinePitchScale(p);
 
     const int needed = info.numSamples;
     int loops = kPullLoopLimit;
@@ -638,6 +769,50 @@ void TimeStretchProcessor::processSignalsmithPipeline(
 {
     auto* stretch = p.signalsmith.get();
     const int channels = std::min(2, info.buffer->getNumChannels());
+    if (m_readAheadSource && info.numSamples <= p.input.getNumSamples()) {
+        source->getNextAudioBlock(info);
+        for (int channel = 0; channel < channels; ++channel)
+            p.output.copyFrom(channel, 0, *info.buffer, channel, info.startSample, info.numSamples);
+        if (!m_readAheadSource->readAhead(p.latency - info.numSamples,
+                                          p.input, info.numSamples)) {
+            beginTransitionFade();
+            m_keylockRenderActive = false;
+            m_signalsmithMix = 0.0;
+            m_reportedLatencySamples.store(0, std::memory_order_relaxed);
+            return;
+        }
+        m_switchFadeRemaining.store(0, std::memory_order_relaxed);
+        int offset = 0;
+        while (offset < info.numSamples) {
+            const int count = 1;
+            updateSignalsmithPitch(p, m_readAheadSource->readAheadTempo(
+                p.latency - info.numSamples + offset - stretch->inputLatency()));
+            const float* input[2] { p.input.getReadPointer(0, offset),
+                                    p.input.getReadPointer(1, offset) };
+            if (channels == 2) {
+                float* output[2] { info.buffer->getWritePointer(0, info.startSample + offset),
+                                   info.buffer->getWritePointer(1, info.startSample + offset) };
+                stretch->process(input, count, output, count);
+            } else {
+                stretch->process(input, count, p.trim.getArrayOfWritePointers(), count);
+                if (channels == 1)
+                    info.buffer->copyFrom(0, info.startSample + offset, p.trim, 0, 0, count);
+            }
+            offset += count;
+        }
+        const double targetMix = m_fadingToDirect ? 0.0 : 1.0;
+        for (int sample = 0; sample < info.numSamples; ++sample) {
+            m_signalsmithMix += std::clamp(targetMix - m_signalsmithMix,
+                                          -1.0 / kSwitchFadeSamples, 1.0 / kSwitchFadeSamples);
+            for (int channel = 0; channel < channels; ++channel) {
+                const float dry = p.output.getSample(channel, sample);
+                const float wet = info.buffer->getSample(channel, info.startSample + sample);
+                info.buffer->setSample(channel, info.startSample + sample,
+                    dry + static_cast<float>(m_signalsmithMix) * (wet - dry));
+            }
+        }
+        return;
+    }
     int remaining = info.numSamples;
     int destination = info.startSample;
     int loops = kPullLoopLimit;
@@ -655,16 +830,13 @@ void TimeStretchProcessor::processSignalsmithPipeline(
             p.input.getReadPointer(1)
         };
 
-        if (channels == 2) {
-            float* output[2] {
-                info.buffer->getWritePointer(0, destination),
-                info.buffer->getWritePointer(1, destination)
-            };
-            stretch->process(input, pull, output, pull);
-        } else {
-            stretch->process(input, pull, p.trim.getArrayOfWritePointers(), pull);
-            if (channels == 1)
-                info.buffer->copyFrom(0, destination, p.trim, 0, 0, pull);
+        for (int sample = 0; sample < pull; ++sample) {
+            updateSignalsmithPitch(p, 0.0);
+            const float* sampleInput[2] { input[0] + sample, input[1] + sample };
+            float* output[2] { p.trim.getWritePointer(0), p.trim.getWritePointer(1) };
+            stretch->process(sampleInput, 1, output, 1);
+            for (int channel = 0; channel < channels; ++channel)
+                info.buffer->setSample(channel, destination + sample, output[channel][0]);
         }
 
         destination += pull;
@@ -674,6 +846,45 @@ void TimeStretchProcessor::processSignalsmithPipeline(
     if (remaining > 0) {
         for (int channel = 0; channel < channels; ++channel)
             info.buffer->clear(channel, destination, remaining);
+    }
+}
+
+void TimeStretchProcessor::beginParameterRamp(Pipeline& pipeline, int samples) noexcept
+{
+    const int rampSamples = std::max(samples, static_cast<int>(pipeline.config.sampleRate * 0.01));
+    const double tempo = m_targetTempoRatio.load(std::memory_order_acquire);
+    const double semitones = m_keySemitoneOffset.load(std::memory_order_acquire);
+    if (tempo != pipeline.tempoTarget) {
+        pipeline.tempoTarget = tempo;
+        pipeline.tempoRampRemaining = rampSamples;
+        pipeline.tempoStep = (tempo - pipeline.smoothedTempo) / rampSamples;
+    }
+    if (semitones != pipeline.semitoneTarget) {
+        pipeline.semitoneTarget = semitones;
+        pipeline.semitoneRampRemaining = rampSamples;
+        pipeline.semitoneStep = (semitones - pipeline.smoothedSemitones) / rampSamples;
+    }
+}
+
+void TimeStretchProcessor::updateSignalsmithPitch(Pipeline& pipeline, double tempo) noexcept
+{
+    if (pipeline.tempoRampRemaining > 0) {
+        pipeline.smoothedTempo += pipeline.tempoStep;
+        if (--pipeline.tempoRampRemaining == 0)
+            pipeline.smoothedTempo = pipeline.tempoTarget;
+    }
+    if (pipeline.semitoneRampRemaining > 0) {
+        pipeline.smoothedSemitones += pipeline.semitoneStep;
+        if (--pipeline.semitoneRampRemaining == 0)
+            pipeline.smoothedSemitones = pipeline.semitoneTarget;
+    }
+    const double rate = tempo > 0.0 ? tempo : pipeline.smoothedTempo;
+    const double scale = (m_pitchLockEnabled.load(std::memory_order_acquire) ? 1.0 / rate : 1.0)
+        * std::pow(2.0, pipeline.smoothedSemitones / 12.0);
+    if (std::abs(scale - pipeline.appliedPitchScale) > 1.0e-9) {
+        pipeline.signalsmith->setTransposeFactor(static_cast<float>(scale),
+                                                 static_cast<float>(pipeline.tonalityLimit));
+        pipeline.appliedPitchScale = scale;
     }
 }
 
@@ -730,6 +941,19 @@ void TimeStretchProcessor::readOutputHistory(juce::AudioBuffer<float>& destinati
 }
 
 int TimeStretchProcessor::getLatencySamples() const noexcept { return m_reportedLatencySamples.load(std::memory_order_relaxed); }
+int TimeStretchProcessor::readAheadHorizon() const noexcept
+{
+    return m_backend.load(std::memory_order_acquire) == TimeStretchBackend::Signalsmith
+        && (m_pitchLockEnabled.load(std::memory_order_acquire)
+            || std::abs(m_keySemitoneOffset.load(std::memory_order_acquire)) > 1.0e-9)
+        ? m_preparedLatencySamples.load(std::memory_order_acquire) : 0;
+}
+int TimeStretchProcessor::getAudibleLatencySamples() const noexcept
+{
+    if (m_readAheadSource && m_activeBackend.load(std::memory_order_acquire) == TimeStretchBackend::Signalsmith)
+        return 0;
+    return getLatencySamples();
+}
 TimeStretchBackend TimeStretchProcessor::activeBackend() const noexcept
 {
     return m_activeBackend.load(std::memory_order_acquire);
@@ -737,5 +961,5 @@ TimeStretchBackend TimeStretchProcessor::activeBackend() const noexcept
 std::uint64_t TimeStretchProcessor::activeConfigurationGeneration() const noexcept { return m_activeGeneration.load(std::memory_order_acquire); }
 TimeStretchRealtimeStats TimeStretchProcessor::realtimeStats() const noexcept
 {
-    return {m_prepareFromAudio.load(),m_resetFromAudio.load(),m_prewarmFromAudio.load(),m_growthFromAudio.load(),m_lockFromAudio.load(),m_switches.load(),m_stale.load(),m_failures.load(),m_keylockSeeds.load(),m_worstSeedMicros.load(),m_seedBridgeBlocks.load(),m_inlineSeeds.load()};
+    return {m_prepareFromAudio.load(),m_resetFromAudio.load(),m_prewarmFromAudio.load(),m_growthFromAudio.load(),m_lockFromAudio.load(),m_switches.load(),m_stale.load(),m_failures.load(),m_keylockSeeds.load(),m_worstSeedMicros.load(),m_seedBridgeBlocks.load(),m_inlineSeeds.load(),m_discardedSeeds.load(),m_seedJobsStarted.load(),m_seedJobsCompleted.load()};
 }

@@ -2,6 +2,8 @@
 
 #include <limits>
 #include "audio/AudioParameters.h"
+#include "audio/TimeStretchReadAheadSource.h"
+#include "audio/TempoTimeline.h"
 #include "audio/internal/ScratchResampler.h"
 #include "deck/scratch/ScratchController.h"
 #include "deck/scratch/ScratchInput.h"
@@ -42,7 +44,7 @@ struct ScratchReleaseSnapshot {
 
 // Normal playback: proven Hermite varispeed (keylock off) or transport pass-through (keylock on).
 // Scratch playback: velocity-based virtual turntable + dedicated scratch resampler.
-class RenderModeRouter : public juce::AudioSource {
+class RenderModeRouter : public juce::AudioSource, public TimeStretchReadAheadSource {
 public:
     explicit RenderModeRouter(juce::AudioSource* inputSource, bool deleteInputWhenDeleted = false);
     ~RenderModeRouter() override;
@@ -50,6 +52,22 @@ public:
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
     void releaseResources() override;
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill) override;
+    bool readAhead(int offset, juce::AudioBuffer<float>& destination,
+                   int count) noexcept override;
+    void setReadAheadPosition(double seconds, double rate, int frames = 128,
+                              int horizon = 0) noexcept;
+    double readAheadTempo(int offset) noexcept override;
+    double readAheadPosition() noexcept override;
+    std::uint64_t readAheadTransportGeneration() const noexcept override {
+        return m_readerHandoffGeneration.load(std::memory_order_acquire);
+    }
+    bool readAheadPlaybackActive() const noexcept override {
+        return !isScratchPathActive() && m_normalPlaybackEnabled.load(std::memory_order_acquire);
+    }
+    bool readAheadScratchActive() const noexcept override { return isScratchPathActive(); }
+    void setReadAheadEnabled(bool enabled) noexcept { m_readAheadEnabled.store(enabled); }
+    double normalPlaybackPositionSeconds() noexcept;
+    double normalPlaybackTempo() noexcept;
 
     void beginScratch(double anchorSeconds,
                       double trackSampleRate,
@@ -115,6 +133,7 @@ public:
     // to the transport, so the very next rendered block blends away the
     // resulting waveform discontinuity instead of clicking.
     void armNormalSeekDeclick() noexcept { m_normalSeekTailPending = true; }
+    void resetNormalPlaybackAfterSeek() noexcept;
 
     void setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle);
     void setRealtimeScratchInput(
@@ -193,6 +212,14 @@ private:
     std::atomic<std::int64_t> m_lastScratchPrefetchPage {-1};
 
     double m_outputSampleRate = 44100.0;
+    AudioPageCache* m_readAheadCache = nullptr;
+    AudioCacheHandle m_readAheadHandle;
+    TempoTimeline m_tempoTimeline;
+    std::array<double, 8192> m_normalRates {};
+    bool m_timelineReady = false;
+    double m_readAheadDirection = 1.0;
+    std::atomic<bool> m_readAheadEnabled { true };
+    std::atomic<std::uint64_t> m_readerHandoffGeneration { 0 };
     int m_blockSize = 512;
     std::atomic<bool> m_useScratchScaler { false };
     bool m_prevScratchPath = false;

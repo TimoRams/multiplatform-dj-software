@@ -142,6 +142,18 @@ void HermiteResamplingAudioSource::handleDirectionFade(float* ch0, float* ch1, i
 
 void HermiteResamplingAudioSource::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
 {
+    render(bufferToFill, nullptr);
+}
+
+void HermiteResamplingAudioSource::getNextAudioBlockWithRates(
+    const juce::AudioSourceChannelInfo& bufferToFill, const double* rates)
+{
+    render(bufferToFill, rates);
+}
+
+void HermiteResamplingAudioSource::render(const juce::AudioSourceChannelInfo& bufferToFill,
+                                         const double* rates)
+{
     if (!input || !bufferToFill.buffer) {
         bufferToFill.clearActiveBufferRegion();
         return;
@@ -158,6 +170,8 @@ void HermiteResamplingAudioSource::getNextAudioBlock(const juce::AudioSourceChan
     const int outChannels = std::min(bufferToFill.buffer->getNumChannels(), channels);
     const int start = bufferToFill.startSample;
     const int numSamples = bufferToFill.numSamples;
+    if (rates && sourceBufferSize == 0)
+        sourceBufferPos = 0.0;
 
     float* out0 = outChannels > 0 ? bufferToFill.buffer->getWritePointer(0, start) : nullptr;
     float* out1 = outChannels > 1 ? bufferToFill.buffer->getWritePointer(1, start) : nullptr;
@@ -175,10 +189,14 @@ void HermiteResamplingAudioSource::getNextAudioBlock(const juce::AudioSourceChan
             continue;
         }
 
-        const double delta = currentRatio - smoothedRatio;
-        const double ratioSlew = std::max(0.0008,
-            std::max(48.0, std::abs(delta) * 0.65 * outputSampleRate) / outputSampleRate);
-        smoothedRatio += std::clamp(delta, -ratioSlew, ratioSlew);
+        if (rates) {
+            smoothedRatio = rates[i];
+        } else {
+            const double delta = currentRatio - smoothedRatio;
+            const double ratioSlew = std::max(0.0008,
+                std::max(48.0, std::abs(delta) * 0.65 * outputSampleRate) / outputSampleRate);
+            smoothedRatio += std::clamp(delta, -ratioSlew, ratioSlew);
+        }
 
         if (out0) out0[i] = readHermite(0, sourceBufferPos);
         if (out1) out1[i] = readHermite(1, sourceBufferPos);

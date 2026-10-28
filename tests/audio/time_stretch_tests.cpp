@@ -6,6 +6,7 @@
 #include <random>
 #include <thread>
 #include <cstdlib>
+#include <vector>
 
 namespace {
 class ToneSource final : public juce::AudioSource {
@@ -15,7 +16,9 @@ public:
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override {
         ++renderCalls;
         if (!playing) {
-            info.clearActiveBufferRegion();
+            for (int channel = 0; channel < info.buffer->getNumChannels(); ++channel)
+                for (int sample = 0; sample < info.numSamples; ++sample)
+                    info.buffer->setSample(channel, info.startSample + sample, pausedValue);
             return;
         }
         for (int i=0;i<info.numSamples;++i) {
@@ -26,9 +29,69 @@ public:
     }
     [[nodiscard]] std::uint64_t getRenderCalls() const noexcept { return renderCalls; }
     bool playing = true;
+    float pausedValue = 0.0f;
 private:
     double sampleRate=48000.0, phase=0.0;
     std::uint64_t renderCalls=0;
+};
+class TransientSource final : public juce::AudioSource, public TimeStretchReadAheadSource {
+public:
+    void prepareToPlay(int, double) override { position = 0; }
+    void releaseResources() override {}
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override {
+        for (int sample = 0; sample < info.numSamples; ++sample, ++position) {
+            const float value = position % 12000 == 3000 ? 0.8f : 0.0f;
+            for (int channel = 0; channel < info.buffer->getNumChannels(); ++channel)
+                info.buffer->setSample(channel, info.startSample + sample, value);
+        }
+    }
+    bool readAhead(int offset, juce::AudioBuffer<float>& destination, int count) noexcept override {
+        const auto start = static_cast<std::int64_t>(position) + offset;
+        for (int sample = 0; sample < count; ++sample) {
+            const auto index = start + sample;
+            const float value = index >= 0 && index % 12000 == 3000 ? 0.8f : 0.0f;
+            for (int channel = 0; channel < destination.getNumChannels(); ++channel)
+                destination.setSample(channel, sample, value);
+        }
+        return true;
+    }
+private:
+    std::uint64_t position = 0;
+};
+
+class PositionedSource final : public juce::AudioSource, public TimeStretchReadAheadSource {
+public:
+    void prepareToPlay(int, double rate) override { sampleRate = rate; }
+    void releaseResources() override {}
+    float valueAt(std::int64_t sample) const noexcept {
+        if (sample < 0)
+            return 0.0f;
+        if (pulses)
+            return sample % 6784 == 4736 ? 0.8f : 0.0f;
+        return ramp ? 0.1f + static_cast<float>(sample) * 0.00001f
+                    : static_cast<float>(0.2 * std::sin(sample * 220.0
+                                      * juce::MathConstants<double>::twoPi / sampleRate));
+    }
+    void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override {
+        for (int sample = 0; sample < info.numSamples; ++sample) {
+            const float value = playing ? valueAt(position++) : 0.0f;
+            for (int channel = 0; channel < info.buffer->getNumChannels(); ++channel)
+                info.buffer->setSample(channel, info.startSample + sample, value);
+        }
+    }
+    bool readAhead(int offset, juce::AudioBuffer<float>& destination, int count) noexcept override {
+        for (int sample = 0; sample < count; ++sample)
+            for (int channel = 0; channel < destination.getNumChannels(); ++channel)
+                destination.setSample(channel, sample, valueAt(position + offset + sample));
+        return true;
+    }
+    double readAheadPosition() noexcept override { return position / sampleRate; }
+    std::int64_t position = 0;
+    bool playing = true;
+    bool ramp = false;
+    bool pulses = false;
+private:
+    double sampleRate = 48'000.0;
 };
 bool require(bool value,const char* message){if(!value)std::cerr<<"FAIL: "<<message<<'\n';return value;}
 bool finite(const juce::AudioBuffer<float>& b){for(int ch=0;ch<b.getNumChannels();++ch)for(int i=0;i<b.getNumSamples();++i)if(!std::isfinite(b.getSample(ch,i)))return false;return true;}
@@ -45,6 +108,273 @@ static_assert(noexcept(std::declval<TimeStretchProcessor&>().getNextAudioBlock(
 
 int main(){
     bool ok=true;
+    {
+        std::atomic<bool> gate { false };
+        PositionedSource input;
+        TimeStretchProcessor source(&input);
+        source.prepareToPlay(128, 48'000.0);
+        source.setSeedPreparationGateForTesting(&gate);
+        source.setTempoRatio(0.8);
+        source.setPitchLockEnabled(true);
+        juce::AudioBuffer<float> block(2, 128);
+        for (int iteration = 0; iteration < 64; ++iteration) {
+            const auto start = input.position;
+            source.getNextAudioBlock({&block, 0, 128});
+            for (int sample = 0; sample < 128; ++sample)
+                ok &= require(block.getSample(0, sample) == input.valueAt(start + sample),
+                              "blocked seed worker leaves the complete direct stream intact");
+            ok &= require(source.getLatencySamples() == 0, "callback never waits for delayed worker");
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        ok &= require(source.realtimeStats().seedJobsStarted == 1
+                       && source.realtimeStats().seedJobsCompleted == 0,
+                       "delayed-worker test holds an actual in-flight seed");
+        gate.store(true, std::memory_order_release);
+        float previous = block.getSample(0, 127);
+        float maximumTransitionStep = 0.0f;
+        for (int iteration = 0; iteration < 200 && source.getLatencySamples() == 0; ++iteration) {
+            source.getNextAudioBlock({&block, 0, 128});
+            for (int sample = 0; sample < 128; ++sample) {
+                maximumTransitionStep = std::max(maximumTransitionStep,
+                    std::abs(block.getSample(0, sample) - previous));
+                previous = block.getSample(0, sample);
+            }
+            ok &= require(block.getRMSLevel(0, 0, 128) > 0.04f,
+                           "delayed-worker catch-up has no silent hole");
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        }
+        ok &= require(source.getLatencySamples() > 0, "keylock catches up after delayed worker release");
+        for (int iteration = 0; iteration < 32; ++iteration) {
+            source.getNextAudioBlock({&block, 0, 128});
+            for (int sample = 0; sample < 128; ++sample) {
+                maximumTransitionStep = std::max(maximumTransitionStep,
+                    std::abs(block.getSample(0, sample) - previous));
+                previous = block.getSample(0, sample);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        }
+        ok &= require(maximumTransitionStep < 0.035f, "delayed-worker handoff remains click-free");
+        ok &= require(source.realtimeStats().keylockSeedsOnAudioThread == 0,
+                       "delayed preparation stays off the callback");
+        std::cout << "delayed-worker: direct-stream intact, keylock recovered\n";
+    }
+    {
+        std::atomic<bool> gate { false };
+        PositionedSource input;
+        input.ramp = true;
+        TimeStretchProcessor source(&input);
+        source.prepareToPlay(128, 48'000.0);
+        source.setSeedPreparationGateForTesting(&gate);
+        source.setTempoRatio(0.8);
+        source.setPitchLockEnabled(true);
+        juce::AudioBuffer<float> block(2, 128);
+        source.getNextAudioBlock({&block, 0, 128});
+        for (int attempt = 0; attempt < 1000 && source.realtimeStats().seedJobsStarted == 0; ++attempt)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        ok &= require(source.realtimeStats().seedJobsStarted == 1, "seek test captures a worker-owned seed");
+        const auto before = source.positionStamp();
+        input.position = 10'000;
+        source.notifyInputDiscontinuity();
+        source.getNextAudioBlock({&block, 0, 128});
+        ok &= require(source.positionStamp().seekGeneration > before.seekGeneration,
+                       "seek advances the preparation generation");
+        gate.store(true, std::memory_order_release);
+        for (int attempt = 0; attempt < 1000 && source.realtimeStats().seedJobsCompleted == 0; ++attempt)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        ok &= require(source.realtimeStats().seedJobsCompleted == 1,
+                       "old worker result is ready before stale-result assertion");
+        source.getNextAudioBlock({&block, 0, 128});
+        ok &= require(source.getLatencySamples() == 0 && source.realtimeStats().discardedSeedResults == 1,
+                       "ready result from before seek is discarded");
+        for (int sample = 0; sample < 128; ++sample)
+            ok &= require(block.getSample(0, sample) == input.valueAt(10'128 + sample),
+                           "stale result never replays samples from before seek");
+        for (int attempt = 0; attempt < 200 && source.getLatencySamples() == 0; ++attempt) {
+            source.getNextAudioBlock({&block, 0, 128});
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        }
+        ok &= require(source.getLatencySamples() > 0, "fresh post-seek preparation engages");
+        std::cout << "stale-seek-result: rejected=" << source.realtimeStats().discardedSeedResults << '\n';
+    }
+    {
+        PositionedSource input;
+        input.pulses = true;
+        TimeStretchProcessor source(&input);
+        source.prepareToPlay(128, 48'000.0);
+        source.setTempoRatio(0.8);
+        source.setPitchLockEnabled(true);
+        juce::AudioBuffer<float> block(2, 128);
+        int checkedBlocks = 0;
+        int activeBlocks = 0;
+        int checkedTransients = 0;
+        for (int cycle = 0; cycle < 12; ++cycle) {
+            input.playing = false;
+            source.setInputPlaybackActive(false);
+            const auto pausedPosition = input.position;
+            for (int pause = 0; pause < 1 + cycle % 8; ++pause) {
+                source.getNextAudioBlock({&block, 0, 128});
+                ok &= require(input.position == pausedPosition, "pause never consumes track samples");
+            }
+            input.playing = true;
+            source.setInputPlaybackActive(true);
+            const int playBlocks = cycle % 3 == 0 ? 1 : cycle % 3 == 1 ? 4 : 48;
+            const auto expectedTransient = input.position + 4096;
+            float peak = 0.0f;
+            std::int64_t peakPosition = -1;
+            int unexpectedSamples = 0;
+            for (int play = 0; play < playBlocks; ++play) {
+                const auto start = input.position;
+                source.getNextAudioBlock({&block, 0, 128});
+                ok &= require(input.position == start + 128, "resume advances each track interval exactly once");
+                if (play >= 3) {
+                    ++checkedBlocks;
+                    activeBlocks += source.getLatencySamples() > 0;
+                }
+                if (playBlocks == 48) {
+                    for (int sample = 0; sample < 128; ++sample) {
+                        const float value = std::abs(block.getSample(0, sample));
+                        if (value > peak) {
+                            peak = value;
+                            peakPosition = start + sample;
+                        }
+                        unexpectedSamples += value > 0.02f
+                            && std::abs(start + sample - expectedTransient) > 240;
+                    }
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(3));
+            }
+            if (playBlocks == 48) {
+                std::cout << "pause-transient cycle=" << cycle
+                          << " offset=" << peakPosition - expectedTransient
+                          << " unexpected-samples=" << unexpectedSamples << '\n';
+                ok &= require(peak > 0.01f && std::abs(peakPosition - expectedTransient) <= 1,
+                               "pause/resume neither skips nor repeats the track transient");
+                ok &= require(unexpectedSamples == 0, "pause/resume emits no stale extra transient");
+                ++checkedTransients;
+            }
+        }
+        ok &= require(checkedBlocks > 100 && activeBlocks > 50, "pause-spam exercises active stretched output");
+        ok &= require(checkedTransients == 4, "pause-spam checks four independent resumed transients");
+        std::cout << "play-pause-spam: checked=" << checkedBlocks << " active=" << activeBlocks << '\n';
+    }
+    if (std::getenv("BROCKDJ_REQUIRE_KEYLOCK_ALIGNMENT") != nullptr) {
+        TransientSource input;
+        TimeStretchProcessor source(&input);
+        source.prepareToPlay(128, 48000.0);
+        source.setTempoRatio(0.8);
+        juce::AudioBuffer<float> block(2, 128);
+        std::vector<float> rendered;
+        rendered.reserve(49152);
+        for (int iteration = 0; iteration < 384; ++iteration) {
+            if (iteration == 64)
+                source.setPitchLockEnabled(true);
+            source.getNextAudioBlock({&block, 0, 128});
+            rendered.insert(rendered.end(), block.getReadPointer(0), block.getReadPointer(0) + 128);
+            std::this_thread::sleep_for(std::chrono::duration<double>(128.0 / 48000.0));
+        }
+        ok &= require(source.getLatencySamples() > 0, "alignment test engaged keylock");
+        for (const int expected : {27000, 39000}) {
+            int strongest = expected - 3000;
+            for (int sample = expected - 3000; sample <= expected + 3000; ++sample)
+                if (std::abs(rendered[static_cast<std::size_t>(sample)])
+                    > std::abs(rendered[static_cast<std::size_t>(strongest)]))
+                    strongest = sample;
+            std::cerr << "keylock transient offset=" << strongest - expected << " samples\n";
+            ok &= require(std::abs(strongest - expected) <= 1,
+                          "keylock transients remain aligned within one sample");
+        }
+    }
+    for (const auto backend : {TimeStretchBackend::Signalsmith, TimeStretchBackend::RubberBand}) {
+        ToneSource referenceTone;
+        ToneSource lockedTone;
+        TimeStretchProcessor reference(&referenceTone);
+        TimeStretchProcessor locked(&lockedTone);
+        locked.setBackend(backend);
+        reference.prepareToPlay(128, 48000.0);
+        locked.prepareToPlay(128, 48000.0);
+        juce::AudioBuffer<float> expected(2, 128), actual(2, 128);
+        for (int iteration = 0; iteration < 160; ++iteration) {
+            locked.setPitchLockEnabled(iteration >= 16 && iteration < 128);
+            reference.getNextAudioBlock({&expected, 0, 128});
+            locked.getNextAudioBlock({&actual, 0, 128});
+            for (int sample = 0; sample < 128; ++sample)
+                ok &= require(expected.getSample(0, sample) == actual.getSample(0, sample),
+                              "unity-tempo keylock toggles preserve every sample");
+            ok &= require(locked.getLatencySamples() == 0,
+                          "unity-tempo keylock adds no latency");
+        }
+        ok &= require(locked.realtimeStats().keylockSeeds == 0,
+                      "unity-tempo keylock does not seed a stretcher");
+    }
+    {
+        ToneSource tone;
+        TimeStretchProcessor source(&tone);
+        source.prepareToPlay(128, 48000.0);
+        source.setPitchLockEnabled(true);
+        source.setTempoRatio(0.8);
+        juce::AudioBuffer<float> block(2, 128);
+        for (int iteration = 0; iteration < 200 && source.getLatencySamples() == 0; ++iteration) {
+            source.getNextAudioBlock({&block, 0, 128});
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        }
+        ok &= require(source.getLatencySamples() > 0, "keylock engages before discontinuity");
+        source.notifyInputDiscontinuity();
+        source.getNextAudioBlock({&block, 0, 128});
+        ok &= require(source.getLatencySamples() == 0,
+                      "a seek immediately stops emitting the old stretched stream");
+        for (int iteration = 0; iteration < 8; ++iteration) {
+            source.getNextAudioBlock({&block, 0, 128});
+            ok &= require(source.getLatencySamples() == 0,
+                          "a seek waits for fresh input before reseeding");
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        }
+    }
+    {
+        ToneSource tone;
+        TimeStretchProcessor source(&tone);
+        source.prepareToPlay(128, 48000.0);
+        source.setPitchLockEnabled(true);
+        source.setTempoRatio(0.8);
+        juce::AudioBuffer<float> block(2, 128);
+        for (int iteration = 0; iteration < 200 && source.getLatencySamples() == 0; ++iteration) {
+            source.getNextAudioBlock({&block, 0, 128});
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        }
+        ok &= require(source.getLatencySamples() > 0, "keylock engages before scratch");
+        tone.playing = false;
+        tone.pausedValue = 0.8f;
+        source.setInputPlaybackActive(false);
+        source.enterScratchBypass();
+        source.getNextAudioBlock({&block, 0, 128});
+        ok &= require(block.getSample(0, 127) > 0.2f,
+                      "scratch input remains audible when leaving keylock while paused");
+    }
+    {
+        ToneSource tone;
+        TimeStretchProcessor source(&tone);
+        source.prepareToPlay(128, 48000.0);
+        source.setPitchLockEnabled(true);
+        source.setTempoRatio(0.8);
+        juce::AudioBuffer<float> block(2, 128);
+        bool engaged = false;
+        for (int iteration = 0; iteration < 200 && !engaged; ++iteration) {
+            source.getNextAudioBlock({&block, 0, 128});
+            engaged = source.getLatencySamples() > 0;
+            std::this_thread::sleep_for(std::chrono::milliseconds(3));
+        }
+        ok &= require(engaged, "keylock engages before pause transition");
+        const float lastSample = block.getSample(0, 127);
+        tone.playing = false;
+        tone.pausedValue = 0.8f;
+        source.setInputPlaybackActive(false);
+        source.getNextAudioBlock({&block, 0, 128});
+        ok &= require(std::abs(block.getSample(0, 0) - lastSample) < 0.01f,
+                      "pausing keylock fades from the audible output");
+        tone.pausedValue = 0.0f;
+        source.getNextAudioBlock({&block, 0, 128});
+        ok &= require(std::abs(block.getSample(0, 127)) < 0.01f,
+                      "pausing keylock fades to silence without leaking the direct path");
+    }
     for (const auto backend : {TimeStretchBackend::Signalsmith, TimeStretchBackend::RubberBand}) {
         ToneSource tone;
         TimeStretchProcessor source(&tone);
@@ -149,6 +479,7 @@ int main(){
         ToneSource tone;
         TimeStretchProcessor source(&tone);
         source.prepareToPlay(128, 48000.0);
+        source.setTempoRatio(0.9);
         juce::AudioBuffer<float> block(2, 128);
         for (int i = 0; i < 120; ++i) {
             source.setPitchLockEnabled(i % 3 != 0);
@@ -279,6 +610,7 @@ int main(){
                     "keylock nudge does not switch a pipeline");
         const auto preScratchGeneration=source.activeConfigurationGeneration();
         const auto switchesBeforeScratch=source.realtimeStats().successfulPipelineSwitches;
+        source.setTempoRatio(0.98);
         source.enterScratchBypass();
         for(int i=0;i<16;++i){source.getNextAudioBlock({&b,0,8192});std::this_thread::sleep_for(std::chrono::milliseconds(1));}
         source.enterScratchBypass();

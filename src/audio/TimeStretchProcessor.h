@@ -1,5 +1,7 @@
 #pragma once
 
+#include "audio/TimeStretchReadAheadSource.h"
+
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -33,6 +35,17 @@ struct TimeStretchRealtimeStats {
     // The audio-thread seed counter is retained as a zero-required diagnostic.
     std::uint64_t keylockSeedBridgeBlocks = 0;
     std::uint64_t keylockSeedsOnAudioThread = 0;
+    std::uint64_t discardedSeedResults = 0;
+    std::uint64_t seedJobsStarted = 0;
+    std::uint64_t seedJobsCompleted = 0;
+};
+
+struct TimeStretchPositionStamp {
+    std::uint64_t trackGeneration = 0;
+    std::uint64_t seekGeneration = 0;
+    std::uint64_t transportGeneration = 0;
+    std::uint64_t outputFrame = 0;
+    double trackPosition = 0.0;
 };
 
 struct TimeStretchConfiguration {
@@ -92,6 +105,9 @@ public:
     void setBackend(TimeStretchBackend backend) noexcept;
     void setScratchBypass(bool enabled) noexcept;
     void setTrackGeneration(std::uint64_t generation) noexcept;
+    void notifyInputDiscontinuity() noexcept;
+    void notifyTransportDiscontinuity() noexcept;
+    void setSeedPreparationGateForTesting(std::atomic<bool>* gate) noexcept;
     void enterScratchBypass() noexcept;
     void endScratchBypass() noexcept;
 
@@ -100,9 +116,12 @@ public:
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) noexcept override;
 
     [[nodiscard]] int getLatencySamples() const noexcept;
+    [[nodiscard]] int getAudibleLatencySamples() const noexcept;
+    [[nodiscard]] int readAheadHorizon() const noexcept;
     [[nodiscard]] TimeStretchBackend activeBackend() const noexcept;
     [[nodiscard]] TimeStretchRealtimeStats realtimeStats() const noexcept;
     [[nodiscard]] std::uint64_t activeConfigurationGeneration() const noexcept;
+    [[nodiscard]] TimeStretchPositionStamp positionStamp() const noexcept;
 
 private:
     enum class SlotState : std::uint8_t { Empty, Preparing, Ready, Active };
@@ -125,6 +144,14 @@ private:
         int prefill = 0;
         int latency = 0;
         double appliedPitchScale = 1.0;
+        double smoothedTempo = 1.0;
+        double tempoTarget = 1.0;
+        double tempoStep = 0.0;
+        int tempoRampRemaining = 0;
+        double smoothedSemitones = 0.0;
+        double semitoneTarget = 0.0;
+        double semitoneStep = 0.0;
+        int semitoneRampRemaining = 0;
         // Normalised tonality limit for this pipeline's sample rate. Kept here
         // because setTransposeFactor() resets the limit whenever it is called
         // without one, so every later pitch update has to pass it again.
@@ -143,6 +170,8 @@ private:
     void syncPipelinePitchScale(Pipeline& pipeline) noexcept;
     void processSignalsmithPipeline(Pipeline& pipeline,
                                     const juce::AudioSourceChannelInfo& info) noexcept;
+    void updateSignalsmithPitch(Pipeline& pipeline, double tempo) noexcept;
+    void beginParameterRamp(Pipeline& pipeline, int samples) noexcept;
     void applySwitchFade(const juce::AudioSourceChannelInfo& info) noexcept;
     void beginTransitionFade() noexcept;
     [[nodiscard]] bool requestKeylockSeed(int slot, std::uint64_t catchupSamples = 0) noexcept;
@@ -159,6 +188,8 @@ private:
     void resizeBuffer(juce::AudioBuffer<float>& buffer, int channels, int samples);
 
     juce::AudioSource* source = nullptr;
+    TimeStretchReadAheadSource* m_readAheadSource = nullptr;
+    std::uint64_t m_seenReadAheadGeneration = 0;
     std::array<Pipeline, 2> m_pipelines;
     std::atomic<int> m_activeSlot { -1 };
     std::atomic<double> m_targetTempoRatio { 1.0 };
@@ -173,10 +204,13 @@ private:
     // discontinuity (keylock toggled on, scratch released, new track). The
     // audio thread consumes it on the first block it renders through keylock.
     std::atomic<bool> m_keylockSeedPending { false };
+    std::atomic<bool> m_inputDiscontinuityPending { false };
     // Audio-thread only: whether the previous block was rendered through the
     // stretcher. Comparing it against the current decision is what detects a
     // transition without any cross-thread handshake.
     bool m_keylockRenderActive = false;
+    double m_signalsmithMix = 0.0;
+    bool m_fadingToDirect = false;
     // Seeding runs on the worker: it costs several FFT frames and would blow a
     // small callback budget. While a seed is in flight the audio thread bridges
     // through the direct path at unlocked pitch until the worker catches up,
@@ -184,10 +218,15 @@ private:
     std::atomic<SeedState> m_seedState { SeedState::Idle };
     std::atomic<int> m_seedSlot { -1 };
     juce::AudioBuffer<float> m_seedSnapshot;
+    std::array<double, kOutputHistorySamples> m_seedTempos {};
     int m_seedSnapshotLength = 0;
     bool m_seedNeedsReset = true; // published with the seed snapshot
     bool m_seedValid = false; // audio-thread-owned validity of the in-flight seed
     std::uint64_t m_seedHistoryEnd = 0;
+    TimeStretchPositionStamp m_seedStamp;
+    std::atomic<std::uint64_t> m_seekGeneration { 0 };
+    std::atomic<std::uint64_t> m_transportGeneration { 0 };
+    std::atomic<std::atomic<bool>*> m_seedPreparationGate { nullptr };
     std::atomic<double> m_sampleRate { 44100.0 };
     std::atomic<int> m_maximumBlockSize { 512 };
     std::atomic<std::uint64_t> m_trackGeneration { 0 };
@@ -195,6 +234,7 @@ private:
     std::atomic<std::uint64_t> m_activeGeneration { 0 };
     std::atomic<TimeStretchBackend> m_activeBackend { TimeStretchBackend::Signalsmith };
     std::atomic<int> m_reportedLatencySamples { 0 };
+    std::atomic<int> m_preparedLatencySamples { 0 };
     std::atomic<int> m_switchFadeRemaining { 0 };
     juce::AudioBuffer<float> m_previousTail;
     // Ring of everything this processor has emitted. Audio-thread-owned.
@@ -218,4 +258,5 @@ private:
     std::atomic<std::uint64_t> m_stale { 0 }, m_failures { 0 };
     std::atomic<std::uint64_t> m_keylockSeeds { 0 }, m_worstSeedMicros { 0 };
     std::atomic<std::uint64_t> m_seedBridgeBlocks { 0 }, m_inlineSeeds { 0 };
+    std::atomic<std::uint64_t> m_discardedSeeds { 0 }, m_seedJobsStarted { 0 }, m_seedJobsCompleted { 0 };
 };

@@ -91,6 +91,8 @@ struct DeckAudioPipeline::Impl {
         if (settings.baseRate != appliedPlaybackSettings.baseRate
             || settings.jogRatio != appliedPlaybackSettings.jogRatio
             || settings.reverse != appliedPlaybackSettings.reverse) {
+            if (settings.reverse != appliedPlaybackSettings.reverse)
+                timeStretch->notifyTransportDiscontinuity();
             if (playback)
                 playback->setReverse(settings.reverse);
             renderModeRouter->setReverse(settings.reverse);
@@ -128,6 +130,7 @@ struct DeckAudioPipeline::Impl {
                 break;
             }
             case AudioCommandType::SetLoop: {
+                timeStretch->notifyTransportDiscontinuity();
                 loopStart = command.valueA;
                 loopEnd = command.valueB;
                 const double sampleRate = handle.sampleRate();
@@ -142,6 +145,7 @@ struct DeckAudioPipeline::Impl {
                 break;
             }
             case AudioCommandType::ClearLoop:
+                timeStretch->notifyTransportDiscontinuity();
                 loopStart = loopEnd = 0.0;
                 if (playback)
                     playback->clearLoopRangeSamples();
@@ -161,6 +165,7 @@ struct DeckAudioPipeline::Impl {
         if (pendingSeek != appliedSeekGeneration.load(std::memory_order_relaxed)) {
             const double seconds = commandedPositionSeconds.load(std::memory_order_acquire);
             presentationSeconds = seconds;
+            timeStretch->notifyInputDiscontinuity();
             if (playback) {
                 playback->setCommandedReadPosition(static_cast<std::int64_t>(
                     std::llround(seconds * handle.sampleRate())));
@@ -171,6 +176,7 @@ struct DeckAudioPipeline::Impl {
             // cue or loop jump mid-track) triggers the declick blend.
             renderModeRouter->armNormalSeekDeclick();
             transport.setPosition(seconds);
+            renderModeRouter->resetNormalPlaybackAfterSeek();
             appliedSeekGeneration.store(pendingSeek, std::memory_order_release);
         }
     }
@@ -227,20 +233,28 @@ void DeckAudioPipeline::getNextAudioBlockAtTime(
     }
 
     m_impl->consumeCommands();
+    const double readAheadRate = m_impl->appliedPlaybackSettings.baseRate
+        * m_impl->appliedPlaybackSettings.jogRatio
+        * (m_impl->appliedPlaybackSettings.reverse ? -1.0 : 1.0);
+    m_impl->renderModeRouter->setReadAheadPosition(m_impl->presentationSeconds, readAheadRate,
+        info.numSamples, m_impl->timeStretch->readAheadHorizon());
     m_impl->mixer->getNextAudioBlock(info);
     const bool scratching = m_impl->renderModeRouter->activeRenderMode()
         == engine::audio::RenderMode::Scratch;
     const double length = m_impl->handle.sampleRate() > 0.0
         ? m_impl->handle.lengthInSamples() / m_impl->handle.sampleRate() : 0.0;
+    const bool positioned = m_impl->timeStretch->activeBackend() == TimeStretchBackend::Signalsmith;
     const double rate = m_impl->presentationRunning
-        ? m_impl->appliedPlaybackSettings.baseRate * m_impl->appliedPlaybackSettings.jogRatio
-            * (m_impl->appliedPlaybackSettings.reverse ? -1.0 : 1.0)
+        ? positioned ? m_impl->renderModeRouter->normalPlaybackTempo() : readAheadRate
         : 0.0;
     if (scratching || m_impl->presentationWasScratch) {
         m_impl->presentationSeconds = m_impl->renderModeRouter->displayPositionSeconds();
     }
     if (!scratching) {
-        m_impl->presentationSeconds += info.numSamples / m_impl->outputSampleRate * rate;
+        if (positioned)
+            m_impl->presentationSeconds = m_impl->renderModeRouter->normalPlaybackPositionSeconds();
+        else
+            m_impl->presentationSeconds += info.numSamples / m_impl->outputSampleRate * rate;
     }
     m_impl->presentationWasScratch = scratching;
     AudioPresentationPosition position {
@@ -332,6 +346,7 @@ void DeckAudioPipeline::setKeySemitoneOffset(double semitones) noexcept
 
 void DeckAudioPipeline::setTimeStretchBackend(TimeStretchBackend backend) noexcept
 {
+    m_impl->renderModeRouter->setReadAheadEnabled(backend == TimeStretchBackend::Signalsmith);
     m_impl->timeStretch->setBackend(backend);
 }
 
@@ -352,7 +367,7 @@ void DeckAudioPipeline::setPlaybackReadPositionSamples(std::int64_t position) no
 
 int DeckAudioPipeline::keylockLatencySamples() const noexcept
 {
-    return m_impl->timeStretch ? std::max(0, m_impl->timeStretch->getLatencySamples()) : 0;
+    return m_impl->timeStretch ? std::max(0, m_impl->timeStretch->getAudibleLatencySamples()) : 0;
 }
 
 DeckAudioPipeline::TransportSnapshot DeckAudioPipeline::transportSnapshot() const noexcept

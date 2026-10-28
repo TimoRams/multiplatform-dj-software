@@ -156,7 +156,8 @@ bool testMatchedPresentation(AudioPageCache& cache, const QString& path)
                 ok &= require(first.graph.timeStretch().activeBackend()
                                   == (mode == 2 ? TimeStretchBackend::RubberBand
                                                 : TimeStretchBackend::Signalsmith)
-                                  && first.graph.realtimeStats().keylockSeeds > 0,
+                                  && (speed == 1.0 ? second.graph.realtimeStats().keylockSeeds > 0
+                                                   : first.graph.realtimeStats().keylockSeeds > 0),
                               "matched presentation actually exercised the requested stretcher");
             }
             first.transport.setPlaying(false);
