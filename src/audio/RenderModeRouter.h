@@ -142,6 +142,7 @@ public:
         m_playbackSource.store(source, std::memory_order_release);
     }
     [[nodiscard]] ScratchCacheStats scratchCacheStats() const noexcept { return m_scratchResampler.cacheStats(); }
+    [[nodiscard]] ScratchMotionStats scratchMotionStats() const noexcept { return m_scratchResampler.motionStats(); }
 
     // Audio thread publishes scratch playhead here (seconds) for lock-free UI reads.
     void setAudioPlayheadSink(std::atomic<double>* sink) noexcept { m_audioPlayheadSink = sink; }
@@ -151,7 +152,7 @@ private:
     [[nodiscard]] double effectiveDeckTempoRatio() const noexcept;
     void consumePendingAudioCommands() noexcept;
     void consumeScratchReleaseCommand() noexcept;
-    void finishReleaseDecisionAfterTrackingBlock() noexcept;
+    void resolveScratchRelease() noexcept;
     void finishCoastHandoffAfterScratchBlock(double trackSampleRate) noexcept;
     void completeActiveReleaseHandoff(double trackSampleRate) noexcept;
     [[nodiscard]] bool applyReaderHandoff(double positionSeconds,
@@ -189,6 +190,10 @@ private:
     engine::scratch::ScratchController m_controller;
     engine::scratch::VirtualTurntable m_platter;
     ScratchResampler m_scratchResampler;
+    ScratchResampler m_scratchExitResampler;
+    juce::AudioBuffer<float> m_scratchExitAudio;
+    int m_scratchExitRemaining = 0;
+    bool m_deckLandingStarted = false;
     std::shared_ptr<engine::scratch::RealtimeScratchInput> m_realtimeScratchInputOwner;
     std::atomic<engine::scratch::RealtimeScratchInput*> m_realtimeScratchInput { nullptr };
     std::atomic<std::uint64_t> m_startScratchInputGeneration { 0 };

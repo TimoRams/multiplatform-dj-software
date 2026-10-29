@@ -29,6 +29,7 @@ struct ScratchControllerConfig {
     int releaseDirectionConfirmationSamples = 2;
     double releaseVelocitySmoothingTauSec = 0.035;
     double releaseReturnTauSec = 0.220;
+    double deckReturnTauSec = 0.380;
     double inertiaStopThreshold = 0.02;
     // When normal playback is waiting in the opposite direction, hand off
     // before the backspin becomes an audible near-zero hold. Pause releases

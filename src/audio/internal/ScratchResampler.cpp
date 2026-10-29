@@ -44,6 +44,7 @@ void ScratchResampler::prepare(int numChannels, int maxBlockSize, double outputS
     m_lastRate = 0.0;
     m_smoothedRate = 0.0;
     m_previousRateStep = 0.0;
+    m_landingSamples = 0;
     m_trackVel = 0.0;
     m_referencePos = 0.0;
     m_referenceVelocity = 0.0;
@@ -143,6 +144,7 @@ void ScratchResampler::prepareSincTable()
 
 void ScratchResampler::reset(double readPositionSamples) noexcept
 {
+    m_landingSamples = 0;
     m_readPos = readPositionSamples;
     m_bufferOriginSample = readPositionSamples;
     m_sourceSize = 0;
@@ -162,6 +164,38 @@ void ScratchResampler::setReadPositionSamples(double readPositionSamples) noexce
     m_readPos = wrapPosition(readPositionSamples);
 }
 
+void ScratchResampler::beginContinuation(const ScratchResampler& source) noexcept
+{
+    m_landingSamples = 0;
+    m_readPos = source.m_readPos;
+    m_smoothedRate = source.m_smoothedRate;
+    m_lastRate = source.m_smoothedRate;
+    m_previousRateStep = 0.0;
+    m_sourceSize = 0;
+    m_starvationGain = source.m_starvationGain;
+    m_lastOutputL = source.m_lastOutputL;
+    m_lastOutputR = source.m_lastOutputR;
+    m_trackLengthSamples = source.m_trackLengthSamples;
+    m_loopInSample = source.m_loopInSample;
+    m_loopOutSample = source.m_loopOutSample;
+    m_loopActive = source.m_loopActive;
+}
+
+void ScratchResampler::beginRateLanding(double targetRate, int samples) noexcept
+{
+    m_landingSamples = std::max(1, samples);
+    m_landingFrame = 0;
+    m_landingTarget = targetRate;
+    const double delta = targetRate - m_smoothedRate;
+    const double slope = m_previousRateStep * m_landingSamples;
+    const double initialSlope = delta >= 0.0 ? std::clamp(slope, 0.0, 2.0 * delta)
+                                           : std::clamp(slope, 2.0 * delta, 0.0);
+    m_landingCurve = { m_smoothedRate, initialSlope, 0.0,
+                      10.0 * delta - 6.0 * initialSlope,
+                      -15.0 * delta + 8.0 * initialSlope,
+                      6.0 * delta - 3.0 * initialSlope };
+}
+
 void ScratchResampler::nudgeReadPositionSamples(double deltaSamples) noexcept
 {
     if (std::abs(deltaSamples) < 1e-12)
@@ -171,6 +205,7 @@ void ScratchResampler::nudgeReadPositionSamples(double deltaSamples) noexcept
 
 void ScratchResampler::snapSmoothedRate(double rate) noexcept
 {
+    m_landingSamples = 0;
     m_smoothedRate = rate;
     m_lastRate = rate;
 }
@@ -527,6 +562,9 @@ void ScratchResampler::processBlock(double rate,
     }
 
     const double targetRate = std::isfinite(rate) ? rate : 0.0;
+    if (m_landingSamples > 0 && m_landingFrame >= m_landingSamples)
+        m_landingSamples = 0;
+    const bool landing = m_landingSamples > 0;
     m_lastRate = targetRate;
 
     const int outChannels = std::min(output.buffer->getNumChannels(), m_channels);
@@ -559,11 +597,18 @@ void ScratchResampler::processBlock(double rate,
         const double previousRate = m_smoothedRate;
         const double blockFraction = static_cast<double>(i + 1)
             / static_cast<double>(numSamples);
-        const double desiredRate = std::lerp(
-            blockStartRate, targetRate, blockFraction);
+        double desiredRate = std::lerp(blockStartRate, targetRate, blockFraction);
+        if (landing) {
+            m_landingFrame = std::min(m_landingFrame + 1, m_landingSamples);
+            const double progress = static_cast<double>(m_landingFrame) / m_landingSamples;
+            const auto& curve = m_landingCurve;
+            desiredRate = m_landingFrame == m_landingSamples ? m_landingTarget
+                : curve[0] + progress * (curve[1] + progress * (curve[2]
+                    + progress * (curve[3] + progress * (curve[4] + progress * curve[5]))));
+        }
         const double accelerationLimitedStep = std::clamp(
             desiredRate - previousRate, -maxRateStep, maxRateStep);
-        const double rateStep = std::clamp(
+        const double rateStep = landing ? desiredRate - previousRate : std::clamp(
             accelerationLimitedStep,
             m_previousRateStep - maxRateStepDelta,
             m_previousRateStep + maxRateStepDelta);

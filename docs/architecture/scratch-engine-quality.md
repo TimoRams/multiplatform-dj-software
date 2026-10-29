@@ -133,13 +133,42 @@ her" jitter mid-drag whenever such a sample landed inside a scratch. Position
 is unaffected by the floor: the full delta is always integrated into
 `m_handPositionSec` regardless of how implausible its implied rate is.
 `ScratchController` then publishes one exponential coast target
-per callback with a 220 ms return constant. `ScratchResampler::processBlock()`
+per callback with a 380 ms return constant towards a running deck, and a
+220 ms return constant towards a stop. `ScratchResampler::processBlock()`
 uses the prior rate and new target as a complete block trajectory, then applies
 the same time-based acceleration and jerk limits as tracking. This prevents both
 callback-frequency pitch stairs and a short-buffer impulse when the newest
 physical release estimate is faster than the final rendered tracking rate. Once
-the coast reaches its handoff threshold, the rendered cursor transfers to Direct
-or Keylock and the existing short tail crossfade masks the reader change.
+the same-direction coast reaches its handoff threshold, the audio reader first
+finishes a sample-based quintic rate landing. It preserves the current rendered
+velocity and deceleration and reaches deck rate with zero endpoint deceleration.
+This normally takes 120 ms; a larger remaining rendered-speed mismatch can extend
+it to at most 300 ms. Tests measure the excess-speed decay from 75% to 25%
+separately from the final landing, so an end-only smoothing change cannot hide
+an overly abrupt overall return. The controller's two-percent completion threshold must not
+be compressed into a single callback: that previously caused a final braking
+spike, particularly with 64/256-sample buffers. Opposite-direction backspins
+retain their existing coast-to-stop behaviour. Only after the forward landing
+finishes does the rendered cursor transfer to Direct
+or Keylock. A separate, preallocated scratch reader renders 128 continuation
+samples from that exact cursor and the final rendered velocity. The normal
+reader blends with this moving continuation over 128 output samples, even
+across small callbacks. The continuation never advances the authoritative
+cursor. Holding the last scratch sample as a constant fade anchor would flatten
+the waveform and create an audible phase hesitation on forward spins.
+When a forward release's final hand target is already behind the audible cursor,
+the router resolves release before rendering another position-tracking block.
+Replaying that stationary target would brake or reverse the reader for one block
+and then accelerate it again as inertia takes over. Unrendered hand movement is
+still tracked before release. A same-direction reader already at or above deck
+rate seeds inertia from its rendered rate. Later wheel estimates can slow a coast
+but cannot accelerate it again. Re-grabbing
+and explicit transport changes retain their own state transitions. Regression
+checks include the very first release block, a deck-rate floor, and a delayed
+faster wheel packet, with Keylock on and off at 64/256/1024 samples.
+The Signalsmith preparation worker batches samples with identical tempo once
+parameter ramps have finished. Ramps retain per-sample processing; constant
+segments avoid one library call per sample, allowing catch-up at 192 kHz.
 
 ## Measured regression points
 

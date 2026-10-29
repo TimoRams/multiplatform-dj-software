@@ -29,6 +29,11 @@ void RenderModeRouter::prepareToPlay(int samplesPerBlockExpected, double sampleR
     else if (m_transport)
         m_transport->prepareToPlay(samplesPerBlockExpected, sampleRate);
     m_scratchResampler.prepare(2, m_blockSize, m_outputSampleRate);
+    m_scratchExitResampler.prepare(2, m_blockSize, m_outputSampleRate);
+    m_scratchExitAudio.setSize(2, kCrossfadeSamples);
+    m_scratchExitAudio.clear();
+    m_scratchExitRemaining = 0;
+    m_deckLandingStarted = false;
     applyDeckTempoToHermite();
 }
 
@@ -178,8 +183,8 @@ std::uint64_t RenderModeRouter::requestScratchRelease(double normalizedReleaseSp
     m_latestReleaseSpeed.store(speed, std::memory_order_relaxed);
 
     // The callback changes TouchTracking to ReleasePending only after this
-    // complete snapshot is readable, guaranteeing exactly one final tracking
-    // block before it decides whether to coast or hand off.
+    // complete snapshot is readable, preserving any unrendered hand movement
+    // before it decides whether to coast or hand off.
     m_requestedReleaseGeneration.store(generation, std::memory_order_release);
     m_releaseCommandSequence.store(oddSequence + 1, std::memory_order_release);
     return generation;
@@ -391,6 +396,7 @@ void RenderModeRouter::setTrackCacheSource(AudioPageCache* cache, AudioCacheHand
     m_readAheadHandle = handle;
     m_timelineReady = false;
     m_scratchResampler.setTrackCacheSource(cache, handle);
+    m_scratchExitResampler.setTrackCacheSource(cache, handle);
 }
 
 void RenderModeRouter::setReadAheadPosition(double seconds, double rate, int frames, int horizon) noexcept
@@ -585,6 +591,7 @@ bool RenderModeRouter::applyReaderHandoff(double positionSeconds,
     // If a re-grab has won, leave both readers masked for its queued start command.
     if (releaseOwned && !m_controller.completeHandoff())
         return false;
+    m_deckLandingStarted = false;
 
     const double sr = std::max(1.0, trackSampleRate);
     const double position = std::max(0.0, positionSeconds);
@@ -598,6 +605,12 @@ bool RenderModeRouter::applyReaderHandoff(double positionSeconds,
     const auto transportSamplePos = static_cast<juce::int64>(
         std::llround(position * std::max(1.0, m_outputSampleRate)));
     const auto sourceSamplePos = static_cast<juce::int64>(std::llround(position * sr));
+    if (m_lastScratchOutputValid) {
+        m_scratchExitResampler.beginContinuation(m_scratchResampler);
+        m_scratchExitResampler.processBlock(m_scratchResampler.currentRate(),
+                                            { &m_scratchExitAudio, 0, kCrossfadeSamples });
+        m_scratchExitRemaining = kCrossfadeSamples;
+    }
     m_scratchResampler.reset(position * sr);
     m_audioScratchReadPositionSamples.store(position * sr, std::memory_order_release);
 
@@ -755,7 +768,7 @@ void RenderModeRouter::completeActiveReleaseHandoff(double trackSampleRate) noex
     m_completedReleaseGeneration.store(generation, std::memory_order_release);
 }
 
-void RenderModeRouter::finishReleaseDecisionAfterTrackingBlock() noexcept
+void RenderModeRouter::resolveScratchRelease() noexcept
 {
     if (m_audioReleasePhase != ScratchReleasePhase::ReleasePending)
         return;
@@ -791,6 +804,15 @@ void RenderModeRouter::finishReleaseDecisionAfterTrackingBlock() noexcept
                             releaseEstimate)
             : 0.0;
     }
+    const double oneX = m_audioReleaseCommand.sampleRate / std::max(1.0, m_outputSampleRate);
+    const double renderedSpeed = m_scratchResampler.currentRate() / oneX;
+    const double deckSpeed = m_audioReleaseCommand.deckRate;
+    if (m_audioReleaseCommand.playbackIntent && m_audioReleaseCommand.allowInertia
+        && speed * deckSpeed > 0.0 && renderedSpeed * deckSpeed > 0.0
+        && std::abs(speed) > std::abs(deckSpeed)
+        && std::abs(renderedSpeed) >= std::abs(deckSpeed)) {
+        speed = renderedSpeed;
+    }
     m_audioReleaseDisposition = m_controller.releaseScratchWithSpeed(
         speed,
         m_audioReleaseCommand.allowInertia,
@@ -810,6 +832,12 @@ void RenderModeRouter::finishReleaseDecisionAfterTrackingBlock() noexcept
         m_audioReleasePhase = ScratchReleasePhase::CoastToStop;
         break;
     case engine::scratch::ScratchReleaseDisposition::HandoffNow:
+        if (m_audioReleaseCommand.playbackIntent && m_audioReleaseCommand.allowInertia
+            && speed * deckSpeed > 0.0 && renderedSpeed * deckSpeed > 0.0
+            && std::abs(renderedSpeed) > std::abs(deckSpeed) + 1.0e-9) {
+            m_audioReleasePhase = ScratchReleasePhase::CoastToDeck;
+            break;
+        }
         completeActiveReleaseHandoff(m_audioReleaseCommand.sampleRate);
         return;
     }
@@ -828,7 +856,8 @@ void RenderModeRouter::finishCoastHandoffAfterScratchBlock(double trackSampleRat
         return;
     }
 
-    if (m_controller.handoffPending())
+    if (m_controller.handoffPending()
+        && (!m_deckLandingStarted || !m_scratchResampler.rateLandingActive()))
         completeActiveReleaseHandoff(trackSampleRate);
 }
 
@@ -849,6 +878,7 @@ void RenderModeRouter::consumePendingAudioCommands() noexcept
         m_scratchResampler.setTrackLengthSamples(
             std::max(0.0, m_startLengthSeconds.load(std::memory_order_relaxed)) * sr);
         m_scratchResampler.reset(position * sr);
+        m_deckLandingStarted = false;
         m_scratchResampler.snapSmoothedRate(0.0);
         m_audioScratchReadPositionSamples.store(position * sr, std::memory_order_release);
         m_audioScratchInputGeneration =
@@ -862,6 +892,7 @@ void RenderModeRouter::consumePendingAudioCommands() noexcept
             m_audioReleaseCommand = {};
             m_audioReleasePhase = ScratchReleasePhase::Idle;
             m_scratchExitTailPending = false;
+            m_scratchExitRemaining = 0;
             m_tailReleaseGeneration = 0;
         }
         m_appliedStartCommandGeneration = startGeneration;
@@ -1079,16 +1110,22 @@ void RenderModeRouter::applyScratchExitTail(const juce::AudioSourceChannelInfo& 
         return;
 
     const int channels = std::min(2, info.buffer->getNumChannels());
-    const int fadeSamples = std::min(kCrossfadeSamples, n);
+    const int fadeSamples = std::min(m_scratchExitRemaining, n);
+    const int fadeStart = kCrossfadeSamples - m_scratchExitRemaining;
     for (int ch = 0; ch < channels; ++ch) {
         float* output = info.buffer->getWritePointer(ch, start);
-        const float tail = m_lastScratchOutput[static_cast<std::size_t>(ch)];
         for (int i = 0; i < fadeSamples; ++i) {
-            const float normalMix = static_cast<float>(i + 1)
-                / static_cast<float>(fadeSamples);
+            const float tail = m_scratchExitAudio.getSample(ch, fadeStart + i);
+            const float progress = static_cast<float>(fadeStart + i + 1)
+                / static_cast<float>(kCrossfadeSamples);
+            const float normalMix = progress * progress * (3.0f - 2.0f * progress);
             output[i] = tail + (output[i] - tail) * normalMix;
         }
     }
+
+    m_scratchExitRemaining -= fadeSamples;
+    if (m_scratchExitRemaining > 0)
+        return;
 
     m_scratchExitTailPending = false;
     m_lastScratchOutputValid = false;
@@ -1199,6 +1236,30 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
 
     consumePendingAudioCommands();
 
+    if (m_audioReleasePhase == ScratchReleasePhase::ReleasePending
+        && m_audioReleaseCommand.playbackIntent && m_audioReleaseCommand.allowInertia
+        && !m_loopActive.load(std::memory_order_acquire)) {
+        double target = m_platter.targetSamplePosition();
+        double releaseSpeed = m_latestReleaseSpeed.load(std::memory_order_acquire);
+        engine::scratch::RealtimeScratchSnapshot snapshot;
+        if (readRealtimeScratchInput(snapshot)) {
+            target = m_audioScratchInputAnchorSamples
+                + snapshot.cumulativeDeltaSeconds * m_audioReleaseCommand.sampleRate;
+            if (snapshot.phase == engine::scratch::RealtimeScratchPhase::Released)
+                releaseSpeed = snapshot.velocity;
+        }
+        if (!std::isfinite(releaseSpeed))
+            releaseSpeed = m_controller.releaseSpeedEstimate();
+        const double deckRate = signedDeckTempoRatio();
+        const double oneX = m_audioReleaseCommand.sampleRate / std::max(1.0, m_outputSampleRate);
+        const double renderedRate = m_scratchResampler.currentRate() / oneX;
+        if (releaseSpeed * deckRate > 0.0 && renderedRate * deckRate > 0.0
+            && std::abs(renderedRate) >= std::abs(deckRate)
+            && (target - m_scratchResampler.readPosition()) * deckRate <= 0.0) {
+            resolveScratchRelease();
+        }
+    }
+
     // Keep the scratch path armed after inertia reaches its target. Only the
     // blockwise handoff command may expose the normal transport: its reader can
     // still point at the pre-scratch position until that command seeks it.
@@ -1255,8 +1316,8 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
             // discontinuity (not just silence-to-signal). Blend from the last
             // sample heard before the jump instead of splicing it in raw.
             applyNormalSeekDeclick(bufferToFill);
-            m_normalSeekTailPending = false;
         }
+        m_normalSeekTailPending = false;
         captureNormalTail(bufferToFill);
         m_tempoTimeline.advance(bufferToFill.numSamples);
         m_normalPlaybackWasEnabled = true;
@@ -1311,17 +1372,36 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
         }
         captureScratchTail(bufferToFill);
         publishScratchCursor(readPositionSamples, sr);
-        finishReleaseDecisionAfterTrackingBlock();
+        resolveScratchRelease();
         completeCursorHandoffAfterScratchBlock(m_cursorHandoffSampleRate);
         return;
     }
 
     const double rate = activePlaybackRate(sr, bufferToFill.numSamples);
+    const bool landingPhase = m_audioReleasePhase == ScratchReleasePhase::CoastToDeck
+        || (m_deckLandingStarted && m_audioReleasePhase == ScratchReleasePhase::HandoffPending);
+    const bool landAtDeckTempo = landingPhase && m_controller.handoffPending()
+        && m_audioReleaseCommand.playbackIntent
+        && m_scratchResampler.currentRate() * signedDeckTempoRatio() > 0.0;
+    if (landAtDeckTempo) {
+        const double targetRate = signedDeckTempoRatio() * oneX;
+        if (!m_deckLandingStarted || m_scratchResampler.rateLandingTarget() != targetRate) {
+            const double rateDifference = std::abs(m_scratchResampler.currentRate() - targetRate)
+                / std::max(1.0e-9, oneX);
+            const double seconds = std::clamp(rateDifference * 0.20, 0.120, 0.300);
+            m_scratchResampler.beginRateLanding(targetRate,
+                static_cast<int>(std::lround(seconds * m_outputSampleRate)));
+            m_deckLandingStarted = true;
+        }
+    } else if (m_deckLandingStarted) {
+        m_scratchResampler.cancelRateLanding();
+        m_deckLandingStarted = false;
+    }
     m_scratchResampler.processBlock(rate, bufferToFill);
     const double readPositionSamples = m_scratchResampler.readPosition();
     captureScratchTail(bufferToFill);
     publishScratchCursor(readPositionSamples, sr);
-    finishReleaseDecisionAfterTrackingBlock();
+    resolveScratchRelease();
     finishCoastHandoffAfterScratchBlock(sr);
     completeCursorHandoffAfterScratchBlock(m_cursorHandoffSampleRate);
 }

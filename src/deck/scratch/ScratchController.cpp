@@ -515,7 +515,10 @@ double ScratchController::processAudioBlock(int bufferSize,
                         currentPhase = expected;
                     }
                 } else {
-                    inertia += (measured - inertia) * 0.55;
+                    const double refined = inertia + (measured - inertia) * 0.55;
+                    inertia = currentPhase == ScratchPhase::CoastToDeckRate
+                        ? std::copysign(std::min(std::abs(inertia), std::abs(refined)), inertia)
+                        : refined;
                 }
             }
             m_appliedReleaseSpeedGeneration.store(speedGeneration, std::memory_order_release);
@@ -528,8 +531,10 @@ double ScratchController::processAudioBlock(int bufferSize,
                    || currentPhase == ScratchPhase::CoastToStop) {
             const double blockSec = static_cast<double>(std::max(1, bufferSize))
                                   / std::max(1.0, outputSampleRate);
+            const double returnTau = currentPhase == ScratchPhase::CoastToDeckRate
+                ? m_config.deckReturnTauSec : m_config.releaseReturnTauSec;
             const double alpha = 1.0 - std::exp(
-                -blockSec / std::max(0.001, m_config.releaseReturnTauSec));
+                -blockSec / std::max(0.001, returnTau));
             inertia += (target - inertia) * std::clamp(alpha, 0.0, 1.0);
 
             if (std::abs(inertia - target) < threshold) {

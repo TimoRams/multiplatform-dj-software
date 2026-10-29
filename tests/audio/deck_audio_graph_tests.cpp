@@ -34,7 +34,8 @@ bool require(bool value, const char* message)
     return value;
 }
 
-bool writeWave(const QString& path, double sampleRate, int channels, double frequency)
+bool writeWave(const QString& path, double sampleRate, int channels, double frequency,
+               int samples = 48'000)
 {
     juce::WavAudioFormat format;
     std::unique_ptr<juce::OutputStream> stream =
@@ -48,7 +49,7 @@ bool writeWave(const QString& path, double sampleRate, int channels, double freq
     if (!writer)
         return false;
 
-    juce::AudioBuffer<float> buffer(channels, 48'000);
+    juce::AudioBuffer<float> buffer(channels, samples);
     for (int channel = 0; channel < channels; ++channel) {
         for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
             const auto phase = juce::MathConstants<double>::twoPi
@@ -292,6 +293,171 @@ bool testTempoSweeps(const QString& path)
     return ok;
 }
 
+bool testSpinHandoffs(const QString& path)
+{
+    bool ok = true;
+    AudioPageCache cache(8 * 1024 * 1024);
+    for (const int blockSize : {64, 256, 1024})
+    for (const double tempo : {0.92, 1.08})
+    for (const double spin : {-8.0, -4.0, 4.0, 8.0})
+    for (const bool keylock : {false, true}) {
+        std::atomic<bool> gate { true };
+        const auto handle = cache.openTrack({path});
+        (void) cache.requestRange(handle, 0, handle.pageCount() - 1, AudioCachePriority::PlaybackReadAhead);
+        ok &= require(cache.waitForPageRange(handle, 0, handle.pageCount() - 1,
+                                            std::chrono::seconds(5)), "spin fixture resident");
+        DeckAudioPipeline graph(cache);
+        graph.prepareToPlay(blockSize, 48'000.0);
+        graph.installPreparedTrack({handle, 48'000.0, 1});
+        graph.setPlaybackRate(tempo);
+        graph.setKeylockEnabled(keylock);
+        graph.setTransportRunning(true);
+        graph.seekToSeconds(2.0);
+        graph.timeStretch().setSeedPreparationGateForTesting(&gate);
+        juce::AudioBuffer<float> output(2, blockSize);
+        for (int block = 0; block < 80; ++block) {
+            graph.getNextAudioBlock({&output, 0, blockSize});
+            if (block >= 3 && (!keylock || graph.timeStretch().getLatencySamples() > 0))
+                break;
+            std::this_thread::sleep_for(std::chrono::duration<double>(blockSize / 48'000.0));
+        }
+        ok &= require(!keylock || graph.timeStretch().getLatencySamples() > 0,
+                       "spin begins with engaged keylock");
+        gate.store(false, std::memory_order_release);
+        graph.timeStretch().enterScratchBypass();
+        auto& router = graph.renderModeRouter();
+        router.configureTrack(48'000.0, 12.0);
+        router.beginScratch(spin < 0.0 ? 4.0 : 2.0, 48'000.0, 12.0, true, tempo);
+        for (int block = 0; block < 8; ++block) {
+            router.submitHandDeltaSeconds(spin * blockSize / 48'000.0,
+                                           blockSize / 48'000.0, spin);
+            graph.getNextAudioBlock({&output, 0, blockSize});
+        }
+        const auto generation = router.requestScratchRelease(spin, true, true);
+        double lateCoastAcceleration = 0.0;
+        double lateCoastJerk = 0.0;
+        double elapsed = 0.0;
+        double decayStartSeconds = -1.0;
+        double decayEndSeconds = -1.0;
+        double landingStartSeconds = -1.0;
+        double minimumReleaseRate = std::numeric_limits<double>::infinity();
+        double maximumRecovery = 0.0;
+        bool lateWheelPacketSent = false;
+        for (int block = 0; block < 5000 && !router.scratchReleaseComplete(generation); ++block) {
+            if (spin > 0.0 && elapsed >= 0.03 && minimumReleaseRate <= tempo + 0.25
+                && !lateWheelPacketSent) {
+                router.submitScratchReleaseSpeed(spin);
+                lateWheelPacketSent = true;
+            }
+            graph.getNextAudioBlock({&output, 0, blockSize});
+            const auto motion = router.scratchMotionStats();
+            elapsed += blockSize / 48'000.0;
+            if (minimumReleaseRate <= tempo + 0.5)
+                maximumRecovery = std::max(maximumRecovery, motion.maxRate - minimumReleaseRate);
+            minimumReleaseRate = std::min(minimumReleaseRate, motion.minRate);
+            if (spin > 0.0 && elapsed >= 0.03 && decayStartSeconds < 0.0
+                && motion.maxRate <= tempo + (spin - tempo) * 0.75)
+                decayStartSeconds = elapsed;
+            if (spin > 0.0 && elapsed >= 0.03 && decayEndSeconds < 0.0
+                && motion.maxRate <= tempo + (spin - tempo) * 0.25)
+                decayEndSeconds = elapsed;
+            if (spin > 0.0 && elapsed >= 0.03 && landingStartSeconds < 0.0
+                && motion.maxRate <= tempo + 0.02)
+                landingStartSeconds = elapsed;
+            if (spin > 0.0 && motion.maxRate < tempo + 0.04 && motion.minRate >= tempo - 0.0001) {
+                lateCoastAcceleration = std::max(lateCoastAcceleration, motion.maxRateStep * 48'000.0);
+                lateCoastJerk = std::max(lateCoastJerk, motion.maxRateStepDelta * 48'000.0 * 48'000.0);
+            }
+        }
+        ok &= require(router.scratchReleaseComplete(generation), "spin coast finishes");
+        const double cursor = router.scratchReleaseSnapshot().finalCursorSeconds;
+        const double terminalAcceleration = router.scratchMotionStats().maxRateStep * 48'000.0;
+        if (spin > 0.0) {
+            std::cout << "forward-spin-landing block=" << blockSize << " tempo=" << tempo
+                      << " spin=" << spin << " terminal-acceleration=" << terminalAcceleration
+                      << " late-coast-acceleration=" << lateCoastAcceleration
+                      << " late-coast-jerk=" << lateCoastJerk
+                      << " excess-speed-decay-seconds=" << decayEndSeconds - decayStartSeconds
+                      << " final-landing-seconds=" << elapsed - landingStartSeconds
+                      << " minimum-release-rate=" << minimumReleaseRate
+                      << " maximum-recovery=" << maximumRecovery << '\n';
+            ok &= require(minimumReleaseRate >= tempo - 0.0001,
+                           "forward release never dips below deck tempo before returning to playback");
+            ok &= require(maximumRecovery < 0.0001,
+                           "forward approach never accelerates again, including late faster wheel packets");
+            ok &= require(lateWheelPacketSent, "forward approach exercises a late faster wheel packet");
+            ok &= require(terminalAcceleration < 3.0 && lateCoastAcceleration < 3.0,
+                           "forward coast does not snap the remaining speed error into one callback");
+            ok &= require(decayStartSeconds >= 0.0 && decayEndSeconds > decayStartSeconds
+                               && decayEndSeconds - decayStartSeconds >= 0.35
+                               && decayEndSeconds - decayStartSeconds <= 0.50,
+                           "forward spin loses excess speed gradually rather than braking immediately");
+            ok &= require(landingStartSeconds >= 0.0 && elapsed - landingStartSeconds >= 0.08,
+                           "forward spin eases into deck tempo over an audible landing interval");
+        }
+        ok &= require(cursor > 0.0 && cursor < 11.8, "spin handoff avoids track boundaries");
+        const float lastScratch = output.getSample(0, blockSize - 1);
+        graph.timeStretch().endScratchBypass();
+        graph.getNextAudioBlock({&output, 0, blockSize});
+        double error = 0.0;
+        for (int sample = 0; sample < std::min(128, blockSize); ++sample) {
+            const double expected = 0.2 * std::sin(juce::MathConstants<double>::twoPi
+                * 220.0 * (cursor + sample * tempo / 48'000.0));
+            error = std::max(error, std::abs(output.getSample(0, sample) - expected));
+        }
+        std::cout << "spin-handoff block=" << blockSize << " tempo=" << tempo
+                  << " spin=" << spin << " keylock=" << keylock
+                  << " first-block-error=" << error << '\n';
+        if (spin > 0.0)
+            ok &= require(error < 0.006, "forward spin resumes the continuing waveform without a held-sample offset");
+        ok &= require(std::abs(output.getSample(0, 0) - lastScratch) < 0.025f,
+                       "spin handoff has no sample discontinuity");
+        gate.store(true, std::memory_order_release);
+        if (keylock) {
+            float previous = output.getSample(0, blockSize - 1);
+            float maximumStep = 0.0f;
+            double windowEnergy = 0.0;
+            int windowSamples = 0;
+            double minimumRms = 1.0;
+            bool reentered = false;
+            const int blocks = static_cast<int>(48'000.0 * 0.18 / blockSize) + 1;
+            for (int block = 0; block < blocks; ++block) {
+                graph.getNextAudioBlock({&output, 0, blockSize});
+                for (int sample = 0; sample < blockSize; ++sample) {
+                    maximumStep = std::max(maximumStep, std::abs(output.getSample(0, sample) - previous));
+                    previous = output.getSample(0, sample);
+                }
+                reentered |= graph.timeStretch().getLatencySamples() > 0;
+                if (block * blockSize >= 512) {
+                    const double rms = output.getRMSLevel(0, 0, blockSize);
+                    windowEnergy += rms * rms * blockSize;
+                    windowSamples += blockSize;
+                    if (windowSamples >= 256) {
+                        minimumRms = std::min(minimumRms, std::sqrt(windowEnergy / windowSamples));
+                        windowEnergy = 0.0;
+                        windowSamples = 0;
+                    }
+                }
+                const double expectedPosition = cursor + (block + 2.0) * blockSize * tempo / 48'000.0;
+                ok &= require(std::abs(graph.presentationPosition().seconds - expectedPosition)
+                                  <= 1.0 / 48'000.0,
+                               "spin-to-keylock keeps the committed handoff cursor");
+                std::this_thread::sleep_for(std::chrono::duration<double>(blockSize / 48'000.0));
+            }
+            std::cout << "spin-keylock block=" << blockSize << " tempo=" << tempo
+                      << " spin=" << spin << " maximum-step=" << maximumStep
+                      << " minimum-rms=" << minimumRms << '\n';
+            ok &= require(reentered, "keylock re-enters after the spin handoff");
+            ok &= require(maximumStep < 0.025f, "spin-to-keylock re-entry has no click");
+            ok &= require(minimumRms > 0.04, "spin-to-keylock re-entry has no sustained envelope hole");
+        }
+        ok &= require(realtimeCountersAreZero(graph), "spin handoff remains realtime safe");
+        graph.clearTrack();
+        graph.releaseResources();
+    }
+    return ok;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -303,11 +469,16 @@ int main(int argc, char** argv)
     const auto stereo96 = directory.filePath("stereo-96.wav");
     const auto transientPath = directory.filePath("transient.wav");
     const auto sweepPath = directory.filePath("sweep.wav");
+    const auto spinPath = directory.filePath("spin.wav");
     ok &= require(writeSampleRampWave(mono44, 44'100.0, 1),
                   "sample-coded ramp fixture");
     ok &= require(writeWave(stereo96, 96'000.0, 2, 330.0), "stereo fixture");
     ok &= require(writeTransientWave(transientPath), "transient fixture");
     ok &= require(writeWave(sweepPath, 48'000.0, 2, 220.0), "sweep fixture");
+    ok &= require(writeWave(spinPath, 48'000.0, 2, 220.0, 576'000), "spin fixture");
+    if (std::getenv("BROCKDJ_SPIN_HANDOFF_ONLY") != nullptr)
+        return ok && testSpinHandoffs(spinPath) ? 0 : 1;
+    ok &= testSpinHandoffs(spinPath);
     ok &= testTempoSweeps(sweepPath);
     if (std::getenv("BROCKDJ_KEYLOCK_SWEEP_ONLY") != nullptr)
         return ok ? 0 : 1;
@@ -937,6 +1108,11 @@ int main(int argc, char** argv)
     const auto release96 = graph.renderModeRouter().requestScratchRelease(
         0.5, true, true);
     graph.getNextAudioBlock({&output, 0, 512});
+    for (int block = 0;
+         block < 64 && !graph.renderModeRouter().scratchReleaseComplete(release96); ++block) {
+        graph.getNextAudioBlock({&output, 0, 512});
+        ok &= require(isFinite(output), "96/48 release landing remains finite");
+    }
     const auto snapshot96 = graph.renderModeRouter().scratchReleaseSnapshot();
     ok &= require(graph.renderModeRouter().scratchReleaseComplete(release96),
                   "96 kHz hardware release completes at a 48 kHz callback rate");

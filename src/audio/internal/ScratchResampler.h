@@ -53,6 +53,14 @@ public:
     void nudgeReadPositionSamples(double deltaSamples) noexcept;
     void snapSmoothedRate(double rate) noexcept;
     void primeTrackerVelocity(double ratePerOutputSample) noexcept;
+    void beginContinuation(const ScratchResampler& source) noexcept;
+    [[nodiscard]] double currentRate() const noexcept { return m_smoothedRate; }
+    void beginRateLanding(double targetRate, int samples) noexcept;
+    void cancelRateLanding() noexcept { m_landingSamples = 0; }
+    [[nodiscard]] bool rateLandingActive() const noexcept {
+        return m_landingSamples > 0 && m_landingFrame < m_landingSamples;
+    }
+    [[nodiscard]] double rateLandingTarget() const noexcept { return m_landingTarget; }
     void invalidatePrefetch() noexcept { m_sourceSize = 0; }
     void setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle);
     void prefetchAround(double readPositionSamples) noexcept;
@@ -125,6 +133,10 @@ private:
     double m_lastRate = 0.0;
     double m_smoothedRate = 0.0;
     double m_previousRateStep = 0.0;
+    std::array<double, 6> m_landingCurve {};
+    double m_landingTarget = 0.0;
+    int m_landingSamples = 0;
+    int m_landingFrame = 0;
     double m_trackVel = 0.0;   // tracker velocity, track samples / second
     // Continuously advanced estimate of where the hand is now. Kept across
     // blocks so a newly arrived event corrects it rather than replaces it. The

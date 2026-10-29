@@ -526,13 +526,21 @@ bool TimeStretchProcessor::serviceSeedRequest() noexcept
             const float* input[2] { m_seedSnapshot.getReadPointer(0, offset),
                                     m_seedSnapshot.getReadPointer(1, offset) };
             if (p.signalsmith) {
-                for (int sample = 0; sample < count; ++sample) {
+                for (int sample = 0; sample < count;) {
                     const double tempo = m_readAheadSource
                         ? m_seedTempos[static_cast<std::size_t>(offset + sample)] : 0.0;
                     updateSignalsmithPitch(p, tempo);
+                    int run = 1;
+                    if (p.tempoRampRemaining == 0 && p.semitoneRampRemaining == 0) {
+                        while (sample + run < count
+                               && (!m_readAheadSource
+                                   || m_seedTempos[static_cast<std::size_t>(offset + sample + run)] == tempo))
+                            ++run;
+                    }
                     const float* sampleInput[2] { input[0] + sample, input[1] + sample };
                     float* sampleOutput[2] { p.trim.getWritePointer(0), p.trim.getWritePointer(1) };
-                    p.signalsmith->process(sampleInput, 1, sampleOutput, 1);
+                    p.signalsmith->process(sampleInput, run, sampleOutput, run);
+                    sample += run;
                 }
             } else if (p.rubberBand) {
                 p.rubberBand->process(input, count, false);
