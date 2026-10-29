@@ -269,13 +269,16 @@ FxPlacement FxProcessor::placementForType(EffectType type) noexcept
     }
 }
 
-void FxProcessor::processWetReturn(const juce::AudioBuffer<float>& input,
+void FxProcessor::processWetReturn(juce::AudioBuffer<float>& input,
                                    juce::AudioBuffer<float>& wetReturn,
                                    int startSample,
-                                   int numSamples)
+                                   int numSamples,
+                                   juce::AudioBuffer<float>* previousReturn)
 {
     if (numSamples <= 0 || wetReturn.getNumChannels() < m_numChannels
-        || wetReturn.getNumSamples() < numSamples) {
+        || wetReturn.getNumSamples() < numSamples
+        || (previousReturn && (previousReturn->getNumChannels() < m_numChannels
+                               || previousReturn->getNumSamples() < numSamples))) {
         return;
     }
 
@@ -288,12 +291,15 @@ void FxProcessor::processWetReturn(const juce::AudioBuffer<float>& input,
     beginBeatSyncBlock();
 
     const int inputChannels = input.getNumChannels();
+    const bool validInput = startSample >= 0 && startSample <= input.getNumSamples()
+        && numSamples <= input.getNumSamples() - startSample;
     for (int channel = 0; channel < m_numChannels; ++channel) {
-        if (inputChannels > 0 && startSample >= 0
-            && startSample + numSamples <= input.getNumSamples()) {
+        if (inputChannels > 0 && validInput) {
             m_wetScratch.copyFrom(channel, 0, input,
                                   std::min(channel, inputChannels - 1),
                                   startSample, numSamples);
+            if (previousReturn)
+                m_wetScratch.addFrom(channel, 0, *previousReturn, channel, 0, numSamples);
         } else {
             m_wetScratch.clear(channel, 0, numSamples);
         }
@@ -301,12 +307,19 @@ void FxProcessor::processWetReturn(const juce::AudioBuffer<float>& input,
 
     const float amount = std::clamp(m_amountAtomic.load(std::memory_order_relaxed), 0.0f, 1.0f);
     m_wetSmooth.setTargetValue(amount);
+    m_drySmooth.setTargetValue(1.0f - amount);
     processWetEffect(type, m_wetScratch, numSamples, amount);
     for (int sample = 0; sample < numSamples; ++sample) {
         const float wetGain = m_wetSmooth.getNextValue();
-        for (int channel = 0; channel < m_numChannels; ++channel)
+        const float dryGain = m_drySmooth.getNextValue();
+        for (int channel = 0; channel < m_numChannels; ++channel) {
             wetReturn.setSample(channel, sample,
                                 m_wetScratch.getSample(channel, sample) * wetGain);
+            if (validInput && channel < inputChannels)
+                input.getWritePointer(channel, startSample)[sample] *= dryGain;
+            if (previousReturn)
+                previousReturn->getWritePointer(channel)[sample] *= dryGain;
+        }
     }
     advanceBeatSyncBlock(numSamples);
 }
@@ -829,7 +842,7 @@ void FxProcessor::processEcho(juce::AudioBuffer<float>& wet,
             const float warm = lpBiquad(delayed);
             const float feedbackSample = std::tanh(warm * feedback * 1.3f) / 1.3f;
             line.write(data[i] * 0.95f + feedbackSample);
-            data[i] += warm * 0.80f;
+            data[i] = warm * 0.80f;
         }
     }
 }
@@ -874,7 +887,7 @@ void FxProcessor::processMtDelay(juce::AudioBuffer<float>& wet,
             const float warm = lpBiquad(tapMix);
             const float feedbackSample = std::tanh(warm * feedback);
             line.write(data[i] * 0.95f + feedbackSample * 0.80f);
-            data[i] += feedbackSample * 0.90f;
+            data[i] = feedbackSample * 0.90f;
         }
     }
 }
@@ -922,7 +935,7 @@ void FxProcessor::processSpiral(juce::AudioBuffer<float>& wet,
             const float delF   = std::max(1.0f, baseDelay + lfoVal * modDepth);
             const float delayed = line.readFrac(delF);
             line.write(data[i]);
-            data[i] = data[i] * 0.70f + delayed * 0.40f;
+            data[i] = delayed * 0.40f;
         }
     }
 }
@@ -1584,10 +1597,7 @@ void FxProcessor::processSC_DubEcho(juce::AudioBuffer<float>& buffer,
 {
     const float absK   = std::abs(knob);
     const float mapped = scMapSCurve(absK);
-    // The wet buffer carries the echo tail alone, so the blend has to leave dry
-    // signal in the mix — at 100 % wet with the tail filtered to the edge of the
-    // spectrum the channel used to disappear completely at the knob extremes.
-    const float wet = mapped * 0.70f;
+    const float wet = mapped;
     m_scAbsKSmooth.setTargetValue(wet < 0.005f ? 0.f : wet);
     if (!m_scAbsKSmooth.isSmoothing() && wet < 0.005f) return;
 
@@ -1639,8 +1649,8 @@ void FxProcessor::processSC_DubEcho(juce::AudioBuffer<float>& buffer,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. SC CRUSH — bitcrusher + bipolar LPF/HPF
-//    knob < 0 → crunchy + dark (LPF closes as crushing increases)
+// 3. SC CRUSH — bitcrusher with optional bright tone shaping
+//    knob < 0 → raw bit-depth and sample-rate reduction
 //    knob > 0 → crunchy + bright/thin (HPF opens as crushing increases)
 // ─────────────────────────────────────────────────────────────────────────────
 void FxProcessor::processSC_Crush(juce::AudioBuffer<float>& buffer,
@@ -1651,8 +1661,8 @@ void FxProcessor::processSC_Crush(juce::AudioBuffer<float>& buffer,
     const float param     = m_scParamAtomic.load(std::memory_order_relaxed);
     const float intensity = std::clamp(mapped * (0.15f + 0.85f * param), 0.0f, 1.0f);
 
-    m_scAbsKSmooth.setTargetValue(intensity);
-    if (!m_scAbsKSmooth.isSmoothing() && intensity < 0.001f) return;
+    m_scAbsKSmooth.setTargetValue(mapped);
+    if (!m_scAbsKSmooth.isSmoothing() && mapped < 0.001f) return;
 
     auto& wetBuf = m_wetScratch;
     copyToWet(buffer, wetBuf, start, n);
@@ -1669,11 +1679,10 @@ void FxProcessor::processSC_Crush(juce::AudioBuffer<float>& buffer,
 
     crushBlock(wetBuf, 0, n, m_numChannels, m_scCrushState.bc, rateRatio, levels);
 
-    // Tone shaping: only the outer half of the knob travel engages the filter,
-    // and only over a limited range — the first half stays pure crush, and the
-    // end of the travel darkens/thins the sound instead of filtering it away.
-    const float toneAmount = std::max(0.f, (mapped - 0.5f) * 2.f) * 0.6f;
-    applySCFilter(wetBuf, 0, n, (knob < 0.f ? -1.f : 1.f) * toneAmount, m_scCrushState.svf);
+    if (knob > 0.f) {
+        const float toneAmount = std::max(0.f, (mapped - 0.5f) * 2.f) * 0.6f;
+        applySCFilter(wetBuf, 0, n, toneAmount, m_scCrushState.svf);
+    }
     mixSCSmoothed(buffer, wetBuf, start, n);
 }
 
@@ -1687,8 +1696,7 @@ void FxProcessor::processSC_Space(juce::AudioBuffer<float>& buffer,
 {
     const float absK   = std::abs(knob);
     const float mapped = scMapSCurve(absK);
-    // Reverb-only wet buffer — keep dry in the mix (see processSC_DubEcho).
-    const float wet = mapped * 0.65f;
+    const float wet = mapped;
     m_scAbsKSmooth.setTargetValue(wet < 0.005f ? 0.f : wet);
     if (!m_scAbsKSmooth.isSmoothing() && wet < 0.005f) return;
 

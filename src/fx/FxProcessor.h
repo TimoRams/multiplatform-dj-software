@@ -42,10 +42,13 @@ public:
     // Called every audio block (audio thread only).
     // Processes buffer in-place with a smoothed wet/dry crossfade.
     void process(juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
-    void processWetReturn(const juce::AudioBuffer<float>& input,
+    // Leaves the dry mix in input and the wet mix in wetReturn. Existing returns
+    // join this slot's input and dry mix so consecutive tail effects stay serial.
+    void processWetReturn(juce::AudioBuffer<float>& input,
                           juce::AudioBuffer<float>& wetReturn,
                           int startSample,
-                          int numSamples);
+                          int numSamples,
+                          juce::AudioBuffer<float>* previousReturn = nullptr);
     void applyPendingCommandAtBlockBoundary() noexcept;
 
     // ── Thread-safe parameter setters (main thread) ──────────────────────────

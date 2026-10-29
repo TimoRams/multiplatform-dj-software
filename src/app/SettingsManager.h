@@ -28,6 +28,7 @@ class SettingsManager : public QObject
     Q_PROPERTY(bool flx10ControllerSupportEnabled READ flx10ControllerSupportEnabled WRITE setFlx10ControllerSupportEnabled NOTIFY controllerSettingsChanged)
     Q_PROPERTY(int flx10HostUsbPort READ flx10HostUsbPort WRITE setFlx10HostUsbPort NOTIFY controllerSettingsChanged)
     Q_PROPERTY(bool tightDoubleSync READ tightDoubleSync WRITE setTightDoubleSync NOTIFY tightDoubleSyncChanged)
+    Q_PROPERTY(bool soundColorAdjustEnabled READ soundColorAdjustEnabled WRITE setSoundColorAdjustEnabled NOTIFY soundColorAdjustEnabledChanged)
     Q_PROPERTY(QString timeStretchBackend READ timeStretchBackend WRITE setTimeStretchBackend NOTIFY timeStretchBackendChanged)
     Q_PROPERTY(int waveformRenderStyle READ waveformRenderStyle WRITE setWaveformRenderStyle
                NOTIFY waveformRenderStyleChanged)
@@ -129,6 +130,8 @@ public:
 
     bool tightDoubleSync() const;
     void setTightDoubleSync(bool enabled);
+    bool soundColorAdjustEnabled() const;
+    void setSoundColorAdjustEnabled(bool enabled);
     QString timeStretchBackend() const;
     void setTimeStretchBackend(const QString& backend);
     int waveformRenderStyle() const;
@@ -172,6 +175,7 @@ signals:
     void audioSettingsChanged();
     void controllerSettingsChanged();
     void tightDoubleSyncChanged();
+    void soundColorAdjustEnabledChanged();
     void timeStretchBackendChanged();
     void waveformRenderStyleChanged();
     void waveformPlayheadPositionChanged();

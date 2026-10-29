@@ -66,6 +66,23 @@ Window {
                         font.pixelSize: 10
                         font.family: UiTheme.uiFontFamily
                     }
+
+                    CheckBox {
+                        objectName: "soundColorAdjustToggle"
+                        anchors.centerIn: parent
+                        height: parent.height
+                        padding: 0
+                        font.pixelSize: 10
+                        text: "Color FX: Adjust"
+                        checked: typeof settingsManager !== "undefined" && settingsManager
+                                 ? settingsManager.soundColorAdjustEnabled : true
+                        onToggled: {
+                            if (typeof settingsManager !== "undefined" && settingsManager)
+                                settingsManager.soundColorAdjustEnabled = checked
+                        }
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Aus: Color FX mit einem Regler und passenden Standardwerten verwenden."
+                    }
                 }
 
                 Flickable {

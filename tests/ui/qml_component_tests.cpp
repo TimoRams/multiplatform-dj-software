@@ -1954,6 +1954,7 @@ bool qmlMergeRuntimeTests()
             property string effectType2: "---"
             property string soundColorMode: "Filter"
             property real soundColorParam: 0.5
+            property bool soundColorAdjustEnabled: true
             property real wetDry1: 0
             property bool deck1A: false
             property bool deck1B: false
@@ -2590,6 +2591,18 @@ bool qmlMergeRuntimeTests()
                       && std::abs(fxBarItem->height() - 96.0) < 1e-6,
                   "the real FX bar host is visible at its configured height");
     fxManager->setProperty("soundColorMode", QStringLiteral("None"));
+    auto* adjustControl = findVisualItem(fxBarItem, QStringLiteral("soundColorAdjustControl"));
+    ok &= require(adjustControl && adjustControl->isVisible(), "Sound Color Adjust starts visible");
+    fxManager->setProperty("soundColorParam", 0.83);
+    fxManager->setProperty("soundColorAdjustEnabled", false);
+    QCoreApplication::processEvents();
+    ok &= require(adjustControl && !adjustControl->isVisible() && !adjustControl->isEnabled(),
+                  "disabling Sound Color Adjust hides and disables its control");
+    fxManager->setProperty("soundColorAdjustEnabled", true);
+    QCoreApplication::processEvents();
+    ok &= require(adjustControl && adjustControl->isVisible()
+                      && std::abs(fxManager->property("soundColorParam").toDouble() - 0.83) < 1e-6,
+                  "re-enabling Sound Color Adjust preserves its manual setting");
     auto* filterMode = findVisualItem(fxBarItem, QStringLiteral("soundColorMode_Filter"));
     auto* noiseMode = findVisualItem(fxBarItem, QStringLiteral("soundColorMode_Noise"));
     ok &= require(filterMode && !filterMode->property("isActive").toBool()

@@ -56,6 +56,7 @@ class FxManager : public QObject
     // ── SoundColor (centre knob) ──────────────────────────────────────────────
     Q_PROPERTY(QString soundColorMode READ soundColorMode WRITE setSoundColorMode NOTIFY soundColorModeChanged)
     Q_PROPERTY(float soundColorParam READ soundColorParam WRITE setSoundColorParam NOTIFY soundColorParamChanged)
+    Q_PROPERTY(bool soundColorAdjustEnabled READ soundColorAdjustEnabled WRITE setSoundColorAdjustEnabled NOTIFY soundColorAdjustEnabledChanged)
 
 public:
     explicit FxManager(QObject* parent = nullptr);
@@ -67,6 +68,9 @@ public:
     // ── SoundColor ───────────────────────────────────────────────────────────
     QString soundColorMode() const { return m_soundColorMode; }
     float soundColorParam() const { return m_soundColorParam; }
+    bool soundColorAdjustEnabled() const { return m_soundColorAdjustEnabled; }
+    float effectiveSoundColorParam() const;
+    void setSoundColorAdjustEnabled(bool enabled);
     Q_INVOKABLE void setSoundColorMode(const QString& mode);
     Q_INVOKABLE void setSoundColorParam(float param);
 
@@ -171,6 +175,7 @@ signals:
 
     void soundColorModeChanged();
     void soundColorParamChanged();
+    void soundColorAdjustEnabledChanged();
 
 private:
     QPointer<DjEngine> m_engineA;
@@ -181,6 +186,7 @@ private:
     // ── SoundColor state ─────────────────────────────────────────────────────
     QString m_soundColorMode { "None" };
     float   m_soundColorParam { 0.5f };
+    bool    m_soundColorAdjustEnabled { true };
     float   m_soundColorValueA { 0.0f };   // bipolar -1..+1 per deck
     float   m_soundColorValueB { 0.0f };
     float   m_soundColorValueC { 0.0f };

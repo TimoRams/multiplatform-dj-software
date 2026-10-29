@@ -99,6 +99,195 @@ float renderStereoDifference(DeckChannelProcessor& mixer, int size)
     }
     return maximumDifference;
 }
+void testColorCrushLeftTexture(bool& ok)
+{
+    for (const double rate : {44100.0, 48000.0, 96000.0})
+    for (const int block : {64, 256, 1024})
+    for (const float param : {0.5f, 0.7f, 1.0f}) {
+        auto fx = std::make_unique<FxProcessor>();
+        fx->prepare(rate, block, 2);
+        fx->setEffectType(EffectType::SoundColorCrush);
+        fx->setSCParamValue(param);
+        fx->setSCKnobValue(-1.0f);
+        juce::AudioBuffer<float> buffer(2, block);
+        int frame = 0, measured = 0, held = 0, changes = 0;
+        float previous = 0.0f;
+        double energy = 0.0;
+        while (frame < rate * 0.15) {
+            for (int sample = 0; sample < block; ++sample) {
+                const double time = (frame + sample) / rate;
+                const float input = static_cast<float>(0.42 * std::sin(2.0 * std::numbers::pi * 997.0 * time)
+                    + 0.17 * std::sin(2.0 * std::numbers::pi * 3181.0 * time));
+                buffer.setSample(0, sample, input);
+                buffer.setSample(1, sample, input);
+            }
+            fx->process(buffer, 0, block);
+            for (int sample = 0; sample < block; ++sample) {
+                const float value = buffer.getSample(0, sample);
+                if (frame + sample >= rate * 0.05) {
+                    if (std::abs(value - previous) < 1.0e-7f) ++held;
+                    else ++changes;
+                    energy += static_cast<double>(value) * value;
+                    ++measured;
+                }
+                previous = value;
+            }
+            frame += block;
+        }
+        const double heldFraction = static_cast<double>(held) / measured;
+        const double rms = std::sqrt(energy / measured);
+        std::cout << "left-crush rate=" << rate << " block=" << block << " adjust=" << param
+                  << " held-fraction=" << heldFraction << " changes=" << changes << " rms=" << rms << '\n';
+        ok &= require(heldFraction > 0.8,
+                      "left Color Crush retains audible sample-and-hold steps instead of smoothing them into a low-pass");
+        ok &= require(changes > 10 && rms > 0.05 && finite(buffer),
+                      "left Color Crush produces a changing audible crushed signal");
+    }
+}
+
+void testEffectMixEndpoints(bool& ok)
+{
+    for (const double rate : {44100.0, 48000.0, 96000.0})
+    for (const int block : {64, 256, 1024})
+    for (const float param : {0.0f, 0.5f, 0.7f, 1.0f})
+    for (const float knob : {-1.0f, 1.0f}) {
+        auto fx = std::make_unique<FxProcessor>();
+        fx->prepare(rate, block, 2);
+        fx->setEffectType(EffectType::SoundColorCrush);
+        fx->setSCParamValue(param);
+        fx->setSCKnobValue(knob);
+        juce::AudioBuffer<float> buffer(2, block);
+        const auto renderQuiet = [&] {
+            for (int channel = 0; channel < 2; ++channel)
+                std::fill_n(buffer.getWritePointer(channel), block, 1.0e-6f);
+            fx->process(buffer, 0, block);
+        };
+        for (int sample = 0; sample < rate * 0.05; sample += block)
+            renderQuiet();
+        const double dryLeak = buffer.getMagnitude(0, 0, block) / 1.0e-6;
+        std::cout << "crush-full-wet rate=" << rate << " block=" << block
+                  << " adjust=" << param << " knob=" << knob << " dry-leak=" << dryLeak << '\n';
+        ok &= require(dryLeak < 1.0e-5, "full Color Crush removes the unquantized dry signal for every Adjust value");
+        fx->setSCKnobValue(0.0f);
+        for (int sample = 0; sample < rate * 0.05; sample += block)
+            renderQuiet();
+        ok &= require(std::abs(buffer.getSample(0, block - 1) - 1.0e-6f) < 1.0e-10f,
+                      "Color Crush centre restores the unprocessed signal");
+    }
+
+    for (const auto type : {EffectType::SoundColorDubEcho, EffectType::SoundColorSpace,
+                            EffectType::Echo, EffectType::LowCutEcho, EffectType::MtDelay,
+                            EffectType::Spiral, EffectType::Reverb})
+    for (const float mix : {0.0f, 0.5f, 1.0f}) {
+        const bool color = FxProcessor::isColorFxType(type);
+        auto fx = std::make_unique<FxProcessor>();
+        fx->prepare(48000.0, 64, 2);
+        fx->setEffectType(type);
+        fx->setAmount(mix);
+        fx->setSCKnobValue(mix);
+        fx->setSCParamValue(0.0f);
+        fx->setExternalDelayTime(0.005f);
+        fx->applyPendingCommandAtBlockBoundary();
+        juce::AudioBuffer<float> input(2, 64), tail(2, 64);
+        for (int sample = 0; sample < 4800; sample += 64) {
+            input.clear();
+            if (color) fx->process(input, 0, 64);
+            else fx->processWetReturn(input, tail, 0, 64);
+        }
+        input.clear();
+        input.setSample(0, 0, 0.2f);
+        input.setSample(1, 0, 0.2f);
+        if (color) fx->process(input, 0, 64);
+        else fx->processWetReturn(input, tail, 0, 64);
+        const float dryGain = input.getSample(0, 0) / 0.2f;
+        std::cout << "tail-mix type=" << static_cast<int>(type) << " mix=" << mix
+                  << " instantaneous-dry-gain=" << dryGain << '\n';
+        if (!color || mix == 0.0f || mix == 1.0f)
+            ok &= require(std::abs(dryGain - (1.0f - mix)) < 1.0e-5f,
+                          "tail effects honor dry/wet endpoints instead of retaining the original at full wet");
+        if (!color)
+            ok &= require(std::abs(tail.getSample(0, 0)) < 1.0e-6f,
+                          "wet-only tail return contains no instantaneous copy of the input");
+        float tailPeak = 0.0f;
+        for (int sample = 64; sample < 12000; sample += 64) {
+            input.clear();
+            if (color) fx->process(input, 0, 64);
+            else fx->processWetReturn(input, tail, 0, 64);
+            tailPeak = std::max(tailPeak, (color ? input : tail).getMagnitude(0, 0, 64));
+        }
+        ok &= require(mix == 0.0f || tailPeak > 1.0e-7f, "wet tail remains audible after removing the direct input");
+    }
+
+    for (const auto type : {EffectType::Echo, EffectType::LowCutEcho, EffectType::MtDelay,
+                            EffectType::Spiral, EffectType::Reverb})
+    for (const float mix : {0.0f, 0.5f, 1.0f})
+    for (const bool colorActive : {false, true}) {
+        if (colorActive && mix != 1.0f)
+            continue;
+        Sine source(1000.0);
+        auto mixer = std::make_unique<DeckChannelProcessor>(&source);
+        mixer->prepareToPlay(480, 48000.0);
+        if (colorActive) {
+            mixer->setFxEffectType(EffectType::SoundColorCrush);
+            mixer->setFxSCKnob(0.4f);
+            mixer->setFxSCParam(0.7f);
+        }
+        mixer->setFxSlotEffectType(1, type);
+        mixer->setFxSlotAmount(1, mix);
+        mixer->setFxSlotExternalDelayTime(1, 0.005f);
+        juce::AudioBuffer<float> buffer(2, 480);
+        for (int block = 0; block < 12; ++block)
+            mixer->getNextAudioBlock({&buffer, 0, 480});
+        const float expectedDryRms = 0.2f / std::sqrt(2.0f) * (1.0f - mix);
+        ok &= require(std::abs(buffer.getRMSLevel(0, 0, 480) - expectedDryRms) < 0.001f,
+                      "deck Beat FX follows the requested dry gain through the complete mixer");
+        const auto& pfl = mixer->getPflBuffer();
+        const auto& tail = mixer->getPostFaderTailBuffer();
+        float pflError = 0.0f;
+        for (int sample = 0; sample < 480; ++sample)
+            pflError = std::max(pflError, std::abs(pfl.getSample(0, sample)
+                - buffer.getSample(0, sample) - tail.getSample(0, sample)));
+        ok &= require(pflError < 1.0e-6f, "headphones receive the complete dry/wet mix before the channel fader");
+        ok &= require(mix == 0.0f || tail.getMagnitude(0, 0, 480) > 0.0001f,
+                      "full-wet Beat FX remains audible in the deck tail return");
+        mixer->setFader(0.0f);
+        for (int block = 0; block < 12; ++block)
+            mixer->getNextAudioBlock({&buffer, 0, 480});
+        ok &= require(mix == 0.0f || mixer->getPflBuffer().getMagnitude(0, 0, 480) > 0.0001f,
+                      "full-wet effect remains audible in PFL with the channel fader closed");
+        ok &= require(buffer.getMagnitude(0, 0, 480) < 1.0e-7f
+                          && mixer->getPostFaderTailBuffer().getMagnitude(0, 0, 480) < 1.0e-7f,
+                      "channel fader still closes both dry and wet master paths");
+    }
+    {
+        Sine source(900.0);
+        source.setAmplitude(0.0f);
+        auto mixer = std::make_unique<DeckChannelProcessor>(&source);
+        mixer->prepareToPlay(64, 48000.0);
+        for (const int slot : {1, 2}) {
+            mixer->setFxSlotEffectType(slot, EffectType::Echo);
+            mixer->setFxSlotAmount(slot, 1.0f);
+            mixer->setFxSlotExternalDelayTime(slot, slot * 0.005f);
+        }
+        juce::AudioBuffer<float> buffer(2, 64);
+        for (int block = 0; block < 80; ++block)
+            mixer->getNextAudioBlock({&buffer, 0, 64});
+        source.setAmplitude(0.2f);
+        float earlyLeak = 0.0f, latePeak = 0.0f;
+        for (int block = 0; block < 32; ++block) {
+            mixer->getNextAudioBlock({&buffer, 0, 64});
+            const auto& tail = mixer->getPostFaderTailBuffer();
+            for (int sample = 0; sample < 64; ++sample) {
+                const float value = std::abs(buffer.getSample(0, sample) + tail.getSample(0, sample));
+                if (block * 64 + sample < 600) earlyLeak = std::max(earlyLeak, value);
+                else latePeak = std::max(latePeak, value);
+            }
+        }
+        ok &= require(earlyLeak < 1.0e-6f && latePeak > 0.001f,
+                      "two full-wet echo slots apply both delays without leaking the earlier return");
+    }
+}
+
 // Steady-state gain of the EQ at one frequency, in dB relative to the input.
 double eqResponseDb(MixerFilterTargets t,double hz,double sr=48000.0){
  auto s=buildMixerCoefficientSnapshot(t,sr,1,1);MixerFilterBank bank;bank.setSnapshot(s);bank.clearState();
@@ -110,6 +299,8 @@ double eqResponseDb(MixerFilterTargets t,double hz,double sr=48000.0){
 }
 int main(){bool ok=true;
  testFxPrimitives(ok);
+ testColorCrushLeftTexture(ok);
+ testEffectMixEndpoints(ok);
  for(double sr:{44100.0,48000.0,96000.0,192000.0})for(auto t:{MixerFilterTargets{},MixerFilterTargets{-1,0,0,-1},MixerFilterTargets{0,-1,0,1},MixerFilterTargets{1,1,1,0}}){auto s=buildMixerCoefficientSnapshot(t,sr,1,1);ok&=require(s.valid(),"finite stable coefficients");}
  // Musical channel EQ uses overlapping shelves and a broad mid bell; each band
  // spans -26 dB through +6 dB and never becomes an isolator-style full kill.

@@ -431,6 +431,11 @@ int runApplication(int argc, char *argv[])
     runtime.deviceLibraryManager = std::make_unique<DeviceLibraryManager>(
         !startupCloseSmoke, nullptr);
     runtime.fxManager = std::make_unique<FxManager>();
+    runtime.fxManager->setSoundColorAdjustEnabled(settingsManager.soundColorAdjustEnabled());
+    QObject::connect(&settingsManager, &SettingsManager::soundColorAdjustEnabledChanged,
+                     runtime.fxManager.get(), [&settingsManager, manager = runtime.fxManager.get()] {
+                         manager->setSoundColorAdjustEnabled(settingsManager.soundColorAdjustEnabled());
+                     });
     runtime.controlClock = std::make_unique<ControlClock>();
     runtime.linkManager = std::make_unique<LinkManager>(*runtime.controlClock);
     runtime.sysMonitor = std::make_unique<SystemMonitor>(*runtime.controlClock);

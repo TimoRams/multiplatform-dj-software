@@ -245,10 +245,38 @@ void FxManager::setSoundColorParam(float param)
     m_soundColorParam = clamped;
     emit soundColorParamChanged();
 
-    if (m_engineA) m_engineA->setFxSCParam(m_soundColorParam);
-    if (m_engineB) m_engineB->setFxSCParam(m_soundColorParam);
-    if (m_engineC) m_engineC->setFxSCParam(m_soundColorParam);
-    if (m_engineD) m_engineD->setFxSCParam(m_soundColorParam);
+    const float effective = effectiveSoundColorParam();
+    if (m_engineA) m_engineA->setFxSCParam(effective);
+    if (m_engineB) m_engineB->setFxSCParam(effective);
+    if (m_engineC) m_engineC->setFxSCParam(effective);
+    if (m_engineD) m_engineD->setFxSCParam(effective);
+}
+
+float FxManager::effectiveSoundColorParam() const
+{
+    if (m_soundColorAdjustEnabled)
+        return m_soundColorParam;
+    const auto type = effectTypeFromString(m_soundColorMode);
+    switch (type) {
+    case EffectType::SoundColorDubEcho: return (0.5f - 0.125f) / (1.5f - 0.125f);
+    case EffectType::SoundColorPitch: return (12.0f - 1.0f) / 35.0f;
+    case EffectType::SoundColorCrush: return 0.7f;
+    case EffectType::SoundColorNoise: return 0.35f;
+    case EffectType::SoundColorSweep:
+    case EffectType::SoundColorFilter: return 0.2f;
+    default: return 0.5f;
+    }
+}
+
+void FxManager::setSoundColorAdjustEnabled(bool enabled)
+{
+    if (m_soundColorAdjustEnabled == enabled)
+        return;
+    m_soundColorAdjustEnabled = enabled;
+    const float param = effectiveSoundColorParam();
+    for (auto* engine : {m_engineA.data(), m_engineB.data(), m_engineC.data(), m_engineD.data()})
+        if (engine) engine->setFxSCParam(param);
+    emit soundColorAdjustEnabledChanged();
 }
 
 void FxManager::setSoundColor(const QString& mode, float value)
@@ -299,7 +327,7 @@ void FxManager::applySoundColorToEngine(DjEngine* engine, const QString& mode, f
 {
     if (!engine) return;
 
-    engine->setFxSCParam(m_soundColorParam);
+    engine->setFxSCParam(effectiveSoundColorParam());
 
     // "Filter" mode should use the deck's native DJ filter path only.
     // Running SC filter DSP on top of the mixer filter causes double-filtering

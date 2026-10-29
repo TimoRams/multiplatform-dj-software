@@ -2,6 +2,7 @@
 #include "controllers/flx10/Flx10ControllerIdentity.h"
 #include "fx/FxManager.h"
 #include "app/ControlClock.h"
+#include "app/SettingsManager.h"
 #include "controllers/midi/MidiControllerManager.h"
 #include "controllers/midi/ParameterStore.h"
 
@@ -19,12 +20,79 @@
 #include <QTemporaryDir>
 #include <QUrl>
 #include <QtGlobal>
+#include <cmath>
 
 namespace {
 int fail(const QString& message)
 {
     qCritical().noquote() << "[ci-smoke]" << message;
     return 1;
+}
+
+bool testSoundColorAdjust(QString& error)
+{
+    FxManager manager;
+    manager.setSoundColorParam(0.83f);
+    manager.setSoundColorAdjustEnabled(false);
+    for (const auto* mode : {"Space", "D.Echo", "Crush", "Pitch", "Noise", "Sweep", "Filter"}) {
+        manager.setSoundColorMode(QString::fromLatin1(mode));
+        const float automatic = manager.effectiveSoundColorParam();
+        manager.setSoundColorParam(0.0f);
+        if (!(automatic > 0.0f && automatic < 1.0f)
+            || manager.effectiveSoundColorParam() != automatic) {
+            error = QStringLiteral("disabled Sound Color Adjust depends on its hidden value");
+            return false;
+        }
+        manager.setSoundColorParam(1.0f);
+        if (manager.effectiveSoundColorParam() != automatic) {
+            error = QStringLiteral("hidden Sound Color Adjust still changes the effect");
+            return false;
+        }
+    }
+    manager.setSoundColorMode(QStringLiteral("Pitch"));
+    if (std::abs(1.0f + 35.0f * manager.effectiveSoundColorParam() - 12.0f) > 0.001f) {
+        error = QStringLiteral("single-knob Sound Color Pitch does not span one octave");
+        return false;
+    }
+    manager.setSoundColorParam(0.83f);
+    manager.setSoundColorAdjustEnabled(true);
+    if (manager.effectiveSoundColorParam() != 0.83f) {
+        error = QStringLiteral("re-enabling Sound Color Adjust lost its manual value");
+        return false;
+    }
+
+    QTemporaryDir directory;
+    if (!directory.isValid()) {
+        error = QStringLiteral("cannot create Sound Color settings fixture");
+        return false;
+    }
+    auto& settings = SettingsManager::getInstance();
+    auto& properties = settings.getAppProperties();
+    juce::PropertiesFile::Options options;
+    options.applicationName = "sound-color-adjust-test";
+    options.filenameSuffix = ".xml";
+    options.folderName = directory.path().toStdString();
+    options.osxLibrarySubFolder = "Application Support";
+    if (!options.getDefaultFile().isAChildOf(juce::File(directory.path().toStdString()))) {
+        error = QStringLiteral("Sound Color settings fixture escaped its temporary directory");
+        return false;
+    }
+    properties.setStorageParameters(options);
+    if (!settings.soundColorAdjustEnabled()) {
+        error = QStringLiteral("Sound Color Adjust compatibility default is disabled");
+        return false;
+    }
+    for (const bool enabled : {false, true}) {
+        settings.setSoundColorAdjustEnabled(enabled);
+        properties.closeFiles();
+        if (settings.soundColorAdjustEnabled() != enabled) {
+            error = QStringLiteral("Sound Color Adjust setting did not survive a settings reload");
+            properties.closeFiles();
+            return false;
+        }
+    }
+    properties.closeFiles();
+    return true;
 }
 
 bool testFxManagerControls(QString& error)
@@ -331,6 +399,8 @@ int runCiSmokeTest(int argc, char* argv[])
     QCoreApplication::setApplicationVersion(QStringLiteral(BROCKDJ_VERSION));
 
     QString fxManagerError;
+    if (!testSoundColorAdjust(fxManagerError))
+        return fail(fxManagerError);
     if (!testFxManagerControls(fxManagerError))
         return fail(fxManagerError);
     if (!testBeatFxFirstHardwareEngage(fxManagerError))

@@ -590,6 +590,19 @@ QString SettingsManager::timeStretchBackend() const
                                                    : QStringLiteral("signalsmith");
 }
 
+bool SettingsManager::soundColorAdjustEnabled() const
+{
+    return getUiState(QStringLiteral("soundColorAdjustEnabled"), QStringLiteral("1")) == QLatin1String("1");
+}
+
+void SettingsManager::setSoundColorAdjustEnabled(bool enabled)
+{
+    if (soundColorAdjustEnabled() == enabled)
+        return;
+    setUiState(QStringLiteral("soundColorAdjustEnabled"), enabled ? QStringLiteral("1") : QStringLiteral("0"));
+    emit soundColorAdjustEnabledChanged();
+}
+
 int SettingsManager::waveformRenderStyle() const
 {
     // 0 is the compatible spectral RGB default.  Keep this UI preference out

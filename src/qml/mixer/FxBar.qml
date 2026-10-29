@@ -645,6 +645,10 @@ Rectangle {
 
                     // Param knob with mode-specific label
                     Column {
+                        objectName: "soundColorAdjustControl"
+                        visible: typeof fxManager === "undefined" || fxManager === null
+                                 || fxManager.soundColorAdjustEnabled
+                        enabled: visible
                         Layout.preferredWidth: 32
                         Layout.alignment:      Qt.AlignVCenter
                         spacing: 2

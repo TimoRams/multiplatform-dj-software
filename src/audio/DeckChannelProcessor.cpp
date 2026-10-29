@@ -568,29 +568,27 @@ void DeckChannelProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
         // cut their delay/reverb state. Both paths follow the channel fader below.
         m_postFaderTailReturn.clear(0, 0, bufferToFill.numSamples);
         m_postFaderTailReturn.clear(1, 0, bufferToFill.numSamples);
-        if (!FxProcessor::isColorFxType(m_colorFx.getEffectType())) {
-            for (auto& fx : m_fxChain) {
-                if (FxProcessor::placementForType(fx.getEffectType())
-                    == FxPlacement::PostFaderTail) {
-                    fx.processWetReturn(*bufferToFill.buffer, m_tailScratch,
-                                        bufferToFill.startSample,
-                                        bufferToFill.numSamples);
-                    m_postFaderTailReturn.addFrom(0, 0, m_tailScratch, 0, 0,
-                                                  bufferToFill.numSamples);
-                    m_postFaderTailReturn.addFrom(1, 0, m_tailScratch, 1, 0,
-                                                  bufferToFill.numSamples);
-                } else {
-                    fx.process(*bufferToFill.buffer,
-                               bufferToFill.startSample,
-                               bufferToFill.numSamples);
-                }
+        for (auto& fx : m_fxChain) {
+            if (FxProcessor::placementForType(fx.getEffectType())
+                == FxPlacement::PostFaderTail) {
+                fx.processWetReturn(*bufferToFill.buffer, m_tailScratch,
+                                    bufferToFill.startSample,
+                                    bufferToFill.numSamples, &m_postFaderTailReturn);
+                m_postFaderTailReturn.addFrom(0, 0, m_tailScratch, 0, 0,
+                                              bufferToFill.numSamples);
+                m_postFaderTailReturn.addFrom(1, 0, m_tailScratch, 1, 0,
+                                              bufferToFill.numSamples);
+            } else {
+                fx.process(*bufferToFill.buffer,
+                           bufferToFill.startSample,
+                           bufferToFill.numSamples);
             }
         }
         if (FxProcessor::placementForType(m_padFx.getEffectType())
             == FxPlacement::PostFaderTail) {
             m_padFx.processWetReturn(*bufferToFill.buffer, m_tailScratch,
                                      bufferToFill.startSample,
-                                     bufferToFill.numSamples);
+                                     bufferToFill.numSamples, &m_postFaderTailReturn);
             m_postFaderTailReturn.addFrom(0, 0, m_tailScratch, 0, 0,
                                           bufferToFill.numSamples);
             m_postFaderTailReturn.addFrom(1, 0, m_tailScratch, 1, 0,
@@ -632,15 +630,18 @@ void DeckChannelProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
             if (buf->getNumChannels() > 1)
                 peakPreR = buf->getMagnitude(1, s, n);
 
-            m_preFaderPeakL.store(peakPreL, std::memory_order_relaxed);
-            m_preFaderPeakR.store(peakPreR, std::memory_order_relaxed);
-
             // Capture for PFL routing: headphones always hear this pre-fader signal
             // so cue works even when the channel fader or crossfader is closed.
             if (m_preFaderScratch.getNumSamples() >= n) {
                 m_preFaderScratch.copyFrom(0, 0, *buf, 0, s, n);
                 m_preFaderScratch.copyFrom(1, 0, *buf, std::min(1, buf->getNumChannels() - 1), s, n);
+                m_preFaderScratch.addFrom(0, 0, m_postFaderTailReturn, 0, 0, n);
+                m_preFaderScratch.addFrom(1, 0, m_postFaderTailReturn, 1, 0, n);
+                peakPreL = m_preFaderScratch.getMagnitude(0, 0, n);
+                peakPreR = m_preFaderScratch.getMagnitude(1, 0, n);
             }
+            m_preFaderPeakL.store(peakPreL, std::memory_order_relaxed);
+            m_preFaderPeakR.store(peakPreR, std::memory_order_relaxed);
         }
 
         // Apply the channel fader with per-sample smoothing. Crossfader gain is master-owned.
@@ -668,10 +669,14 @@ void DeckChannelProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
             auto* buf = bufferToFill.buffer;
             const int s = bufferToFill.startSample;
             const int n = bufferToFill.numSamples;
-            if (buf->getNumChannels() > 0)
-                m_peakL.store(buf->getMagnitude(0, s, n), std::memory_order_relaxed);
-            if (buf->getNumChannels() > 1)
-                m_peakR.store(buf->getMagnitude(1, s, n), std::memory_order_relaxed);
+            for (int channel = 0; channel < std::min(2, buf->getNumChannels()); ++channel) {
+                float peak = 0.0f;
+                const float* dry = buf->getReadPointer(channel, s);
+                const float* tail = m_postFaderTailReturn.getReadPointer(channel);
+                for (int sample = 0; sample < n; ++sample)
+                    peak = std::max(peak, std::abs(dry[sample] + tail[sample]));
+                (channel == 0 ? m_peakL : m_peakR).store(peak, std::memory_order_relaxed);
+            }
         }
         // Master volume, limiter, and output routing are handled by AudioEngine.
     }
