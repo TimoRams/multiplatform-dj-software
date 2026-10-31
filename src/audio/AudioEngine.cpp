@@ -382,8 +382,10 @@ void AudioEngine::processChunk(
     // being written the moment MASTER CUE was switched off would click.
     m_masterMixer.finalize(parameters, m_masterBuf, samples, &m_masterCueTap);
     const auto& meter = m_masterMixer.meter();
-    peakL = std::max(peakL, meter.finalPeakL);
-    peakR = std::max(peakR, meter.finalPeakR);
+    // Meter the requested master level before protection so enabling the
+    // limiter cannot conceal overloads. Audio output still uses the limited buffer.
+    peakL = std::max(peakL, meter.preLimiterPeakL);
+    peakR = std::max(peakR, meter.preLimiterPeakR);
     minimumGainReduction = std::min(minimumGainReduction, meter.minimumGainReduction);
 
     m_headphoneBus.mix(pfl, m_masterCueTap, parameters,

@@ -120,6 +120,7 @@ public:
     // routing state (actual channel-fader gain × actual crossfader gain), not
     // an inference from transport state or signal level.
     [[nodiscard]] static bool deckOnAir(int deckIndex) noexcept;
+    // Master peaks after master gain, before the protective limiter.
     [[nodiscard]] static float masterVuL_s() noexcept;
     [[nodiscard]] static float masterVuR_s() noexcept;
 

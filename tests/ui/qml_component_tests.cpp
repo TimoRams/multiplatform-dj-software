@@ -732,8 +732,15 @@ bool headerPublicationTests(const std::string& header)
     )") + methods
         + QString::fromStdString(header.substr(connectionsBegin, connectionsEnd - connectionsBegin))
         + QString::fromStdString(header.substr(meterBegin, meterEnd - meterBegin))
+        + QStringLiteral("\nreadonly property int segs: 24\n")
+        + QString::fromStdString(header.substr(header.find("        function litSegments(peak)"),
+            header.find("        function segColor(i)") - header.find("        function litSegments(peak)")))
         + QStringLiteral("\n}"), "real header tick and meter bindings instantiate");
     if (!host)
+        return false;
+    QQmlExpression meterScale(QQmlEngine::contextForObject(host.get()), host.get(),
+        QStringLiteral("litSegments(0) === 0 && litSegments(1) === 22 && litSegments(1.01) === 24"));
+    if (!require(meterScale.evaluate().toBool(), "master red segments start at overload above 0 dBFS"))
         return false;
     double peak = 0.0;
     ControlClock::Callbacks callbacks;
@@ -2953,7 +2960,7 @@ int main(int argc, char** argv)
     ok &= require(topHeader.find("deckA.masterVuLevelL") != std::string::npos
                   && topHeader.find("deckA.masterVuLevelR") != std::string::npos
                   && topHeader.find("Math.max(deckA ? deckA.vuLevelL") == std::string::npos,
-                  "master VU consumes the final master output snapshot");
+                  "master VU consumes the master bus snapshot");
     ok &= require(mixerSection.find("engineA.preFaderVuLevelL") != std::string::npos
                   && mixerSection.find("normalizedDb(levelLinear)") != std::string::npos,
                   "channel UI meter consumes pre-fader peaks with dBFS height mapping");

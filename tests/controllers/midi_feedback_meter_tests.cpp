@@ -42,6 +42,9 @@ int main()
     assert(meter.update(1.0f, 1.0 / 30.0) == 89);
     assert(meter.update(1.01f, 1.0 / 30.0) == 109);
 
+    // The controller owns clip hold: send the current level again immediately.
+    assert(meter.update(0.5f, 1.0 / 30.0) < 109);
+
     std::cout << "MIDI feedback meter tests passed\n";
     return 0;
 }

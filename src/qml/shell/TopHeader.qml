@@ -1490,19 +1490,35 @@ Rectangle {
         radius: 0
         color: UiTheme.displayBackground
         border.width: 1
-        border.color: clipNow ? UiTheme.error : UiTheme.borderSubtle
+        border.color: clipHold > 0 ? UiTheme.error : UiTheme.borderSubtle
 
-        // Final MASTER 1/2 peak: after summed deck mix, master gain and limiter.
+        // MASTER 1/2 peak after master gain, before the protective limiter.
         // Never reconstruct this from one or more channel meters.
         property real levelL: deckA ? deckA.masterVuLevelL : 0
         property real levelR: deckA ? deckA.masterVuLevelR : 0
         property bool clipNow: (deckA && deckA.clipDetected) || (deckB && deckB.clipDetected)
+        property real displayL: 0
+        property real displayR: 0
+        property int clipHold: 0
         readonly property int segs: 24
+
+        Timer {
+            interval: 33
+            running: true
+            repeat: true
+            onTriggered: {
+                // Immediate attack, roughly 30 dB/s release; hold overloads 330 ms.
+                centerMeter.displayL = Math.max(centerMeter.levelL, centerMeter.displayL * 0.892)
+                centerMeter.displayR = Math.max(centerMeter.levelR, centerMeter.displayR * 0.892)
+                centerMeter.clipHold = centerMeter.clipNow ? 10 : Math.max(0, centerMeter.clipHold - 1)
+            }
+        }
 
         function litSegments(peak) {
             if (peak <= 0.000000001) return 0
-            const db = Math.max(-54.0, Math.min(12.0, 20.0 * Math.log10(peak)))
-            return Math.ceil((db + 54.0) * (segs / 66.0))
+            if (peak > 1.001) return segs
+            const db = Math.max(-54.0, Math.min(0.0, 20.0 * Math.log10(peak)))
+            return Math.ceil((db + 54.0) * (22.0 / 54.0))
         }
         function segColor(i) {
             if (i >= 22) return UiTheme.error
@@ -1524,7 +1540,7 @@ Rectangle {
                         width: 4
                         height: 3
                         radius: 1
-                        readonly property int litCount: centerMeter.litSegments(centerMeter.levelL)
+                        readonly property int litCount: centerMeter.litSegments(centerMeter.displayL)
                         color: index < litCount ? centerMeter.segColor(index) : UiTheme.knobTrack
                     }
                 }
@@ -1539,7 +1555,7 @@ Rectangle {
                         width: 4
                         height: 3
                         radius: 1
-                        readonly property int litCount: centerMeter.litSegments(centerMeter.levelR)
+                        readonly property int litCount: centerMeter.litSegments(centerMeter.displayR)
                         color: index < litCount ? centerMeter.segColor(index) : UiTheme.knobTrack
                     }
                 }

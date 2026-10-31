@@ -1281,6 +1281,35 @@ int main(int argc, char** argv)
     }
     directDecks.clear();
 
+    // Anti-clip must protect the output without hiding the requested overload.
+    {
+        struct OverloadEndpoint final : IAuxAudioEndpoint {
+            void prepareAuxAudio(int, double) override {}
+            void releaseAuxAudio() override {}
+            void mixAuxAudio(juce::AudioBuffer<float>& master,
+                             juce::AudioBuffer<float>&, int samples) noexcept override
+            {
+                for (int channel = 0; channel < 2; ++channel)
+                    juce::FloatVectorOperations::fill(master.getWritePointer(channel), 2.0f, samples);
+            }
+        } overload;
+        AudioEngine meterEngine(cache);
+        auto registration = meterEngine.registerAuxEndpoint(overload);
+        AudioEngine::setMasterVolume(1.0f);
+        AudioEngine::setAntiClipEnabled(true);
+        AudioEngine::setOutputRouting(1, 0, 0);
+        meterEngine.prepareToPlay(512, 48'000.0);
+        juce::AudioBuffer<float> protectedOutput(2, 512);
+        for (int block = 0; block < 4; ++block)
+            meterEngine.getNextAudioBlock({&protectedOutput, 0, 512});
+        ok &= require(AudioEngine::masterVuL_s() > 1.001f
+                          && AudioEngine::masterVuR_s() > 1.001f,
+                      "anti-clip preserves overload on both master meters");
+        ok &= require(protectedOutput.getMagnitude(0, 512) <= 1.001f,
+                      "anti-clip still limits the physical output");
+        meterEngine.releaseResources();
+    }
+
     AudioEngine audioEngine(cache);
     std::array<DeckAudioPipeline*, 4> decks {
         &audioEngine.deck(0), &audioEngine.deck(1), &audioEngine.deck(2), &audioEngine.deck(3)
