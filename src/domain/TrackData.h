@@ -16,7 +16,7 @@
 #include "waveform/WaveformLineStore.h"
 #include "waveform/WaveformTypes.h"
 
-namespace analysis { struct AnalysisResult; }
+namespace analysis { struct AnalysisResult; struct AnalysisSectionVersions; }
 namespace waveform { struct PreparedWaveformLines; }
 
 class TrackData : public QObject
@@ -33,6 +33,8 @@ class TrackData : public QObject
     Q_PROPERTY(bool   analyzing READ isAnalyzing NOTIFY analysisProgressChanged)
 
 public:
+    void setAnalysisProvenance(const analysis::AnalysisSectionVersions& sections,
+                               const QString& beatFingerprint, const QString& keyFingerprint);
     enum class BeatGridType {
         Unknown = 0,
         ConstantTempo,
@@ -443,6 +445,8 @@ private:
     std::vector<TrackSegment> m_segments;
 
     QString m_detectedKey;
+    QString m_beatFingerprint, m_keyFingerprint;
+    std::uint32_t m_beatAnalysisVersion = 3, m_keyAnalysisVersion = 1;
     bool    m_isKeyAnalyzed;
 
     mutable QMutex m_mutex;

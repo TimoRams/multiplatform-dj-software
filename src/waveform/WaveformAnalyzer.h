@@ -50,9 +50,13 @@ public:
     WaveformAnalyzer(juce::AudioFormatManager* formatManager, int pointsPerSecond = 600);
     ~WaveformAnalyzer();
 
+    // Automatic visual reconstruction keeps seeded analysis. Only an explicit
+    // reanalysis request may replace existing automatic BPM/key results.
     AnalysisGeneration startAnalysis(const QString& filePath, double seekHintSec = 0.0,
                                        std::uint64_t trackGeneration = 0,
-                                       analysis::AnalysisResult seed = {});
+                                       analysis::AnalysisResult seed = {},
+                                       analysis::AnalysisOptions options = {},
+                                       bool reanalyzeExisting = false);
     void requestCancel() noexcept;
     void shutdownAndJoin();
     void stopAnalysis() { shutdownAndJoin(); }
@@ -88,6 +92,8 @@ private:
    [[nodiscard]] waveform::WaveformDemand waveformDemandSnapshot() const;
    juce::AudioFormatManager* m_formatManager = nullptr;
    QString m_filePath;
+   analysis::AnalysisOptions m_options;
+   bool m_reanalyzeExisting = false;
    int m_pointsPerSecond;
    std::atomic<double> m_seekHintSec{0.0};
    std::atomic<bool> m_realtimeInteractionActive{false};

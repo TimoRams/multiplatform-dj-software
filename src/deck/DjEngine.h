@@ -302,6 +302,7 @@ public:
     [[nodiscard]] TrackData* getTrackData() const;
     void beginWaveformReanalysis(const QString& filePath);
     void finishWaveformReanalysis(const QString& filePath);
+    void acceptLibraryAnalysis(const QString& filePath, std::shared_ptr<const analysis::AnalysisResult> result);
 
     [[nodiscard]] QString trackTitle()    const { return m_trackTitle; }
     [[nodiscard]] QString trackArtist()   const { return m_trackArtist; }

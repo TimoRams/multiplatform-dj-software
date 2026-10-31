@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QString>
+#include "analysis/AnalysisOptions.h"
 #include <QHash>
 #include <array>
 #include <cstdint>
@@ -21,6 +22,7 @@ struct AnalysisJob {
     QString key;
     AnalysisPriority priority = AnalysisPriority::BackgroundLibrary;
     std::uint64_t sequence = 0;
+    AnalysisOptions options;
 };
 
 struct AnalysisQueueStats {
@@ -41,6 +43,8 @@ public:
     bool push(AnalysisJob job)
     {
         if (job.key.isEmpty()) job.key = job.filePath;
+        const QString optionsSuffix = QLatin1Char('|') + job.options.fingerprint();
+        if (!job.key.endsWith(optionsSuffix)) job.key += optionsSuffix;
         const auto existing = m_pendingPriority.constFind(job.key);
         if (existing != m_pendingPriority.cend()) {
             const std::size_t p = static_cast<std::size_t>(existing.value());

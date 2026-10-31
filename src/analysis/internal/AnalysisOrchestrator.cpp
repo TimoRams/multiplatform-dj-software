@@ -2,6 +2,7 @@
 #include "analysis/internal/FeatureAnalysis.h"
 #include "analysis/AnalysisTypes.h"
 #include "analysis/internal/BeatAnalysis.h"
+#include "analysis/internal/ElectronicAnalysis.h"
 #include <keyfinder/keyfinder.h>
 #include <keyfinder/audiodata.h>
 #include <QDebug>
@@ -21,6 +22,7 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
     const double sampleRate = input.sampleRate;
     const double duration = input.duration;
     const bool haveFullWaveform = input.haveFullWaveform;
+    if (!input.analyzeBeatGrid && !input.analyzeKey) return true;
 
     auto threadShouldExit = [&]() { return thread.threadShouldExit(); };
     const auto cooperateWithAudio = [&]() {
@@ -31,11 +33,39 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
         return !threadShouldExit();
     };
 
+    if (input.options.profile == analysis::AnalysisProfile::Electronic) {
+        const auto features = analysis::extractElectronicFeatures(reader, cooperateWithAudio,
+            [m_trackData](double value) { m_trackData->reportAnalysisProgress(.62 + .23 * value, true); });
+        if (!cooperateWithAudio()) return false;
+        const auto protectedGrid = m_trackData->getBeatGridInfo();
+        if (input.analyzeBeatGrid && !protectedGrid.lockedByUser && !protectedGrid.userModified) {
+            auto fitted = analysis::fitElectronicGrid(features, input.options, cooperateWithAudio);
+            if (!cooperateWithAudio()) return false;
+            if (fitted.bpm > 0.0 && !fitted.beats.empty()) {
+                analysis::ConfidenceInfo confidence;
+                confidence.bpmConfidence = confidence.beatConfidence = confidence.gridConfidence = fitted.confidence;
+                confidence.downbeatConfidence = fitted.downbeatConfidence;
+                const qint64 first = static_cast<qint64>(std::llround(fitted.beats.front().positionSec * sampleRate));
+                m_trackData->setBpmData(fitted.bpm, first, sampleRate, std::move(fitted.beats), confidence, std::move(fitted.grid));
+                m_trackData->markBeatAnalysis(input.options);
+                PhraseAnalyzer phrases;
+                m_trackData->setSegmentsData(phrases.analyze(features.rhythm, m_trackData->getBeatGrid(), duration));
+            }
+        }
+        m_trackData->reportAnalysisProgress(.94, true);
+        const auto key = analysis::detectElectronicKey(features);
+        if (input.analyzeKey && !key.camelot.isEmpty()) {
+            m_trackData->setKeyData(key.camelot);
+            m_trackData->markKeyAnalysis(input.options);
+        }
+        return cooperateWithAudio();
+    }
+
     m_trackData->reportAnalysisProgress(haveFullWaveform ? 0.35 : 0.62, true);
     if (!cooperateWithAudio())
         return false;
 
-    {
+    if (input.analyzeBeatGrid) {
         analysis::AnalysisFeatureExtractor::Options featOpts;
         featOpts.frameSize = 2048;
         // 512 samples gives the grid a roughly 12 ms temporal resolution at
@@ -44,7 +74,8 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
         featOpts.hopSize = 512;
         featOpts.maxDurationSec = 0.0;
         analysis::AnalysisFeatureExtractor featureExtractor(featOpts);
-        analysis::TempoEstimator tempoEstimator;
+        const auto options = input.options.normalized();
+        analysis::TempoEstimator tempoEstimator({options.minBpm, options.maxBpm, 70.0, 180.0});
         analysis::BeatTracker beatTracker;
         analysis::BeatGridFitter gridFitter;
         analysis::DownbeatDetector downbeatDetector;
@@ -174,20 +205,14 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
 
         const double finalBpm = fitted.bpm > 0.0 ? fitted.bpm : tempo.bpm;
         if (finalBpm > 0.0) {
-            if (!m_trackData->beatgridLockedByUser()) {
+            if (!m_trackData->beatgridLockedByUser() && !m_trackData->getBeatGridInfo().userModified) {
                 m_trackData->setBpmData(finalBpm,
                                         fitted.firstBeatSample,
                                         sampleRate,
                                         std::move(fitted.beats),
                                         confidence,
                                         std::move(fitted.grid));
-            } else {
-                m_trackData->setBpmData(finalBpm,
-                                        m_trackData->getFirstBeatSample(),
-                                        sampleRate,
-                                        {},
-                                        confidence,
-                                        m_trackData->getBeatGridInfo());
+                m_trackData->markBeatAnalysis(input.options);
             }
 
             QString candidateLog;
@@ -241,7 +266,7 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
     // its own chromagram + Krumhansl-Schmuckler internally; we just map the
     // returned key_t enum to Camelot Wheel notation.
     // -------------------------------------------------------------------------
-    {
+    if (input.analyzeKey) {
         // Limit to the first 90 seconds to keep analysis fast.
         const double maxKeySeconds = 90.0;
         const juce::int64 keySamples = std::min(
@@ -315,8 +340,10 @@ bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input)
                 KeyFinder::KeyFinder kf;
                 KeyFinder::key_t key = kf.keyOfAudio(kfAudio);
                 QString camelot = (key < 25) ? QString::fromLatin1(kCamelot[key]) : QString();
-                if (!camelot.isEmpty())
+                if (!camelot.isEmpty()) {
                     m_trackData->setKeyData(camelot);
+                    m_trackData->markKeyAnalysis(input.options);
+                }
             } catch (const std::exception& e) {
                 qWarning() << "[WaveformAnalyzer] libKeyFinder error:" << e.what();
             }

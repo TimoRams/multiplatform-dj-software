@@ -52,6 +52,7 @@ signals:
     void progressChanged();
     void waveformInvalidationStarted(const QString& filePath);
     void waveformInvalidationFinished(const QString& filePath);
+    void analysisReady(const QString& filePath, WaveformAnalyzer::ResultPtr result);
 
 private:
     using QueueItem = analysis::AnalysisJob;

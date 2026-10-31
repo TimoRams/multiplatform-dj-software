@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "domain/TrackData.h"
+#include "analysis/AnalysisOptions.h"
 #include "domain/DomainTypes.h"
 #include "waveform/WaveformLineBuilder.h"
 
@@ -94,6 +95,7 @@ struct AnalysisIdentity {
     std::uint32_t analysisVersion = kCurrentAnalysisVersion;
     AnalysisSectionVersions sections = AnalysisSectionVersions::current();
     std::uint64_t requestGeneration = 0;
+    QString optionsFingerprint;
 
     [[nodiscard]] bool matches(const AnalysisIdentity& other) const noexcept
     {
@@ -109,7 +111,8 @@ struct AnalysisIdentity {
             && sections.key == other.sections.key
             && sections.phrase == other.sections.phrase
             && sections.renderArtifacts == other.sections.renderArtifacts
-            && requestGeneration == other.requestGeneration;
+            && requestGeneration == other.requestGeneration
+            && optionsFingerprint == other.optionsFingerprint;
     }
 };
 
@@ -177,6 +180,7 @@ struct BeatGridFitResult {
     BeatGridInfo grid;
     std::vector<BeatMarker> beats;
     float confidence = 0.0f;
+    float downbeatConfidence = 0.0f;
 };
 
 struct AnalysisResult {
@@ -201,6 +205,8 @@ struct AnalysisResult {
     std::vector<BeatMarker> beats;
     std::vector<TrackSegment> phrases;
     QString detectedKey;
+    QString beatFingerprint;
+    QString keyFingerprint;
 };
 
 inline bool validateResult(const AnalysisResult& value) noexcept

@@ -21,6 +21,9 @@ struct AnalysisOrchestratorInput
     double duration = 0.0;
     bool haveFullWaveform = false;
     std::function<bool()> backgroundWorkPaused;
+    analysis::AnalysisOptions options;
+    bool analyzeBeatGrid = true;
+    bool analyzeKey = true;
 };
 
 bool runAnalysisOrchestrator(const AnalysisOrchestratorInput& input);

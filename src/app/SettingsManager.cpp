@@ -167,6 +167,52 @@ void SettingsManager::init()
              << QString::fromUtf8(userSettings->getFile().getFullPathName().toRawUTF8());
 }
 
+QString SettingsManager::analysisProfile() const
+{
+    return getUiState(QStringLiteral("analysisProfile"), QStringLiteral("electronic")) == QLatin1String("legacy")
+        ? QStringLiteral("legacy") : QStringLiteral("electronic");
+}
+void SettingsManager::setAnalysisProfile(const QString& value)
+{
+    const auto normalized = value == QLatin1String("legacy") ? QStringLiteral("legacy") : QStringLiteral("electronic");
+    if (normalized == analysisProfile()) return;
+    setUiState(QStringLiteral("analysisProfile"), normalized);
+    emit analysisSettingsChanged();
+}
+int SettingsManager::analysisMinBpm() const
+{
+    const int fallback = analysisProfile() == QLatin1String("legacy") ? 60 : 48;
+    bool valid = false;
+    const int value = getUiState(analysisProfile() + QStringLiteral("/minBpm"), QString::number(fallback)).toInt(&valid);
+    return std::clamp(valid ? value : fallback, 30, 299);
+}
+int SettingsManager::analysisMaxBpm() const
+{
+    const int fallback = analysisProfile() == QLatin1String("legacy") ? 200 : 255;
+    bool valid = false;
+    const int value = getUiState(analysisProfile() + QStringLiteral("/maxBpm"), QString::number(fallback)).toInt(&valid);
+    return std::clamp(valid ? value : fallback, analysisMinBpm() + 1, 300);
+}
+void SettingsManager::setAnalysisMinBpm(int value)
+{
+    value = std::clamp(value, 30, analysisMaxBpm() - 1);
+    if (analysisMinBpm() == value) return;
+    setUiState(analysisProfile() + QStringLiteral("/minBpm"), QString::number(value));
+    emit analysisSettingsChanged();
+}
+void SettingsManager::setAnalysisMaxBpm(int value)
+{
+    value = std::clamp(value, analysisMinBpm() + 1, 300);
+    if (analysisMaxBpm() == value) return;
+    setUiState(analysisProfile() + QStringLiteral("/maxBpm"), QString::number(value));
+    emit analysisSettingsChanged();
+}
+analysis::AnalysisOptions SettingsManager::analysisOptions() const
+{
+    return {analysisProfile() == QLatin1String("legacy") ? analysis::AnalysisProfile::Legacy : analysis::AnalysisProfile::Electronic,
+            static_cast<double>(analysisMinBpm()), static_cast<double>(analysisMaxBpm())};
+}
+
 void SettingsManager::shutdown()
 {
     flushToDisk();

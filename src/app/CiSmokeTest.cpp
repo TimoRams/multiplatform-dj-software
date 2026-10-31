@@ -3,6 +3,9 @@
 #include "fx/FxManager.h"
 #include "app/ControlClock.h"
 #include "app/SettingsManager.h"
+#include "library/LibraryDatabase.h"
+#include <QThread>
+#include <QElapsedTimer>
 #include "controllers/midi/MidiControllerManager.h"
 #include "controllers/midi/ParameterStore.h"
 
@@ -90,6 +93,76 @@ bool testSoundColorAdjust(QString& error)
             properties.closeFiles();
             return false;
         }
+    }
+    properties.closeFiles();
+    return true;
+}
+
+bool testAnalysisSettingsAndPersistence(QString& error)
+{
+    const auto require = [&error](bool value, const char* message) {
+        if (!value && error.isEmpty()) error = QString::fromLatin1(message);
+        return value;
+    };
+    QTemporaryDir directory;
+    if (!require(directory.isValid(), "analysis fixture directory unavailable")) return false;
+    auto& settings = SettingsManager::getInstance();
+    auto& properties = settings.getAppProperties();
+    properties.closeFiles();
+    juce::PropertiesFile::Options storage;
+    storage.applicationName = "analysis-test"; storage.filenameSuffix = ".xml";
+    storage.folderName = directory.path().toStdString(); storage.osxLibrarySubFolder = "Application Support";
+    if (!require(storage.getDefaultFile().isAChildOf(juce::File(directory.path().toStdString())), "analysis fixture escaped temporary directory")) return false;
+    properties.setStorageParameters(storage);
+    if (!require(settings.analysisProfile() == QLatin1String("electronic") && settings.analysisMinBpm() == 48
+        && settings.analysisMaxBpm() == 255, "electronic analysis is not the broad-range default")) return false;
+    settings.setAnalysisProfile(QStringLiteral("legacy"));
+    settings.setAnalysisMinBpm(90); settings.setAnalysisMaxBpm(230);
+    const auto queued = settings.analysisOptions();
+    properties.closeFiles();
+    if (!require(settings.analysisProfile() == QLatin1String("legacy") && settings.analysisMinBpm() == 90
+        && settings.analysisMaxBpm() == 230, "analysis preferences did not survive reload")) return false;
+    settings.setAnalysisProfile(QStringLiteral("electronic"));
+    if (!require(settings.analysisMinBpm() == 48 && settings.analysisMaxBpm() == 255
+        && queued.profile == analysis::AnalysisProfile::Legacy, "profiles or queued options contaminated one another")) return false;
+    {
+        LibraryDatabase database;
+        if (!require(database.open(), "analysis database migration failed")) return false;
+        if (!require(database.addTrack("analysis-track", "Analysis", "Fixture", 10, directory.filePath("track.wav")), "analysis fixture track insertion failed")) return false;
+        int writes = 0;
+        QObject::connect(&database, &LibraryDatabase::analysisUpdated, &database, [&](const QString&) { ++writes; });
+        const auto wait = [&](int count) {
+            QElapsedTimer timer; timer.start();
+            while (writes < count && timer.elapsed() < 5000) {
+                QCoreApplication::processEvents(); QThread::msleep(1);
+            }
+            return writes >= count;
+        };
+        analysis::AnalysisResult manual;
+        manual.complete = manual.validated = true;
+        manual.bpm = 128; manual.sampleRate = 44100; manual.firstBeatSample = 8820;
+        manual.detectedKey = "8A"; manual.beatFingerprint = "manual";
+        manual.beatGrid.lockedByUser = manual.beatGrid.userModified = true;
+        manual.beatGrid.type = TrackData::BeatGridType::ConstantTempo;
+        for (int i = 0; i < 8; ++i) {
+            TrackData::BeatMarker marker; marker.positionSec = .2 + i * 60.0 / 128;
+            marker.beatInBar = i % 4 + 1; manual.beats.push_back(marker);
+        }
+        if (!require(database.requestAnalysisPersistence("analysis-track", manual) && wait(1), "manual grid fixture did not persist")) return false;
+        auto automatic = manual;
+        automatic.bpm = 90; automatic.firstBeatSample = 100; automatic.sampleRate = 48000;
+        automatic.beatGrid.lockedByUser = automatic.beatGrid.userModified = false;
+        automatic.identity.optionsFingerprint = settings.analysisOptions().fingerprint();
+        automatic.beatFingerprint = automatic.keyFingerprint = automatic.identity.optionsFingerprint;
+        automatic.sections.beatGrid = 4; automatic.sections.key = 2;
+        automatic.detectedKey = "9A";
+        if (!require(database.requestAnalysisPersistence("analysis-track", automatic) && wait(2), "automatic analysis did not persist")) return false;
+        LibraryDatabase::AnalysisSnapshot snapshot;
+        if (!require(database.tryGetAnalysisData("analysis-track", &snapshot) && snapshot.bpm == 128
+            && snapshot.firstBeatSample == 8820 && snapshot.sampleRate == 44100 && snapshot.beatGrid.size() == 8
+            && snapshot.beatGrid.front().positionSec == .2 && snapshot.beatFingerprint == "manual"
+            && snapshot.key == "9A" && snapshot.keyFingerprint == automatic.keyFingerprint,
+            "automatic analysis overwrote a protected grid or lost the new key provenance")) return false;
     }
     properties.closeFiles();
     return true;
@@ -400,6 +473,8 @@ int runCiSmokeTest(int argc, char* argv[])
 
     QString fxManagerError;
     if (!testSoundColorAdjust(fxManagerError))
+        return fail(fxManagerError);
+    if (!testAnalysisSettingsAndPersistence(fxManagerError))
         return fail(fxManagerError);
     if (!testFxManagerControls(fxManagerError))
         return fail(fxManagerError);

@@ -7,6 +7,9 @@ target_sources(${PROJECT_NAME} PRIVATE
     analysis/internal/AnalysisWorkingData.h
     analysis/internal/BeatAnalysis.h
     analysis/internal/BeatAnalysis.cpp
+    analysis/AnalysisOptions.h
+    analysis/internal/ElectronicAnalysis.h
+    analysis/internal/ElectronicAnalysis.cpp
     analysis/internal/AnalysisOrchestrator.h
     analysis/internal/AnalysisOrchestrator.cpp
 

@@ -2,6 +2,7 @@
 
 #include "LibraryDatabase.h"
 #include "waveform/WaveformCache.h"
+#include "app/SettingsManager.h"
 
 #include <QDebug>
 #include <QFileInfo>
@@ -125,11 +126,12 @@ void LibraryAnalysisManager::enqueue(const QVariantList& items, analysis::Analys
         const QueueItem q = queueItemFromMap(item.toMap());
         if (!q.trackId.isEmpty() && !q.filePath.isEmpty()) {
             auto queued = q;
+            queued.options = SettingsManager::getInstance().analysisOptions();
             queued.priority = priority;
             const QFileInfo info(queued.filePath);
             queued.key = info.canonicalFilePath() + QLatin1Char('|')
                 + QString::number(info.size()) + QLatin1Char('|')
-                + QString::number(analysis::kCurrentAnalysisVersion);
+                + QString::number(analysis::kCurrentAnalysisVersion) + QLatin1Char('|') + queued.options.fingerprint();
             (void)m_queue.push(std::move(queued));
         }
     }
@@ -173,19 +175,16 @@ void LibraryAnalysisManager::startNext()
         : QFileInfo(m_current.filePath).completeBaseName();
     emit progressChanged();
 
-    // Deck writers must stop before either resolution is deleted, otherwise a
-    // late completion can recreate the old cache during this new analysis.
-    emit waveformInvalidationStarted(m_current.filePath);
-    bool cachesInvalidated = true;
-    for (const int resolution : {600, 1200})
-        cachesInvalidated &= WaveformCache::invalidateForFile(m_current.filePath, resolution);
-    emit waveformInvalidationFinished(m_current.filePath);
-    if (!cachesInvalidated) {
-        finishCurrent(false);
-        return;
-    }
-
     m_trackData = std::make_unique<TrackData>();
+    if (m_db) {
+        LibraryDatabase::AnalysisSnapshot snapshot;
+        if (m_db->tryGetAnalysisData(m_current.trackId, &snapshot)) {
+            m_trackData->setBpmData(snapshot.bpm, snapshot.firstBeatSample, snapshot.sampleRate,
+                                   snapshot.beatGrid, snapshot.confidence, snapshot.beatGridInfo);
+            m_trackData->setKeyData(snapshot.key);
+            m_trackData->setAnalysisProvenance(snapshot.sectionVersions, snapshot.beatFingerprint, snapshot.keyFingerprint);
+        }
+    }
     m_analyzer = std::make_unique<WaveformAnalyzer>(
         &m_formatManager,
         600);
@@ -204,7 +203,7 @@ void LibraryAnalysisManager::startNext()
         mailbox->publish({completed, generation, filePath, std::move(result)});
     });
     m_currentGeneration = m_analyzer->startAnalysis(
-        m_current.filePath, 0.0, 0, m_trackData->createAnalysisSeed());
+        m_current.filePath, 0.0, 0, m_trackData->createAnalysisSeed(), m_current.options, true);
     m_resultDrainTimer.start();
 }
 
@@ -233,6 +232,8 @@ void LibraryAnalysisManager::drainAnalysisMailbox()
             m_trackData->applyAnalysisResult(*completion->result);
         if (completion->completed && completion->result && m_db)
             (void)m_db->requestAnalysisPersistence(m_current.trackId, *completion->result);
+        if (completion->completed && completion->result)
+            emit analysisReady(m_current.filePath, completion->result);
         finishCurrent(completion->completed);
         return;
     }

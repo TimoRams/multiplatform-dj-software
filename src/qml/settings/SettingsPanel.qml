@@ -193,6 +193,7 @@ Item {
         { label: "Audio Setup",     icon: "♪" },
         { label: "MIDI Controller", icon: "⎘" },
         { label: "Library",         icon: "☰" },
+        { label: "Analyse",         icon: "♫" },
         { label: "DJ / Sync",       icon: "⟳" },
         { label: "Legal",           icon: "§" },
     ]
@@ -1733,6 +1734,7 @@ Item {
                         font.bold: true
                     }
 
+
                     Rectangle {
                         Layout.fillWidth: true
                         height: 1
@@ -1793,7 +1795,58 @@ Item {
                 }
             }
 
-            // ── Page 3: DJ / Sync ─────────────────────────────────────────
+            // ── Page 3: Analyse ───────────────────────────────────────────
+            Item {
+                ScrollView {
+                    anchors.fill: parent
+                    anchors.margins: 30
+                    clip: true
+                    contentWidth: availableWidth
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    ColumnLayout {
+                        width: parent.width
+                        spacing: 20
+                        Label { text: "Analyse"; color: UiTheme.textPrimary; font.bold: true }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label { text: "Profil"; color: UiTheme.textLabel; Layout.preferredWidth: 130 }
+                            ComboBox {
+                                objectName: "analysisProfileCombo"
+                                model: ["Elektronisch", "Bisherige Analyse"]
+                                currentIndex: settingsManager && settingsManager.analysisProfile === "legacy" ? 1 : 0
+                                onActivated: if (settingsManager) settingsManager.analysisProfile = currentIndex === 1 ? "legacy" : "electronic"
+                            }
+                        }
+                        RowLayout {
+                            Label { text: "BPM-Bereich"; color: UiTheme.textLabel; Layout.preferredWidth: 130 }
+                            SpinBox {
+                                objectName: "analysisMinBpmSpin"
+                                from: 30; to: settingsManager ? settingsManager.analysisMaxBpm - 1 : 254
+                                value: settingsManager ? settingsManager.analysisMinBpm : 48
+                                editable: true
+                                onValueModified: if (settingsManager) settingsManager.analysisMinBpm = value
+                            }
+                            Label { text: "bis"; color: UiTheme.textLabel }
+                            SpinBox {
+                                objectName: "analysisMaxBpmSpin"
+                                from: settingsManager ? settingsManager.analysisMinBpm + 1 : 49; to: 300
+                                value: settingsManager ? settingsManager.analysisMaxBpm : 255
+                                editable: true
+                                onValueModified: if (settingsManager) settingsManager.analysisMaxBpm = value
+                            }
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: "Gilt für neue Analysen. Bestehende Ergebnisse bleiben bis zur gezielten Neuanalyse erhalten."
+                            color: UiTheme.textLabel
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+            }
+
+
+            // ── Page 4: DJ / Sync ─────────────────────────────────────────
             Item {
                 ScrollView {
                     anchors.fill: parent
@@ -1933,7 +1986,7 @@ Item {
                 }
             }
 
-            // ── Page 4: Legal ─────────────────────────────────────────────
+            // ── Page 5: Legal ─────────────────────────────────────────────
             Item {
                 ScrollView {
                     anchors.fill: parent

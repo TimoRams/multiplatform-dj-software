@@ -760,6 +760,8 @@ int runApplication(int argc, char *argv[])
                 QObject::connect(runtime.libraryAnalysisManager.get(),
                                  &LibraryAnalysisManager::waveformInvalidationStarted,
                                  deck, &DjEngine::beginWaveformReanalysis);
+                QObject::connect(runtime.libraryAnalysisManager.get(), &LibraryAnalysisManager::analysisReady,
+                                 deck, &DjEngine::acceptLibraryAnalysis);
                 QObject::connect(runtime.libraryAnalysisManager.get(),
                                  &LibraryAnalysisManager::waveformInvalidationFinished,
                                  deck, &DjEngine::finishWaveformReanalysis);

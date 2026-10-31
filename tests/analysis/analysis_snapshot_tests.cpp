@@ -98,6 +98,22 @@ int main(int argc, char** argv)
                       && preservedGrid.origin == TrackData::AnalysisOrigin::RekordboxDevice,
                   "local analysis lost imported beatgrid origin/lock");
 
+    // An unlocked manual edit is equally authoritative, including provenance.
+    importedGrid.lockedByUser = false;
+    importedGrid.userModified = true;
+    data.setBpmData(128.0, 24'000, 48'000.0, importedBeats, {}, importedGrid);
+    data.setAnalysisProvenance({}, "manual-grid", "legacy-key");
+    data.setKeyData("8A");
+    localReplacement.detectedKey.clear();
+    localReplacement.sampleRate = 44100;
+    localReplacement.beatFingerprint = "electronic-v1:48.00:255.00";
+    ok &= require(data.applyAnalysisResult(localReplacement), "manual grid prevented waveform publication");
+    const auto manualSeed = data.createAnalysisSeed();
+    ok &= require(manualSeed.bpm == 128 && manualSeed.firstBeatSample == 24'000 && manualSeed.sampleRate == 48000
+                      && manualSeed.beats.size() == 4 && manualSeed.beatFingerprint == "manual-grid"
+                      && manualSeed.detectedKey == "8A" && manualSeed.keyFingerprint == "legacy-key",
+                  "automatic publication overwrote an unlocked manual edit or erased a known key");
+
     TrackData dynamicData;
     std::vector<TrackData::BeatMarker> dynamicBeats{
         {0.0, true, false, 0, 1, 3, 1.0f},

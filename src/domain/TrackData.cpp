@@ -53,6 +53,17 @@ void TrackData::assertOwnerThread() const
                "TrackData mutations are restricted to the QObject owner thread");
 }
 
+void TrackData::setAnalysisProvenance(const analysis::AnalysisSectionVersions& sections,
+                                    const QString& beatFingerprint, const QString& keyFingerprint)
+{
+    assertOwnerThread();
+    QMutexLocker locker(&m_mutex);
+    m_beatAnalysisVersion = sections.beatGrid;
+    m_keyAnalysisVersion = sections.key;
+    m_beatFingerprint = beatFingerprint;
+    m_keyFingerprint = keyFingerprint;
+}
+
 analysis::AnalysisResult TrackData::createAnalysisSeed() const
 {
     Q_ASSERT(QThread::currentThread() == thread());
@@ -77,6 +88,10 @@ analysis::AnalysisResult TrackData::createAnalysisSeed() const
     seed.beats = m_beatGrid;
     seed.phrases = m_segments;
     seed.detectedKey = m_detectedKey;
+    seed.sections.beatGrid = m_beatAnalysisVersion;
+    seed.sections.key = m_keyAnalysisVersion;
+    seed.beatFingerprint = m_beatFingerprint;
+    seed.keyFingerprint = m_keyFingerprint;
     return seed;
 }
 
@@ -107,8 +122,8 @@ bool TrackData::applyAnalysisResult(const analysis::AnalysisResult& result)
         m_progressiveNormalizationStates.clear();
         m_progressiveDirtyLineChunks.clear();
         m_progressivePendingLineChunks.clear();
-        m_sampleRate = result.sampleRate;
-        if (!m_beatGridInfo.lockedByUser) {
+        if (!m_beatGridInfo.lockedByUser && !m_beatGridInfo.userModified) {
+            m_sampleRate = result.sampleRate;
             m_bpm = result.bpm;
             m_firstBeatSample = result.firstBeatSample;
             m_isBpmAnalyzed = result.bpm > 0.0;
@@ -116,9 +131,15 @@ bool TrackData::applyAnalysisResult(const analysis::AnalysisResult& result)
             m_beatGridInfo = result.beatGrid;
             m_beatGrid = result.beats;
             m_beatGridSnapshot.reset();
+            m_beatAnalysisVersion = result.sections.beatGrid;
+            m_beatFingerprint = result.beatFingerprint;
+            m_segments = result.phrases;
         }
-        m_segments = result.phrases;
-        m_detectedKey = result.detectedKey;
+        if (!result.detectedKey.isEmpty()) {
+            m_detectedKey = result.detectedKey;
+            m_keyAnalysisVersion = result.sections.key;
+            m_keyFingerprint = result.keyFingerprint;
+        }
         m_isKeyAnalyzed = !m_detectedKey.isEmpty();
     }
     emit dataUpdated();
@@ -728,6 +749,8 @@ void TrackData::clear()
         m_confidence = {};
         m_beatGridInfo = {};
         m_detectedKey.clear();
+        m_beatFingerprint.clear(); m_keyFingerprint.clear();
+        m_beatAnalysisVersion = 3; m_keyAnalysisVersion = 1;
         m_isKeyAnalyzed = false;
         m_beatGrid.clear();
         m_beatGridSnapshot.reset();

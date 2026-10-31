@@ -592,6 +592,32 @@ void DjEngine::beginWaveformReanalysis(const QString& filePath)
     m_trackData->reportAnalysisProgress(0.0, true);
 }
 
+void DjEngine::acceptLibraryAnalysis(const QString& filePath, WaveformAnalyzer::ResultPtr result)
+{
+    const QFileInfo file(filePath);
+    if (!m_hasTrack || !result || !result->validated || !result->complete
+        || file != QFileInfo(m_trackFilePath)
+        || static_cast<std::uint64_t>(file.size()) != result->identity.fileSize
+        || file.lastModified().toMSecsSinceEpoch() != result->identity.fileModifiedMs)
+        return;
+    auto merged = m_trackData->createAnalysisSeed();
+    if (!merged.beatGrid.lockedByUser && !merged.beatGrid.userModified && result->bpm > 0 && !result->beats.empty()) {
+        merged.bpm = result->bpm; merged.firstBeatSample = result->firstBeatSample;
+        merged.sampleRate = result->sampleRate; merged.confidence = result->confidence;
+        merged.beatGrid = result->beatGrid; merged.beats = result->beats;
+        merged.phrases = result->phrases; merged.beatFingerprint = result->beatFingerprint;
+        merged.sections.beatGrid = result->sections.beatGrid;
+    }
+    if (!result->detectedKey.isEmpty()) {
+        merged.detectedKey = result->detectedKey;
+        merged.keyFingerprint = result->keyFingerprint; merged.sections.key = result->sections.key;
+    }
+    merged.identity = result->identity;
+    merged.identity.trackGeneration = m_trackLoader.currentGeneration();
+    merged.complete = merged.validated = true;
+    m_trackData->applyAnalysisResult(merged);
+}
+
 void DjEngine::finishWaveformReanalysis(const QString& filePath)
 {
     if (!m_hasTrack || !m_analyzer
@@ -599,7 +625,7 @@ void DjEngine::finishWaveformReanalysis(const QString& filePath)
         || QFileInfo(filePath) != QFileInfo(m_trackFilePath))
         return;
     m_analyzer->startAnalysis(m_trackFilePath, m_transport->audioPositionSeconds(),
-        m_trackLoader.currentGeneration(), m_trackData->createAnalysisSeed());
+        m_trackLoader.currentGeneration(), m_trackData->createAnalysisSeed(), SettingsManager::getInstance().analysisOptions(), true);
     syncAnalyzerRealtimeInteractionHint();
 }
 
@@ -934,6 +960,7 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
         // key/phrase data must not accidentally suppress a requested stale
         // beat-grid refresh.
         hasDatabaseAnalysis = beatGridIsCurrent || userGridMustBePreserved;
+        m_trackData->setAnalysisProvenance(cachedAnalysis.sectionVersions, cachedAnalysis.beatFingerprint, cachedAnalysis.keyFingerprint);
         m_currentSegments = phraseIsCurrent
             ? m_libraryDb->trackSegmentsForTrack(m_currentTrackId) : QVariantList();
         emit segmentsChanged();

@@ -194,7 +194,8 @@ bool LibraryDatabase::tryGetAnalysisData(const QString& trackId, AnalysisSnapsho
         "       COALESCE(beatgrid_type, 'unknown'), "
         "       COALESCE(beatgrid_user_modified, 0), "
         "       COALESCE(beatgrid_locked_by_user, 0), "
-        "       COALESCE(analysis_section_versions, '') "
+        "       COALESCE(analysis_section_versions, ''), "
+        "       COALESCE(beat_analysis_fingerprint, ''), COALESCE(key_analysis_fingerprint, '') "
         "FROM Tracks WHERE id = :id LIMIT 1");
     q.bindValue(":id", trackId);
 
@@ -223,6 +224,8 @@ bool LibraryDatabase::tryGetAnalysisData(const QString& trackId, AnalysisSnapsho
     const QString sectionStorage = q.value(13).toString();
     snapshot.hasSectionVersions = !sectionStorage.isEmpty();
     snapshot.sectionVersions = analysis::AnalysisSectionVersions::fromStorageString(sectionStorage);
+    snapshot.beatFingerprint = q.value(14).toString();
+    snapshot.keyFingerprint = q.value(15).toString();
 
     QSqlQuery beatsQuery(m_db);
     beatsQuery.prepare(

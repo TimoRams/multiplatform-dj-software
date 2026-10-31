@@ -122,13 +122,17 @@ WaveformAnalyzer::~WaveformAnalyzer()
 WaveformAnalyzer::AnalysisGeneration WaveformAnalyzer::startAnalysis(const QString& filePath,
                                                                      double seekHintSec,
                                                                      std::uint64_t trackGeneration,
-                                                                     analysis::AnalysisResult seed)
+                                                                     analysis::AnalysisResult seed,
+                                                                     analysis::AnalysisOptions options,
+                                                                     bool reanalyzeExisting)
 {
     shutdownAndJoin();
     const auto newGeneration = m_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
     m_runGeneration = newGeneration;
     m_filePath = filePath;
     m_seed = std::move(seed);
+    m_options = options.normalized();
+    m_reanalyzeExisting = reanalyzeExisting;
     const QFileInfo info(filePath);
     m_identity.canonicalFilePath = info.canonicalFilePath().isEmpty()
         ? info.absoluteFilePath() : info.canonicalFilePath();
@@ -137,6 +141,7 @@ WaveformAnalyzer::AnalysisGeneration WaveformAnalyzer::startAnalysis(const QStri
     m_identity.fileModifiedMs = info.lastModified().toMSecsSinceEpoch();
     m_identity.analysisVersion = analysis::kCurrentAnalysisVersion;
     m_identity.requestGeneration = newGeneration;
+    m_identity.optionsFingerprint = m_options.fingerprint();
     m_seekHintSec.store(seekHintSec, std::memory_order_relaxed);
     m_jobState.store(AnalysisJobState::Queued, std::memory_order_release);
     ProgressCallback progress;
@@ -261,7 +266,20 @@ void WaveformAnalyzer::run()
     analysis::AnalysisWorkingData working([progress, runGeneration](double value, bool active) {
         if (progress) progress(value, active, runGeneration);
     });
-    working.seed(m_seed);
+    auto seed = m_seed;
+    if (!seed.preparedWaveformLines && (!seed.spectralWaveform || seed.spectralWaveform->isEmpty())) {
+        WaveformCache::Payload cached;
+        if (WaveformCache::loadForFile(runFilePath, m_pointsPerSecond, &cached)) {
+            seed.totalExpected = cached.totalExpected;
+            seed.globalMaxPeak = cached.globalMaxPeak;
+            seed.waveform = std::make_shared<const QVector<TrackData::WaveformBin>>(std::move(cached.waveform));
+            seed.spectralWaveform = std::make_shared<const QVector<TrackData::SpectralWaveformPoint>>(std::move(cached.spectral));
+            seed.overviewWaveform = std::make_shared<const QVector<TrackData::RgbWaveformFrame>>(std::move(cached.overview));
+            seed.peakMip = std::make_shared<const QVector<TrackData::PeakFrame>>(std::move(cached.peakMip));
+            seed.preparedWaveformLines = std::move(cached.preparedLines);
+        }
+    }
+    working.seed(seed);
 
     juce::File file(m_filePath.toStdString());
     if (!file.existsAsFile()) return;
@@ -404,6 +422,9 @@ void WaveformAnalyzer::run()
             [this]() {
                 return m_backgroundWorkPaused.load(std::memory_order_acquire);
             },
+            m_options,
+            m_reanalyzeExisting || seed.bpm <= 0,
+            m_reanalyzeExisting || seed.detectedKey.isEmpty(),
         };
         if (!analysis_internal::runAnalysisOrchestrator(orchestratorInput))
             return;

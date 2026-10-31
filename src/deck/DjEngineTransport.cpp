@@ -7,6 +7,7 @@
 #include "audio/cache/CachedPlaybackAudioSource.h"
 #include "deck/DeckTransport.h"
 #include "domain/BeatGridTiming.h"
+#include "app/SettingsManager.h"
 #include "library/CoverArtExtractor.h"
 #include "library/LibraryCoverService.h"
 #include "library/LibraryDatabase.h"
@@ -1055,7 +1056,7 @@ void DjEngine::applyPreparedTrackVisuals(TrackVisualResult result)
     if (acceptLoadedWaveform && !(hasReusableWaveform && m_currentLoadHasReusableAnalysis) && m_analyzer) {
         m_analyzer->startAnalysis(
             result.canonicalPath, m_transport->audioPositionSeconds(),
-            result.generation, m_trackData->createAnalysisSeed());
+            result.generation, m_trackData->createAnalysisSeed(), SettingsManager::getInstance().analysisOptions());
         syncAnalyzerRealtimeInteractionHint();
     }
 

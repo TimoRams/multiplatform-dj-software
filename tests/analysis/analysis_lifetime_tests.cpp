@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <iostream>
 #include <memory>
@@ -23,7 +24,7 @@ bool require(bool condition, const char* message)
     return condition;
 }
 
-bool writeSilentWave(const QString& path)
+bool writeSilentWave(const QString& path, bool tonal = false)
 {
     juce::WavAudioFormat format;
     auto stream = std::make_unique<juce::FileOutputStream>(juce::File(path.toStdString()));
@@ -36,6 +37,15 @@ bool writeSilentWave(const QString& path)
 
     juce::AudioBuffer<float> silence(2, 44100);
     silence.clear();
+    if (tonal) {
+        for (int sample = 0; sample < 44100; ++sample) {
+            const double time = sample / 44100.0;
+            const float value = static_cast<float>(.15 * (std::sin(juce::MathConstants<double>::twoPi * 264 * time)
+                + std::sin(juce::MathConstants<double>::twoPi * 330 * time)
+                + std::sin(juce::MathConstants<double>::twoPi * 396 * time)));
+            for (int c = 0; c < 2; ++c) silence.setSample(c, sample, value);
+        }
+    }
     for (int second = 0; second < 30; ++second) {
         if (!writer->writeFromAudioSampleBuffer(silence, 0, silence.getNumSamples()))
             return false;
@@ -75,6 +85,9 @@ public:
 
 int main(int argc, char** argv)
 {
+    QTemporaryDir config;
+    if (!config.isValid()) return 1;
+    qputenv("XDG_CONFIG_HOME", config.path().toUtf8());
     QCoreApplication app(argc, argv);
     juce::AudioFormatManager formats;
     formats.registerBasicFormats();
@@ -364,5 +377,34 @@ int main(int argc, char** argv)
         ok &= require(!data.isAnalyzing(), "cancelled analysis must clear active progress state");
     }
 
+    if (ok) {
+        const auto tonalPath = dir.filePath("preserve.wav");
+        ok &= require(writeSilentWave(tonalPath, true), "tonal preservation fixture unavailable");
+        analysis::AnalysisResult seed;
+        seed.bpm = 128; seed.firstBeatSample = 8820; seed.sampleRate = 44100;
+        seed.beats = {{.2, true, true, 0, 1, 1, 1.0f}};
+        seed.detectedKey = "8A"; seed.beatFingerprint = seed.keyFingerprint = "legacy-fixture";
+        for (bool explicitReanalysis : {false, true}) {
+            WaveformAnalyzer analyzer(&formats, 600);
+            WaveformAnalyzer::ResultPtr completedResult;
+            analyzer.setCompletionCallback([&](bool completed, auto, const QString&, auto result) {
+                if (completed) completedResult = std::move(result);
+            });
+            analyzer.startAnalysis(tonalPath, 0, 0, seed, {}, explicitReanalysis);
+            ok &= require(analyzer.waitForThreadToExit(15000), "preservation fixture timed out");
+            analyzer.shutdownAndJoin();
+            ok &= require(completedResult && completedResult->validated, "preservation fixture did not publish");
+            if (completedResult) {
+                if (!explicitReanalysis)
+                    ok &= require(completedResult->bpm == 128 && completedResult->firstBeatSample == 8820
+                        && completedResult->detectedKey == "8A" && completedResult->keyFingerprint == "legacy-fixture",
+                        "waveform rebuild silently replaced existing analysis");
+                else
+                    ok &= require(completedResult->detectedKey == "8B"
+                        && completedResult->keyFingerprint.startsWith("electronic-v1:"),
+                        "explicit reanalysis did not replace the old key and provenance");
+            }
+        }
+    }
     return ok ? 0 : 1;
 }

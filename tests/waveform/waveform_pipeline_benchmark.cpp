@@ -18,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #if defined(__APPLE__) || defined(__linux__)
 #include <sys/resource.h>
@@ -117,6 +118,8 @@ int main(int argc, char** argv)
 
     const int durationSeconds = environmentInt(
         "BROCKDJ_WAVEFORM_BENCHMARK_SECONDS", 30, 10, 300);
+    const int playingDecks = environmentInt(
+        "BROCKDJ_WAVEFORM_BENCHMARK_PLAYING_DECKS", 1, 1, 4);
     const QString deckAPath = sourceDirectory.filePath(QStringLiteral("deck-a.wav"));
     const QString deckBPath = sourceDirectory.filePath(QStringLiteral("deck-b.wav"));
     if (!writeBenchmarkWave(deckAPath, durationSeconds, 0.0)
@@ -137,6 +140,14 @@ int main(int argc, char** argv)
 
     CachedPlaybackAudioSource deckAPlayback(pageCache, deckAHandle);
     deckAPlayback.prepareToPlay(kBlockSamples, kSampleRate);
+    deckAPlayback.setLoopRangeSamples(0, deckAHandle.lengthInSamples(), kSampleRate);
+    std::vector<std::unique_ptr<CachedPlaybackAudioSource>> additionalDecks;
+    for (int deck = 1; deck < playingDecks; ++deck) {
+        auto playback = std::make_unique<CachedPlaybackAudioSource>(pageCache, deckAHandle);
+        playback->prepareToPlay(kBlockSamples, kSampleRate);
+        playback->setLoopRangeSamples(0, deckAHandle.lengthInSamples(), kSampleRate);
+        additionalDecks.push_back(std::move(playback));
+    }
     juce::AudioBuffer<float> output(2, kBlockSamples);
 
     WaveformAnalyzer analyzer(&formats, 600);
@@ -179,6 +190,8 @@ int main(int argc, char** argv)
 
         const auto callbackStarted = std::chrono::steady_clock::now();
         deckAPlayback.getNextAudioBlock({&output, 0, kBlockSamples});
+        for (auto& playback : additionalDecks)
+            playback->getNextAudioBlock({&output, 0, kBlockSamples});
         const double callbackUs = std::chrono::duration<double, std::micro>(
             std::chrono::steady_clock::now() - callbackStarted).count();
         callbackTotalUs += callbackUs;
@@ -215,9 +228,18 @@ int main(int argc, char** argv)
         return 7;
 
     const auto cacheAfter = pageCache.stats();
-    const auto playbackStats = deckAPlayback.cacheStats();
+    auto playbackStats = deckAPlayback.cacheStats();
+    for (const auto& playback : additionalDecks) {
+        const auto stats = playback->cacheStats();
+        playbackStats.pageHits += stats.pageHits;
+        playbackStats.pageMisses += stats.pageMisses;
+        playbackStats.starvationBlocks += stats.starvationBlocks;
+        playbackStats.diskReadsFromAudioThread += stats.diskReadsFromAudioThread;
+        playbackStats.decoderCallsFromAudioThread += stats.decoderCallsFromAudioThread;
+    }
     std::cout << "waveform-pipeline-benchmark"
               << " duration-s=" << durationSeconds
+              << " playing-decks=" << playingDecks
               << " analysis-ms=" << analysisMs
               << " cache-load-ms=" << cacheLoadMs
               << " payload-bytes=" << payloadBytes

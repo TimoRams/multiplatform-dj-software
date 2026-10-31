@@ -369,18 +369,36 @@ bool LibraryDatabase::requestAnalysisPersistence(const QString& trackId,
     QString gridType = QStringLiteral("unknown");
     if (result.beatGrid.type == TrackData::BeatGridType::ConstantTempo) gridType = QStringLiteral("constant");
     if (result.beatGrid.type == TrackData::BeatGridType::DynamicTempo) gridType = QStringLiteral("dynamic");
+    const bool manual = result.beatGrid.userModified || result.beatGrid.lockedByUser;
+    const bool manualWrite = manual && result.identity.optionsFingerprint.isEmpty();
+    const QString gridWritable = manualWrite ? QStringLiteral("1")
+        : (manual || result.bpm <= 0.0 || result.beats.empty()) ? QStringLiteral("0")
+        : QStringLiteral("COALESCE(beatgrid_locked_by_user,0)=0 AND COALESCE(beatgrid_user_modified,0)=0");
     command.statements.push_back({
-        QStringLiteral("UPDATE Tracks SET bpm=:bpm,key=CASE WHEN length(trim(:key))>0 THEN :key ELSE key END,"
-                       "is_analyzed=1,first_beat_sample=:first,analysis_sample_rate=:rate,analysis_version=:version,"
-                       "analysis_section_versions=:sections,"
-                       "bpm_confidence=:bc,beat_confidence=:bec,downbeat_confidence=:dc,grid_confidence=:gc,"
-                       "beatgrid_type=:type,beatgrid_user_modified=:modified,"
-                       "beatgrid_locked_by_user=CASE WHEN beatgrid_locked_by_user!=0 THEN beatgrid_locked_by_user ELSE :locked END,"
-                       "track_segments=:segments WHERE id=:id"),
+        QStringLiteral("UPDATE Tracks SET bpm=CASE WHEN %1 THEN :bpm ELSE bpm END,"
+                       "key=CASE WHEN length(trim(:key))>0 THEN :key ELSE key END,"
+                       "beat_analysis_fingerprint=CASE WHEN %1 THEN :beatFingerprint ELSE beat_analysis_fingerprint END,"
+                       "key_analysis_fingerprint=CASE WHEN length(trim(:key))>0 THEN :keyFingerprint ELSE key_analysis_fingerprint END,"
+                       "is_analyzed=1,first_beat_sample=CASE WHEN %1 THEN :first ELSE first_beat_sample END,"
+                       "analysis_sample_rate=CASE WHEN %1 THEN :rate ELSE analysis_sample_rate END,analysis_version=:version,"
+                       "analysis_section_versions=CASE WHEN %1 THEN :sections "
+                       "WHEN length(trim(:key))>0 THEN replace(replace(analysis_section_versions,';k=1;',';k=%2;'),';k=2;',';k=%2;') "
+                       "ELSE analysis_section_versions END,"
+                       "bpm_confidence=CASE WHEN %1 THEN :bc ELSE bpm_confidence END,"
+                       "beat_confidence=CASE WHEN %1 THEN :bec ELSE beat_confidence END,"
+                       "downbeat_confidence=CASE WHEN %1 THEN :dc ELSE downbeat_confidence END,"
+                       "grid_confidence=CASE WHEN %1 THEN :gc ELSE grid_confidence END,"
+                       "beatgrid_type=CASE WHEN %1 THEN :type ELSE beatgrid_type END,"
+                       "beatgrid_user_modified=CASE WHEN %1 THEN :modified ELSE beatgrid_user_modified END,"
+                       "beatgrid_locked_by_user=CASE WHEN %1 THEN :locked ELSE beatgrid_locked_by_user END,"
+                       "track_segments=CASE WHEN %1 THEN :segments ELSE track_segments END WHERE id=:id")
+                       .arg(gridWritable).arg(result.sections.key),
         {{QStringLiteral(":bpm"), result.bpm}, {QStringLiteral(":key"), result.detectedKey},
          {QStringLiteral(":first"), result.firstBeatSample}, {QStringLiteral(":rate"), result.sampleRate},
          {QStringLiteral(":version"), static_cast<int>(result.identity.analysisVersion)},
          {QStringLiteral(":sections"), result.sections.toStorageString()},
+         {QStringLiteral(":beatFingerprint"), result.beatFingerprint},
+         {QStringLiteral(":keyFingerprint"), result.keyFingerprint},
          {QStringLiteral(":bc"), result.confidence.bpmConfidence},
          {QStringLiteral(":bec"), result.confidence.beatConfidence},
          {QStringLiteral(":dc"), result.confidence.downbeatConfidence},
@@ -391,10 +409,7 @@ bool LibraryDatabase::requestAnalysisPersistence(const QString& trackId,
          {QStringLiteral(":segments"), trackSegmentsToJson(result.phrases)},
          {QStringLiteral(":id"), trackId}}});
 
-    const bool manual = result.beatGrid.userModified || result.beatGrid.lockedByUser;
-    const QString writable = manual
-        ? QStringLiteral("1")
-        : QStringLiteral("COALESCE((SELECT beatgrid_locked_by_user FROM Tracks WHERE id=:id),0)=0");
+    const QString writable = QStringLiteral("COALESCE((SELECT (%1) FROM Tracks WHERE id=:id),0)").arg(gridWritable);
     command.statements.push_back({QStringLiteral("DELETE FROM BeatGridMarkers WHERE track_id=:id AND %1").arg(writable),
                                   {{QStringLiteral(":id"), trackId}}});
     command.statements.push_back({QStringLiteral("DELETE FROM TempoNodes WHERE track_id=:id AND %1").arg(writable),
@@ -932,6 +947,13 @@ bool LibraryDatabase::createSchema()
         }
     }
 
+    if (currentVersion < 18) {
+        for (const auto* name : {"beat_analysis_fingerprint", "key_analysis_fingerprint"}) {
+            if (!tableHasColumn(m_db, "Tracks", name)
+                && !q.exec(QStringLiteral("ALTER TABLE Tracks ADD COLUMN %1 TEXT DEFAULT ''").arg(QLatin1String(name))))
+                return false;
+        }
+    }
     // ── Stamp current version ────────────────────────────────────────────
     q.prepare("INSERT OR REPLACE INTO Meta (key, value) VALUES ('schema_version', :v)");
     q.bindValue(":v", kSchemaVersion);

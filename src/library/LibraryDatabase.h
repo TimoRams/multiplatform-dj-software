@@ -30,6 +30,7 @@ public:
         int analysisVersion = 0;
         analysis::AnalysisSectionVersions sectionVersions;
         bool hasSectionVersions = false;
+        QString beatFingerprint, keyFingerprint;
         TrackData::ConfidenceInfo confidence;
         TrackData::BeatGridInfo beatGridInfo;
         std::vector<TrackData::BeatMarker> beatGrid;
@@ -266,5 +267,5 @@ private:
     bool m_sessionDirty = false;
     bool m_recoveryWarningNeeded = false;
 
-    static constexpr int kSchemaVersion = 17;
+    static constexpr int kSchemaVersion = 18;
 };

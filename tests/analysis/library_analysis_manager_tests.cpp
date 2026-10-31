@@ -24,14 +24,18 @@ int main()
 {
     using analysis::AnalysisPriority;
     bool ok = true;
+    analysis::AnalysisOptions preciseA, preciseB;
+    preciseA.minBpm = 48.001;
+    preciseB.minBpm = 48.002;
+    ok &= require(preciseA.fingerprint() != preciseB.fingerprint(), "fractional BPM ranges share a fingerprint");
     analysis::AnalysisJobQueue queue(3, 2);
     ok &= require(queue.push(job("b1", AnalysisPriority::BackgroundLibrary)), "enqueue b1");
     ok &= require(queue.push(job("b2", AnalysisPriority::BackgroundLibrary)), "enqueue b2");
     ok &= require(queue.push(job("deck", AnalysisPriority::LoadedDeck)), "enqueue deck");
     ok &= require(!queue.push(job("overflow", AnalysisPriority::Maintenance)), "capacity not bounded");
-    ok &= require(queue.pop()->key == "deck", "priority ordering failed");
-    ok &= require(queue.pop()->key == "b1", "FIFO ordering failed");
-    ok &= require(queue.pop()->key == "b2", "FIFO tail failed");
+    ok &= require(queue.pop()->filePath == "deck", "priority ordering failed");
+    ok &= require(queue.pop()->filePath == "b1", "FIFO ordering failed");
+    ok &= require(queue.pop()->filePath == "b2", "FIFO tail failed");
 
     queue.clear();
     queue.push(job("same", AnalysisPriority::BackgroundLibrary));
@@ -43,9 +47,19 @@ int main()
     queue.push(job("background", AnalysisPriority::BackgroundLibrary));
     queue.push(job("i1", AnalysisPriority::UserSelected));
     queue.push(job("i2", AnalysisPriority::UserSelected));
-    ok &= require(queue.pop()->key == "i1", "interactive order failed");
-    ok &= require(queue.pop()->key == "i2", "interactive second failed");
-    ok &= require(queue.pop()->key == "background", "background fairness failed");
+    ok &= require(queue.pop()->filePath == "i1", "interactive order failed");
+    ok &= require(queue.pop()->filePath == "i2", "interactive second failed");
+    ok &= require(queue.pop()->filePath == "background", "background fairness failed");
+
+    queue.clear();
+    auto electronic = job("track", AnalysisPriority::UserSelected);
+    auto legacy = electronic;
+    legacy.options.profile = analysis::AnalysisProfile::Legacy;
+    queue.push(electronic); queue.push(legacy);
+    electronic.options.minBpm = 120;
+    ok &= require(queue.size() == 2 && queue.pop()->options.minBpm == 48
+                      && queue.pop()->options.profile == analysis::AnalysisProfile::Legacy,
+                  "queued options are independent snapshots and profiles do not deduplicate each other");
 
     for (const int count : {10, 100, 1000, 10000}) {
         analysis::AnalysisJobQueue measured(static_cast<std::size_t>(count));

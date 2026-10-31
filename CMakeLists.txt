@@ -804,6 +804,7 @@ add_executable(BrockDJ_analysis_lifetime_tests
     src/waveform/WaveformAnalyzer.cpp
     src/waveform/internal/WaveformEnvelopePass.cpp
     src/analysis/internal/AnalysisOrchestrator.cpp
+    src/analysis/internal/ElectronicAnalysis.cpp
     src/waveform/WaveformCache.cpp
     src/domain/TrackData.cpp
     src/waveform/WaveformLineStore.cpp
@@ -832,6 +833,7 @@ add_executable(BrockDJ_waveform_pipeline_benchmark
     src/waveform/WaveformAnalyzer.cpp
     src/waveform/internal/WaveformEnvelopePass.cpp
     src/analysis/internal/AnalysisOrchestrator.cpp
+    src/analysis/internal/ElectronicAnalysis.cpp
     src/waveform/WaveformCache.cpp
     src/domain/TrackData.cpp
     src/waveform/WaveformLineStore.cpp
@@ -899,6 +901,17 @@ target_include_directories(BrockDJ_library_analysis_manager_tests PRIVATE src)
 target_link_libraries(BrockDJ_library_analysis_manager_tests PRIVATE Qt6::Core)
 target_compile_features(BrockDJ_library_analysis_manager_tests PRIVATE cxx_std_23)
 add_test(NAME library_analysis_manager COMMAND BrockDJ_library_analysis_manager_tests)
+
+add_executable(BrockDJ_electronic_analysis_tests
+    tests/analysis/electronic_analysis_tests.cpp
+    src/analysis/internal/ElectronicAnalysis.cpp
+    src/analysis/internal/BeatAnalysis.cpp)
+target_include_directories(BrockDJ_electronic_analysis_tests PRIVATE src)
+target_link_libraries(BrockDJ_electronic_analysis_tests PRIVATE Qt6::Core Qt6::Gui
+    juce::juce_core juce::juce_events juce::juce_audio_basics juce::juce_audio_formats juce::juce_dsp)
+target_compile_definitions(BrockDJ_electronic_analysis_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
+target_compile_features(BrockDJ_electronic_analysis_tests PRIVATE cxx_std_23)
+add_test(NAME electronic_analysis COMMAND BrockDJ_electronic_analysis_tests)
 
 add_executable(BrockDJ_rekordbox_read_only_tests
     tests/library/rekordbox_read_only_tests.cpp
@@ -1208,6 +1221,7 @@ set(_brockdj_executable_targets
     BrockDJ_master_bus_tests
     BrockDJ_signalsmith_dependency_tests
     BrockDJ_analysis_lifetime_tests
+    BrockDJ_electronic_analysis_tests
     BrockDJ_analysis_snapshot_tests
     BrockDJ_library_analysis_manager_tests
     BrockDJ_dj_engine_api_contract_tests

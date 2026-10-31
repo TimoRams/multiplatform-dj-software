@@ -36,6 +36,9 @@ public:
         m_beatGrid = value.beats;
         m_segments = value.phrases;
         m_detectedKey = value.detectedKey;
+        m_sections = value.sections;
+        m_beatFingerprint = value.beatFingerprint;
+        m_keyFingerprint = value.keyFingerprint;
     }
 
     AnalysisResult finish(AnalysisIdentity identity) &&
@@ -43,7 +46,10 @@ public:
         AnalysisResult out;
         out.identity = std::move(identity);
         out.analysisVersion = out.identity.analysisVersion;
-        out.sections = out.identity.sections;
+        out.sections = m_sections;
+        out.identity.sections = m_sections;
+        out.beatFingerprint = m_beatFingerprint;
+        out.keyFingerprint = m_keyFingerprint;
         out.totalExpected = m_totalExpected;
         out.globalMaxPeak = m_globalMaxPeak;
         out.waveform = std::make_shared<const QVector<TrackData::WaveformBin>>(std::move(m_data));
@@ -67,6 +73,14 @@ public:
     }
 
     void setTotalExpected(int v) { m_totalExpected = v; }
+    void markBeatAnalysis(const AnalysisOptions& options) {
+        m_sections.beatGrid = options.profile == AnalysisProfile::Electronic ? 4 : 3;
+        m_beatFingerprint = options.fingerprint();
+    }
+    void markKeyAnalysis(const AnalysisOptions& options) {
+        m_sections.key = options.profile == AnalysisProfile::Electronic ? 2 : 1;
+        m_keyFingerprint = options.fingerprint();
+    }
     int getTotalExpected() const { return m_totalExpected; }
     void setGlobalMaxPeak(float v) { m_globalMaxPeak = v; }
     float getGlobalMaxPeak() const { return m_globalMaxPeak; }
@@ -274,6 +288,8 @@ private:
     std::vector<TrackData::BeatMarker> m_beatGrid;
     std::vector<TrackSegment> m_segments;
     QString m_detectedKey;
+    AnalysisSectionVersions m_sections;
+    QString m_beatFingerprint, m_keyFingerprint;
 };
 
 } // namespace analysis

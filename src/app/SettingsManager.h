@@ -6,6 +6,7 @@
 #include <QString>
 #include <QStringList>
 #include <QPointer>
+#include "analysis/AnalysisOptions.h"
 
 class AudioDeviceService;
 
@@ -35,6 +36,9 @@ class SettingsManager : public QObject
     Q_PROPERTY(double waveformPlayheadPosition READ waveformPlayheadPosition WRITE setWaveformPlayheadPosition
                NOTIFY waveformPlayheadPositionChanged)
     Q_PROPERTY(bool previousRunUnclean READ previousRunUnclean CONSTANT)
+    Q_PROPERTY(QString analysisProfile READ analysisProfile WRITE setAnalysisProfile NOTIFY analysisSettingsChanged)
+    Q_PROPERTY(int analysisMinBpm READ analysisMinBpm WRITE setAnalysisMinBpm NOTIFY analysisSettingsChanged)
+    Q_PROPERTY(int analysisMaxBpm READ analysisMaxBpm WRITE setAnalysisMaxBpm NOTIFY analysisSettingsChanged)
     Q_PROPERTY(QString previousRunWarningMessage READ previousRunWarningMessage CONSTANT)
 
     Q_PROPERTY(double crossfaderPosition READ getCrossfaderPosition WRITE setCrossfaderPosition NOTIFY crossfaderSettingsChanged)
@@ -51,6 +55,13 @@ public:
     explicit SettingsManager(QObject* parent = nullptr);
 
     void init();
+    QString analysisProfile() const;
+    void setAnalysisProfile(const QString& profile);
+    int analysisMinBpm() const;
+    int analysisMaxBpm() const;
+    void setAnalysisMinBpm(int value);
+    void setAnalysisMaxBpm(int value);
+    analysis::AnalysisOptions analysisOptions() const;
     void shutdown();
 
     juce::ApplicationProperties& getAppProperties() { return appProperties; }
@@ -172,6 +183,7 @@ public:
     void setCrossfaderAssignD(const QString& assign);
 
 signals:
+    void analysisSettingsChanged();
     void audioSettingsChanged();
     void controllerSettingsChanged();
     void tightDoubleSyncChanged();
