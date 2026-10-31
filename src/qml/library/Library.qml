@@ -2104,7 +2104,7 @@ Rectangle {
         property bool fullTrackView: true
         visible: libraryRoot.touchMode && fullTrackView
                  && libraryRoot.activeTrackFilePath.length > 0
-        height: visible ? 44 : 0
+        height: visible ? 52 : 0
         color: Design.UiTheme.panelInset
         clip: true
 
@@ -2113,14 +2113,14 @@ Rectangle {
             height: 1; color: libraryRoot.borderMain
         }
 
-        Row {
+        RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 10
             anchors.rightMargin: 10
             spacing: 8
 
             Text {
-                anchors.verticalCenter: parent.verticalCenter
+                Layout.alignment: Qt.AlignVCenter
                 text: "LOAD"
                 color: libraryRoot.textDim
                 font.pixelSize: window.sp(9)
@@ -2129,9 +2129,9 @@ Rectangle {
             }
 
             Rectangle {
-                width: 44
-                height: 32
-                anchors.verticalCenter: parent.verticalCenter
+                Layout.preferredWidth: 44
+                Layout.preferredHeight: 44
+                Layout.alignment: Qt.AlignVCenter
                 radius: 0
                 color: previewBtnMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.greenDim
                 border.color: libraryRoot.activeTrackFilePath.length > 0
@@ -2160,9 +2160,9 @@ Rectangle {
                 model: ["A", "B", "C", "D"]
                 Rectangle {
                     required property string modelData
-                    width: 52
-                    height: 32
-                    anchors.verticalCenter: parent.verticalCenter
+                    Layout.preferredWidth: 48
+                    Layout.preferredHeight: 44
+                    Layout.alignment: Qt.AlignVCenter
                     radius: 0
                     color: deckLoadMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.blueDim
                     border.color: libraryRoot.borderMain
@@ -2186,11 +2186,10 @@ Rectangle {
                 }
             }
 
-            Item { width: Math.max(4, parent.width - 280); height: 1 }
-
             Text {
-                anchors.verticalCenter: parent.verticalCenter
-                width: Math.max(80, parent.width - 300)
+                Layout.alignment: Qt.AlignVCenter
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
                 text: {
                     var p = libraryRoot.activeTrackFilePath
                     if (!p) return ""
@@ -2547,7 +2546,36 @@ Rectangle {
         property bool swipeActive: false
         property bool swipeGestureDone: false
         property bool swipeLocked: false
-        property int lastTapMs: 0
+        property bool scrollLocked: false
+        property real swipeStartX: 0
+        property bool pressedWhileOpen: false
+
+        function updateSwipe(dx, dy) {
+            if (scrollLocked) return false
+            if (!swipeLocked) {
+                if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return false
+                if (Math.abs(dy) > Math.abs(dx)) {
+                    scrollLocked = true
+                    return false
+                }
+                if (Math.abs(dx) <= Math.abs(dy) * 1.25) return false
+                swipeLocked = true
+            }
+            swipeActive = true
+            swipeX = Math.max(-miscActionW, Math.min(deckActionW, swipeStartX + dx))
+            return true
+        }
+
+        function settleSwipe() {
+            swipeActive = false
+            if (swipeX >= deckActionW * 0.30)
+                swipeX = deckActionW
+            else if (miscActionW > 0 && swipeX <= -miscActionW * 0.30)
+                swipeX = -miscActionW
+            else
+                closeSwipe()
+            swipeLocked = false
+        }
 
         Behavior on swipeX {
             enabled: !tr.swipeActive
@@ -2629,6 +2657,7 @@ Rectangle {
             }
         }
         onRowFilePathChanged: {
+            tr.closeSwipe()
             tr.rowCoverUrl = ""
             if (!tr.rowArtworkPath && typeof libraryCover !== "undefined" && libraryCover && tr.rowFilePath)
                 libraryCover.preload(tr.rowFilePath, tr.rowTrackId)
@@ -2640,10 +2669,6 @@ Rectangle {
             id: slideRow
             height: parent.height
             x: tr.slideX
-            Behavior on x {
-                enabled: !tr.swipeActive
-                NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
-            }
 
             // Deck load strip — revealed by swipe right
             Row {
@@ -3053,7 +3078,8 @@ Rectangle {
         MouseArea {
             id: trMouse
             anchors.fill: parent
-            hoverEnabled: true
+            hoverEnabled: !tr.touchMode
+            preventStealing: tr.swipeLocked
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             cursorShape: tr.touchMode
                          ? (tr.swipeActive ? Qt.ClosedHandCursor : Qt.OpenHandCursor)
@@ -3065,6 +3091,11 @@ Rectangle {
             onPressed: (mouse) => {
                 tr.swipeGestureDone = false
                 tr.swipeLocked = false
+                tr.scrollLocked = false
+                tr.swipeStartX = tr.swipeX
+                tr.pressedWhileOpen = tr.swipeOpen
+                if (libraryRoot.openSwipeRowIndex !== tr.rowIndex)
+                    libraryRoot.closeAllSwipes()
                 if (tr.swipeOpen && !tr.touchMode)
                     tr.closeSwipe()
 
@@ -3076,8 +3107,9 @@ Rectangle {
                 libraryRoot.focusedPanel = "tracks"
                 libraryRoot.forceActiveFocus()
 
-                pressX = mouse.x
-                pressY = mouse.y
+                var point = mapToItem(tr, mouse.x, mouse.y)
+                pressX = point.x
+                pressY = point.y
                 if (mouse.button === Qt.RightButton) {
                     rightDragging = false
                     trDragPayload.dragging = false
@@ -3092,26 +3124,18 @@ Rectangle {
             }
             onPositionChanged: (mouse) => {
                 if (!pressed) return
-                var dx = mouse.x - pressX
-                var dy = mouse.y - pressY
+                var point = mapToItem(tr, mouse.x, mouse.y)
+                var dx = point.x - pressX
+                var dy = point.y - pressY
                 var moved = Math.abs(dx) + Math.abs(dy) >= 8
 
                 // AIO: horizontal swipe reveals deck/misc actions; yield to vertical scroll.
-                if (tr.touchMode && !trDragPayload.dragging) {
-                    if (!tr.swipeLocked && moved) {
-                        if (Math.abs(dy) > Math.abs(dx) * 1.25)
-                            return
-                        if (Math.abs(dx) > Math.abs(dy) * 1.25 && Math.abs(dx) > 12)
-                            tr.swipeLocked = true
-                    }
-                    if (tr.swipeLocked || tr.swipeActive) {
-                        tr.swipeActive = true
-                        tr.swipeX = Math.max(-tr.miscActionW, Math.min(tr.deckActionW, dx))
-                        if (Math.abs(tr.swipeX) > 16)
-                            libraryRoot.openSwipeRowIndex = tr.rowIndex
+                if (tr.touchMode && (pressedButtons & Qt.LeftButton) && !trDragPayload.dragging) {
+                    if (tr.updateSwipe(dx, dy)) {
+                        libraryRoot.openSwipeRowIndex = tr.rowIndex
                         mouse.accepted = true
-                        return
                     }
+                    return
                 }
 
                 if (!tr.touchMode && !trDragPayload.dragging && moved && !tr.swipeActive) {
@@ -3122,13 +3146,7 @@ Rectangle {
             }
             onReleased: (mouse) => {
                 if (tr.swipeActive) {
-                    if (tr.swipeX >= tr.deckActionW * 0.30)
-                        tr.swipeX = tr.deckActionW
-                    else if (tr.miscActionW > 0 && tr.swipeX <= -tr.miscActionW * 0.30)
-                        tr.swipeX = -tr.miscActionW
-                    else
-                        tr.closeSwipe()
-                    tr.swipeActive = false
+                    tr.settleSwipe()
                     tr.swipeGestureDone = true
                     trDragPayload.Drag.active = false
                     trDragPayload.dragging = false
@@ -3163,18 +3181,18 @@ Rectangle {
                     return
                 }
                 if (mouse.button === Qt.LeftButton && !(mouse.modifiers & Qt.ControlModifier)) {
-                    if (tr.touchMode && !tr.swipeOpen) {
-                        var now = Date.now()
-                        if (now - tr.lastTapMs < 380)
-                            libraryRoot.loadTrackToDeck("A", tr.rowFilePath, tr.rowTrackId)
-                        tr.lastTapMs = now
+                    if (tr.touchMode && tr.pressedWhileOpen) {
+                        tr.closeSwipe()
+                        mouse.accepted = true
+                        return
                     }
                     libraryRoot.focusedPanel = "tracks"
                     libraryRoot.forceActiveFocus()
                 }
             }
             onDoubleClicked: (mouse) => {
-                if (mouse.button === Qt.LeftButton) {
+                if (mouse.button === Qt.LeftButton && !tr.swipeGestureDone
+                        && !tr.scrollLocked && !tr.pressedWhileOpen) {
                     libraryRoot.loadTrackToDeck("A", tr.rowFilePath, tr.rowTrackId)
                     mouse.accepted = true
                 }
@@ -3353,8 +3371,9 @@ Rectangle {
         required property bool   ascending
         signal tapped()
 
-        height: 20; radius: 0
-        width: pillLabel.implicitWidth + (isActive ? pillArrow.implicitWidth + 28 : 20)
+        height: libraryRoot.touchMode ? 36 : 20; radius: 0
+        width: Math.max(libraryRoot.touchMode ? 56 : 0,
+                        pillLabel.implicitWidth + (isActive ? pillArrow.implicitWidth + 28 : 20))
         color: isActive ? Design.UiTheme.blueDim : Design.UiTheme.panelInset
         border.color: isActive ? libraryRoot.accentBlue : libraryRoot.borderSub; border.width: 1
         Behavior on color        { ColorAnimation { duration: 110 } }
@@ -4332,7 +4351,10 @@ Rectangle {
                         Rectangle {
                             anchors.right: parent.right; anchors.rightMargin: 6
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 16; height: 16; radius: 0
+                            width: libraryRoot.touchMode ? 40 : 20
+                            height: parent.height
+                            z: 2
+                            radius: 0
                             color: clearHover.containsMouse ? Design.UiTheme.panelRaised : "transparent"
                             visible: searchField.text.length > 0
                             Behavior on color { ColorAnimation { duration: 100 } }
@@ -4354,7 +4376,7 @@ Rectangle {
                             selectByMouse: true; color: libraryRoot.textPrimary
                             placeholderText: ""; font.pixelSize: window.sp(11)
                             leftPadding: 27
-                            rightPadding: searchField.text.length > 0 ? 26 : 8
+                            rightPadding: searchField.text.length > 0 ? (libraryRoot.touchMode ? 48 : 30) : 8
                             topPadding: 0; bottomPadding: 0
                             onTextEdited: libraryRoot.searchText = text
                             Component.onCompleted: text = libraryRoot.searchText
@@ -4385,8 +4407,8 @@ Rectangle {
 
                     // ── Filter button (library tab) ────────────────────────
                     Rectangle {
-                        Layout.preferredWidth: 30
-                        Layout.preferredHeight: 26
+                        Layout.preferredWidth: libraryRoot.touchMode ? 44 : 30
+                        Layout.preferredHeight: libraryRoot.touchMode ? 40 : 26
                         Layout.alignment: Qt.AlignVCenter
                         radius: 0
                         color: filterBtnMa.containsMouse || libraryRoot.filterPanelOpen ? Design.UiTheme.blueDim : Design.UiTheme.panelInset
@@ -4777,7 +4799,7 @@ Rectangle {
                         anchors.top: libHeader.bottom
                         anchors.left: libTrackPane.left
                         anchors.right: libTrackPane.right
-                        height: libraryRoot.viewMode === "normal" ? 30 : 0
+                        height: libraryRoot.viewMode === "normal" ? (libraryRoot.touchMode ? 44 : 30) : 0
                         visible: libraryRoot.viewMode === "normal"
                                 || (libraryRoot.aioLibSplitBrowse && !libraryRoot.aioBrowseDrilled
                                     && libraryRoot.aioBrowseFocusKey.length > 0)
@@ -5006,7 +5028,7 @@ Rectangle {
                         anchors.top: plHeader.bottom
                         anchors.left: plTrackPane.left
                         anchors.right: plTrackPane.right
-                        height: libraryRoot.viewMode === "normal" ? 30 : 0
+                        height: libraryRoot.viewMode === "normal" ? (libraryRoot.touchMode ? 44 : 30) : 0
                         visible: libraryRoot.viewMode === "normal"
                                 || (libraryRoot.aioPlaylistSplitBrowse && !libraryRoot.aioBrowseDrilled
                                     && libraryRoot.aioBrowseFocusKey.length > 0)

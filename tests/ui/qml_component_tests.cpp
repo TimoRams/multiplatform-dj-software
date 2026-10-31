@@ -678,6 +678,58 @@ bool clickItem(QQuickWindow& window, QObject* object, const char* description)
     return true;
 }
 
+bool librarySwipeTests(const std::string& source)
+{
+    QString methods;
+    for (const char* name : {"updateSwipe", "settleSwipe"}) {
+        const auto begin = source.find(std::string("        function ") + name + "(");
+        const auto end = source.find("\n        }", begin);
+        if (!require(begin != std::string::npos && end != std::string::npos,
+                     "track swipe function exists"))
+            return false;
+        methods += QString::fromStdString(source.substr(begin, end + 10 - begin)) + '\n';
+    }
+    QQmlEngine engine;
+    auto row = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool scrollLocked: false
+            property bool swipeLocked: false
+            property bool swipeActive: false
+            property real swipeX: 0
+            property real swipeStartX: 0
+            property real deckActionW: 184
+            property real miscActionW: 148
+            function closeSwipe() { swipeX = 0 }
+    )") + methods + QStringLiteral("\n}"), "library swipe state instantiates");
+    if (!row) return false;
+    auto evaluate = [&](const QString& expression) {
+        QQmlExpression result(QQmlEngine::contextForObject(row.get()), row.get(), expression);
+        return result.evaluate();
+    };
+    bool ok = require(!evaluate("updateSwipe(3, 2)").toBool()
+                      && !row->property("swipeActive").toBool(), "tap jitter does not start a swipe");
+    ok &= require(!evaluate("updateSwipe(5, 24)").toBool()
+                      && !evaluate("updateSwipe(90, 25)").toBool(),
+                  "vertical scroll stays vertical even when the finger later moves sideways");
+    evaluate("scrollLocked = false; updateSwipe(90, 4); settleSwipe()");
+    ok &= require(row->property("swipeX").toDouble() == 184,
+                  "right swipe reveals deck actions");
+    evaluate("swipeStartX = swipeX; updateSwipe(-160, 0); settleSwipe()");
+    ok &= require(row->property("swipeX").toDouble() == 0,
+                  "an open row closes relative to its starting position");
+    evaluate("swipeStartX = 0; updateSwipe(-80, 2); settleSwipe()");
+    ok &= require(row->property("swipeX").toDouble() == -148,
+                  "left swipe reveals local track actions");
+    evaluate("miscActionW = 0; swipeStartX = 0; updateSwipe(-100, 0); settleSwipe()");
+    ok &= require(row->property("swipeX").toDouble() == 0,
+                  "USB rows cannot swipe into local mutation actions");
+    evaluate("updateSwipe(1000, 0)");
+    ok &= require(row->property("swipeX").toDouble() == 184,
+                  "swipe travel is bounded by the action strip");
+    return ok;
+}
+
 bool headerPublicationTests(const std::string& header)
 {
     QString methods;
@@ -2764,9 +2816,10 @@ int main(int argc, char** argv)
                   "headless smoke verifies Qt Quick software rendering, normal and early QML-policy closes, and skips hardware discovery");
     const auto library = read("src/qml/library/Library.qml");
     ok &= libraryActionTests(library);
+    ok &= librarySwipeTests(library);
     ok &= require(library.find("tr.touchMode && tr.rowSourceTab !== \"usb\" ? 148 : 0")
                       != std::string::npos
-                      && library.find("tr.miscActionW > 0 && tr.swipeX") != std::string::npos,
+                      && library.find("miscActionW > 0 && swipeX") != std::string::npos,
                   "USB rows retain deck swipes but do not expose local mutation actions");
     const auto sourcePage = read("src/qml/library/SourcePage.qml");
     const auto waveformScreen = read("src/qml/performance/PerformanceWaveformScreen.qml");
