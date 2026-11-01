@@ -389,12 +389,15 @@ double FxManager::displayBpm2() const { return bpmForUnit(2); }
 
 void FxManager::pushSyncedDelay(int unitId)
 {
+    if (unitId < 1 || unitId > 2) return;
     const bool enabled = m_syncEnabled[unitId - 1];
-    const float seconds = enabled
+    const float seconds = enabled && bpmForUnit(unitId) > 0.0
         ? static_cast<float>((60.0 / std::max(1.0, bpmForUnit(unitId))) * m_beatDiv[unitId - 1])
         : -1.f;
 
-    forEachAssignedEngine(unitId, [seconds](DjEngine* engine, int slot) {
+    const bool quantize = m_quantizeEnabled[unitId - 1];
+    forEachAssignedEngine(unitId, [seconds, quantize](DjEngine* engine, int slot) {
+        engine->setFxSlotQuantizeEnabled(slot, quantize);
         engine->setFxSlotExternalDelayTime(slot, seconds);
     });
 }
@@ -404,8 +407,21 @@ void FxManager::setSyncEnabled(int unitId, bool enabled)
     const int idx = unitId - 1;
     if (idx < 0 || idx > 1 || m_syncEnabled[idx] == enabled) return;
     m_syncEnabled[idx] = enabled;
+    if (!enabled) setQuantizeEnabled(unitId, false);
     if (unitId == 1) emit syncEnabled1Changed();
     else             emit syncEnabled2Changed();
+    pushSyncedDelay(unitId);
+}
+
+void FxManager::setQuantizeEnabled(int unitId, bool enabled)
+{
+    if (unitId < 1 || unitId > 2) return;
+    const int idx = unitId - 1;
+    if (m_quantizeEnabled[idx] == enabled) return;
+    m_quantizeEnabled[idx] = enabled;
+    if (enabled) setSyncEnabled(unitId, true);
+    if (unitId == 1) emit quantizeEnabled1Changed();
+    else emit quantizeEnabled2Changed();
     pushSyncedDelay(unitId);
 }
 
@@ -474,7 +490,10 @@ void FxManager::setWetDry1(float amount)
     // implicit engage here made the unit switch itself on unasked — visible as
     // the FX button lighting up with nobody touching it. Engaging is always an
     // explicit setUnitEnabled() from a button or the on-screen panel.
-    routeToEngines(1, effectTypeFromString(m_effectType1), effectiveWetDry(1));
+    const float effectiveAmount = effectiveWetDry(1);
+    forEachAssignedEngine(1, [effectiveAmount](DjEngine* engine, int slot) {
+        engine->setFxSlotWetDry(slot, effectiveAmount);
+    });
 }
 
 void FxManager::setDeck1A(bool active)
@@ -521,7 +540,10 @@ void FxManager::setWetDry2(float amount)
     m_wetDry2 = amount;
     emit wetDry2Changed();
     // See setWetDry1: the amount is never allowed to engage the unit.
-    routeToEngines(2, effectTypeFromString(m_effectType2), effectiveWetDry(2));
+    const float effectiveAmount = effectiveWetDry(2);
+    forEachAssignedEngine(2, [effectiveAmount](DjEngine* engine, int slot) {
+        engine->setFxSlotWetDry(slot, effectiveAmount);
+    });
 }
 
 void FxManager::setDeck2A(bool active)

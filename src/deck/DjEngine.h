@@ -469,6 +469,7 @@ public slots:
     void setFxSlotEffectType(int slot, EffectType type);
     void setFxSlotWetDry(int slot, float amount);
     void setFxSlotExternalDelayTime(int slot, float seconds);
+    void setFxSlotQuantizeEnabled(int slot, bool enabled);
     void setFxSlotPrimaryParam(int slot, float v);
 
     [[nodiscard]] bool isReverse() const;

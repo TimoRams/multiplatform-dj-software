@@ -152,6 +152,9 @@ Rectangle {
             ? (fxManager != null ? fxManager.displayBpm1 : 0.0)
             : (fxManager != null ? fxManager.displayBpm2 : 0.0)
 
+        readonly property bool quantizeOn: fxManager != null
+            && (unitId === 1 ? fxManager.quantizeEnabled1 : fxManager.quantizeEnabled2)
+
         // ── Room-size primary param (Reverb) ──────────────────────────────────
         readonly property real activePrimaryParam: unitId === 1
             ? (fxManager != null ? fxManager.primaryParam1 : 0.5)
@@ -423,6 +426,44 @@ Rectangle {
                         onClicked:
                             if (fxManager != null)
                                 fxManager.setSyncEnabled(root.unitId, !root.syncOn)
+                    }
+                }
+
+                Button {
+                    id: quantizeButton
+                    objectName: "fxQuantizeButton"
+                    Layout.preferredWidth: 54
+                    Layout.preferredHeight: 22
+                    visible: root.hasBpmSync
+                    text: "FX QNT"
+                    checkable: true
+                    checked: root.quantizeOn
+                    onClicked: if (fxManager != null)
+                                   fxManager.setQuantizeEnabled(root.unitId, !root.quantizeOn)
+                    ToolTip.visible: hovered
+                    ToolTip.delay: 600
+                    ToolTip.text: "Start echo and roll capture on the beatgrid and align modulation. Enables BPM sync."
+                    Accessible.name: "FX " + root.unitId + " Quantize"
+                    contentItem: Text {
+                        text: quantizeButton.text
+                        color: root.quantizeOn ? root.accentColor : UiTheme.textMuted
+                        font.pixelSize: 9
+                        font.bold: root.quantizeOn
+                        font.family: UiTheme.uiFontFamily
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        color: quantizeButton.down || root.quantizeOn ? UiTheme.panelRaised : UiTheme.panelDeep
+                        border.width: 1
+                        border.color: quantizeButton.visualFocus ? root.accentColor : UiTheme.borderSubtle
+                        Rectangle {
+                            anchors.bottom: parent.bottom
+                            width: parent.width
+                            height: 1
+                            visible: root.quantizeOn
+                            color: root.accentColor
+                        }
                     }
                 }
 

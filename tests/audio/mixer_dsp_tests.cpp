@@ -35,6 +35,70 @@ private:
     std::atomic<float> amplitude { 0.2f };
 };
 bool finite(const juce::AudioBuffer<float>&b){for(int c=0;c<b.getNumChannels();++c)for(int i=0;i<b.getNumSamples();++i)if(!std::isfinite(b.getSample(c,i)))return false;return true;}
+void testFxQuantize(bool& ok)
+{
+    // A 128-sample roll requested halfway through its division must capture
+    // 64 samples later with quantize, while tempo-only sync captures immediately.
+    const auto render = [](bool quantize, bool cancelWaiting = false) {
+        auto fx = std::make_unique<FxProcessor>();
+        fx->prepare(48000.0, 64, 2);
+        fx->setEffectType(EffectType::Roll);
+        fx->setAmount(1.0f);
+        fx->setExternalDelayTime(128.0f / 48000.0f);
+        fx->setBeatSyncPosition(128.0 / 48000.0, 0.5);
+        fx->setQuantizeEnabled(quantize);
+        juce::AudioBuffer<float> result(2, 256);
+        for (int i = 0; i < 256; ++i)
+            for (int channel = 0; channel < 2; ++channel)
+                result.setSample(channel, i, 0.1f + i * 0.002f);
+        for (int start = 0; start < 256; start += 32) {
+            if (cancelWaiting && start == 32) fx->setQuantizeEnabled(false);
+            fx->process(result, start, 32);
+        }
+        return result;
+    };
+    const auto echoStart = [](bool quantize) {
+        auto fx = std::make_unique<FxProcessor>();
+        fx->prepare(48000.0, 64, 2);
+        fx->setAmount(1.0f);
+        juce::AudioBuffer<float> block(2, 64);
+        // Settle the wet/dry smoothing before testing the exact start boundary.
+        for (int i = 0; i < 20; ++i) { block.clear(); fx->process(block, 0, 64); }
+        fx->setEffectType(EffectType::Echo);
+        fx->setExternalDelayTime(0.01f);
+        fx->setBeatSyncPosition(0.01, 0.5); // half of a 480-sample division
+        fx->setQuantizeEnabled(quantize);
+        bool waitingIsDry = true;
+        bool startsAtBoundary = false;
+        for (int start = 0; start < 256; start += 64) {
+            for (int channel = 0; channel < 2; ++channel)
+                for (int i = 0; i < 64; ++i) block.setSample(channel, i, 1.0f);
+            fx->process(block, 0, 64);
+            for (int i = 0; i < 64 && start + i < 240; ++i)
+                waitingIsDry &= std::abs(block.getSample(0, i) - 1.0f) < 1.0e-5f;
+            if (start == 192)
+                startsAtBoundary = std::abs(block.getSample(0, 48)) < 1.0e-5f;
+        }
+        return std::pair{waitingIsDry, startsAtBoundary};
+    };
+    const auto quantizedEcho = echoStart(true);
+    const auto immediateEcho = echoStart(false);
+    ok &= require(quantizedEcho.first && quantizedEcho.second && !immediateEcho.first,
+                  "echo capture waits transparently and starts on the exact grid sample inside a block");
+    const auto immediate = render(false);
+    const auto quantized = render(true);
+    const auto cancelled = render(true, true);
+    const float dryAt160 = 0.1f + 160 * 0.002f;
+    ok &= require(std::abs(quantized.getSample(0, 160) - dryAt160) < 1.0e-5f,
+                  "quantized roll keeps live audio through the delayed capture window");
+    ok &= require(immediate.getSample(0, 160) < dryAt160 - 0.01f,
+                  "tempo-only roll starts immediately without waiting for the beatgrid");
+    ok &= require(cancelled.getSample(0, 170) < quantized.getSample(0, 170) - 0.01f,
+                  "disabling quantize cancels a pending roll wait at the next audio block");
+    ok &= require(finite(immediate) && finite(quantized) && finite(cancelled),
+                  "FX quantize produces finite stereo output");
+}
+
 void testFxPrimitives(bool& ok)
 {
     dsp::SsDelay delay;
@@ -298,6 +362,7 @@ double eqResponseDb(MixerFilterTargets t,double hz,double sr=48000.0){
  return 20.0*std::log10(std::max(std::sqrt(sum/n)*std::numbers::sqrt2,1e-9));}
 }
 int main(){bool ok=true;
+ testFxQuantize(ok);
  testFxPrimitives(ok);
  testColorCrushLeftTexture(ok);
  testEffectMixEndpoints(ok);

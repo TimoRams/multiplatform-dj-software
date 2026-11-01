@@ -36,6 +36,8 @@ class FxManager : public QObject
     Q_PROPERTY(bool    deck1C       READ deck1C       WRITE setDeck1C       NOTIFY deck1CChanged)
     Q_PROPERTY(bool    deck1D       READ deck1D       WRITE setDeck1D       NOTIFY deck1DChanged)
     Q_PROPERTY(bool    syncEnabled1 READ syncEnabled1                       NOTIFY syncEnabled1Changed)
+    Q_PROPERTY(bool quantizeEnabled1 READ quantizeEnabled1 NOTIFY quantizeEnabled1Changed)
+    Q_PROPERTY(bool quantizeEnabled2 READ quantizeEnabled2 NOTIFY quantizeEnabled2Changed)
     Q_PROPERTY(float   beatDiv1     READ beatDiv1                           NOTIFY beatDiv1Changed)
     Q_PROPERTY(double  displayBpm1  READ displayBpm1                        NOTIFY displayBpm1Changed)
 
@@ -118,6 +120,9 @@ public:
     void setDeck2D(bool active);
 
     // ── BPM sync accessors ────────────────────────────────────────────────────
+    bool quantizeEnabled1() const { return m_quantizeEnabled[0]; }
+    bool quantizeEnabled2() const { return m_quantizeEnabled[1]; }
+    Q_INVOKABLE void setQuantizeEnabled(int unitId, bool enabled);
     bool   syncEnabled1()  const { return m_syncEnabled[0]; }
     bool   syncEnabled2()  const { return m_syncEnabled[1]; }
     float  beatDiv1()      const { return m_beatDiv[0]; }
@@ -155,6 +160,8 @@ signals:
     void deck1BChanged();
     void deck1CChanged();
     void deck1DChanged();
+    void quantizeEnabled1Changed();
+    void quantizeEnabled2Changed();
     void syncEnabled1Changed();
     void beatDiv1Changed();
     void displayBpm1Changed();
@@ -228,6 +235,7 @@ private:
     [[nodiscard]] float effectiveWetDry(int unitId) const;
 
     // ── BPM sync state ────────────────────────────────────────────────────────
+    bool m_quantizeEnabled[2] { false, false };
     bool   m_syncEnabled[2]   { false, false };
     float  m_beatDiv[2]       { 0.25f, 0.25f }; // default 1/4 note
     float  m_primaryParam[2]  { 0.5f,  0.5f  }; // default mid (Reverb: 50% room)

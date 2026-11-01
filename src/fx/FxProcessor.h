@@ -63,6 +63,8 @@ public:
     /// override and falls back to amount-derived timing. Affects all timing-
     /// based effects (Echo, Flanger, Phaser, Tremolo, Roll, Mobius, etc.).
     void setExternalDelayTime(float seconds);
+    /// Align modulation phase and roll capture to the beatgrid, independently of tempo sync.
+    void setQuantizeEnabled(bool enabled) noexcept { m_quantizeEnabled.store(enabled, std::memory_order_relaxed); }
     /// Current deck beatgrid position. beatPosition is in beats relative to the
     /// analyzed grid; beatDurationSec is the local beat length at the playhead.
     void setBeatSyncPosition(double beatPosition, double beatDurationSec);
@@ -101,6 +103,10 @@ private:
     // BPM sync: overrides amount-derived delay when ≥ 0. Stored in seconds;
     // processEcho/processMtDelay multiply by m_sampleRate. -1 = disabled.
     std::atomic<float> m_externalDelaySeconds { -1.f };
+    std::atomic<bool> m_quantizeEnabled { true };
+    bool m_audioQuantizeEnabled = true;
+    bool m_delayStartPending = true;
+    int m_delayStartCountdown = -1;
     std::atomic<double> m_beatPosition { 0.0 };
     std::atomic<double> m_beatDurationSeconds { 0.5 };
     double m_audioBeatPosition = 0.0;

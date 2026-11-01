@@ -529,6 +529,12 @@ void DjEngine::setFxSlotExternalDelayTime(int slot, float seconds)
 }
 
 
+void DjEngine::setFxSlotQuantizeEnabled(int slot, bool enabled)
+{
+    if (m_audioPipeline->mixerPtr()) m_audioPipeline->mixer().setFxSlotQuantizeEnabled(slot, enabled);
+}
+
+
 void DjEngine::setFxSlotPrimaryParam(int slot, float v)
 {
     if (m_audioPipeline->mixerPtr()) m_audioPipeline->mixer().setFxSlotPrimaryParam(slot, v);

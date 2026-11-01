@@ -2241,6 +2241,8 @@ bool qmlMergeRuntimeTests()
         QtObject {
             property bool syncEnabled1: false
             property bool syncEnabled2: false
+            property bool quantizeEnabled1: false
+            property bool quantizeEnabled2: false
             property real beatDiv1: 0.25
             property real beatDiv2: 0.25
             property real displayBpm1: 120
@@ -2272,6 +2274,10 @@ bool qmlMergeRuntimeTests()
             }
             function setSyncEnabled(unit, value) {
                 if (unit === 1) syncEnabled1 = value; else syncEnabled2 = value
+            }
+            function setQuantizeEnabled(unit, value) {
+                if (unit === 1) quantizeEnabled1 = value; else quantizeEnabled2 = value
+                if (value) setSyncEnabled(unit, true)
             }
             function setBeatDivision(unit, value) {
                 if (unit === 1) beatDiv1 = value; else beatDiv2 = value
@@ -2920,6 +2926,26 @@ bool qmlMergeRuntimeTests()
                   "Sound Color UI deselects the active mode");
     QObject* unit1 = fxBar->findChild<QObject*>(QStringLiteral("fxUnit1"));
     QObject* unit2 = fxBar->findChild<QObject*>(QStringLiteral("fxUnit2"));
+    auto* quantize1 = unit1 ? unit1->findChild<QQuickItem*>("fxQuantizeButton") : nullptr;
+    auto* quantize2 = unit2 ? unit2->findChild<QQuickItem*>("fxQuantizeButton") : nullptr;
+    auto* effectSelector = unit1 ? unit1->findChild<QObject*>("fxEffectCombo") : nullptr;
+    if (effectSelector) effectSelector->setProperty("currentIndex", 1); // Echo
+    QCoreApplication::processEvents();
+    QTest::qWait(30); // Let the row layout place the newly visible timing controls before clicking.
+    ok &= clickItem(fxWindow, quantize1, "FX Quantize is clickable for a rhythmic effect");
+    ok &= require(fxManager->property("quantizeEnabled1").toBool()
+                      && fxManager->property("syncEnabled1").toBool()
+                      && !fxManager->property("quantizeEnabled2").toBool()
+                      && quantize1 && quantize1->property("checked").toBool(),
+                  "FX Quantize follows manager state and affects only the selected unit");
+    ok &= clickItem(fxWindow, quantize1, "FX Quantize can be disabled again");
+    ok &= require(!fxManager->property("quantizeEnabled1").toBool()
+                      && fxManager->property("syncEnabled1").toBool(),
+                  "disabling quantize retains tempo sync");
+    if (effectSelector) effectSelector->setProperty("currentIndex", 0);
+    QCoreApplication::processEvents();
+    ok &= require(quantize1 && !quantize1->isVisible() && quantize2 && !quantize2->isVisible(),
+                  "FX Quantize stays hidden for effects without beat timing");
     ok &= require(unit1 && unit2
                       && unit1->metaObject()->indexOfProperty("wetDry") >= 0
                       && unit1->metaObject()->indexOfSignal("deck1Toggled(bool)") >= 0,

@@ -378,59 +378,78 @@ void FxProcessor::processWetEffect(EffectType type,
                                    int n,
                                    float amount)
 {
+    int start = 0;
+    // Leave the waiting prefix untouched: dry + wet remains unity while the
+    // delay input waits for its grid boundary. The capture starts within the
+    // block, without scheduling work on the UI thread.
+    const bool delayCapture = type == EffectType::Echo || type == EffectType::LowCutEcho
+        || type == EffectType::MtDelay;
+    if (delayCapture && m_delayStartPending) {
+        const float seconds = m_externalDelaySeconds.load(std::memory_order_relaxed);
+        if (m_audioQuantizeEnabled && seconds >= 0.001f) {
+            if (m_delayStartCountdown < 0)
+                m_delayStartCountdown = samplesUntilNextDivision(seconds);
+            start = std::min(n, m_delayStartCountdown);
+            m_delayStartCountdown -= start;
+            if (m_delayStartCountdown > 0) return;
+        }
+        m_delayStartPending = false;
+    }
+    n -= start;
+    if (n <= 0) return;
     switch (type)
     {
         case EffectType::Reverb:
             updateReverbParams();
-            processReverb(wetBuf, 0, n);
+            processReverb(wetBuf, start, n);
             break;
         case EffectType::Bitcrusher:
-            processBitcrusher(wetBuf, 0, n, amount);
+            processBitcrusher(wetBuf, start, n, amount);
             break;
         case EffectType::PitchShifter:
-            processPitchShifter(wetBuf, 0, n, amount);
+            processPitchShifter(wetBuf, start, n, amount);
             break;
         case EffectType::Echo:
-            processEcho(wetBuf, 0, n, amount, false);
+            processEcho(wetBuf, start, n, amount, false);
             break;
         case EffectType::LowCutEcho:
-            processEcho(wetBuf, 0, n, amount, true);
+            processEcho(wetBuf, start, n, amount, true);
             break;
         case EffectType::MtDelay:
-            processMtDelay(wetBuf, 0, n, amount);
+            processMtDelay(wetBuf, start, n, amount);
             break;
         case EffectType::Spiral:
-            processSpiral(wetBuf, 0, n, amount);
+            processSpiral(wetBuf, start, n, amount);
             break;
         case EffectType::Flanger:
-            processFlanger(wetBuf, 0, n, amount);
+            processFlanger(wetBuf, start, n, amount);
             break;
         case EffectType::Phaser:
-            processPhaser(wetBuf, 0, n, amount);
+            processPhaser(wetBuf, start, n, amount);
             break;
         case EffectType::Trans:
-            processTrans(wetBuf, 0, n, amount);
+            processTrans(wetBuf, start, n, amount);
             break;
         case EffectType::EnigmaJet:
-            processEnigmaJet(wetBuf, 0, n, amount);
+            processEnigmaJet(wetBuf, start, n, amount);
             break;
         case EffectType::Stretch:
-            processStretch(wetBuf, 0, n, amount);
+            processStretch(wetBuf, start, n, amount);
             break;
         case EffectType::SlipRoll:
-            processRoll(wetBuf, 0, n, amount, true);
+            processRoll(wetBuf, start, n, amount, true);
             break;
         case EffectType::Roll:
-            processRoll(wetBuf, 0, n, amount, false);
+            processRoll(wetBuf, start, n, amount, false);
             break;
         case EffectType::RollOut:
-            processRollOut(wetBuf, 0, n, amount);
+            processRollOut(wetBuf, start, n, amount);
             break;
         case EffectType::MobiusSaw:
-            processMobius(wetBuf, 0, n, amount, true);
+            processMobius(wetBuf, start, n, amount, true);
             break;
         case EffectType::MobiusTri:
-            processMobius(wetBuf, 0, n, amount, false);
+            processMobius(wetBuf, start, n, amount, false);
             break;
         case EffectType::None:
         default:
@@ -544,6 +563,8 @@ void FxProcessor::applyPendingCommandAtBlockBoundary() noexcept
 
     m_appliedTypeCommand = command;
     m_activeType = static_cast<EffectType>(command & 0xffU);
+    m_delayStartPending = true;
+    m_delayStartCountdown = -1;
     if (m_activeType == EffectType::PitchShifter)
         resetPitchShifterRealtime();
     if (m_activeType == EffectType::Roll
@@ -580,6 +601,7 @@ void FxProcessor::setBeatSyncPosition(double beatPosition, double beatDurationSe
 
 void FxProcessor::beginBeatSyncBlock()
 {
+    m_audioQuantizeEnabled = m_quantizeEnabled.load(std::memory_order_relaxed);
     const double controlBeat = m_beatPosition.load(std::memory_order_relaxed);
     const double controlDur = m_beatDurationSeconds.load(std::memory_order_relaxed);
     if (std::abs(controlBeat - m_lastControlBeatPosition) > 1e-6) {
@@ -916,7 +938,7 @@ void FxProcessor::processSpiral(juce::AudioBuffer<float>& wet,
     const float baseDelay = static_cast<float>(m_sampleRate) * 0.018f;
 
     m_spiralState.lfo.setRate(lfoRate);
-    if (extSec >= 0.001f)
+    if (m_audioQuantizeEnabled && extSec >= 0.001f)
         m_spiralState.lfo.setPhase(syncedDivisionPhase(extSec));
 
     const int numCh = std::min(wet.getNumChannels(), 2);
@@ -965,7 +987,7 @@ void FxProcessor::processFlanger(juce::AudioBuffer<float>& wet,
     const float feedback  = 0.20f + amount * 0.62f;
 
     m_flangerState.lfo.setRate(lfoRate);
-    if (extSec >= 0.001f)
+    if (m_audioQuantizeEnabled && extSec >= 0.001f)
         m_flangerState.lfo.setPhase(syncedDivisionPhase(extSec));
 
     const int numCh = std::min(wet.getNumChannels(), 2);
@@ -1007,7 +1029,7 @@ void FxProcessor::processPhaser(juce::AudioBuffer<float>& wet,
     const int numCh = std::min(wet.getNumChannels(), 2);
 
     m_phaserState.lfo.setRate(lfoRate);
-    if (extSec >= 0.001f)
+    if (m_audioQuantizeEnabled && extSec >= 0.001f)
         m_phaserState.lfo.setPhase(syncedDivisionPhase(extSec));
 
     for (int i = 0; i < n; ++i)
@@ -1053,7 +1075,7 @@ void FxProcessor::processTrans(juce::AudioBuffer<float>& wet,
     const float hardness = 1.0f + amount * 10.0f;
 
     m_transState.lfo.setRate(lfoRate);
-    if (extSec >= 0.001f)
+    if (m_audioQuantizeEnabled && extSec >= 0.001f)
         m_transState.lfo.setPhase(syncedDivisionPhase(extSec));
 
     for (int i = 0; i < n; ++i)
@@ -1100,7 +1122,7 @@ void FxProcessor::processEnigmaJet(juce::AudioBuffer<float>& wet,
     const float detDepth   = static_cast<float>(m_sampleRate) * (0.003f + amount * 0.007f);
 
     m_enigmaState.phaseLfo.setRate(phaseLfoRate);
-    if (extSec >= 0.001f)
+    if (m_audioQuantizeEnabled && extSec >= 0.001f)
         m_enigmaState.phaseLfo.setPhase(syncedDivisionPhase(extSec));
     m_enigmaState.detLfo.setRate(detLfoRate);
 
@@ -1196,7 +1218,7 @@ void FxProcessor::processRoll(juce::AudioBuffer<float>& wet,
 
     for (int i = 0; i < n; ++i)
     {
-        if (!st.loopActive && extSec >= 0.f) {
+        if (!st.loopActive && m_audioQuantizeEnabled && extSec >= 0.f) {
             if (st.quantizedStartCountdown < 0)
                 st.quantizedStartCountdown = samplesUntilNextDivision(extSec);
             if (st.quantizedStartCountdown > 0) {
@@ -1273,7 +1295,7 @@ void FxProcessor::processRollOut(juce::AudioBuffer<float>& wet,
 
     for (int i = 0; i < n; ++i)
     {
-        if (!st.loopActive && extSec >= 0.f) {
+        if (!st.loopActive && m_audioQuantizeEnabled && extSec >= 0.f) {
             if (st.quantizedStartCountdown < 0)
                 st.quantizedStartCountdown = samplesUntilNextDivision(extSec);
             if (st.quantizedStartCountdown > 0) {
@@ -1360,6 +1382,9 @@ void FxProcessor::processMobius(juce::AudioBuffer<float>& wet,
     const float level = 0.12f + 0.5f * amount;
 
     auto& st = m_mobiusState;
+    if (m_audioQuantizeEnabled && extSec >= 0.001f)
+        st.sweep = static_cast<double>(kMobiusVoices)
+            * syncedDivisionPhase(static_cast<float>(cycleSeconds));
     const int channels = std::min(2, wet.getNumChannels());
 
     // A polyBLEP step correction removes the alias burst a naive sawtooth

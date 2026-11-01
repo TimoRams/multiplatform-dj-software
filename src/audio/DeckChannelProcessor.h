@@ -93,6 +93,7 @@ public:
     void setFxSlotEffectType(int slot, EffectType type);
     void setFxSlotAmount(int slot, float amount);
     void setFxSlotExternalDelayTime(int slot, float seconds);
+    void setFxSlotQuantizeEnabled(int slot, bool enabled);
     void setFxSlotPrimaryParam(int slot, float v);
     void setBeatSyncPosition(double beatPosition, double beatDurationSec);
 

@@ -232,6 +232,7 @@ void DeckChannelProcessor::setFxPrimaryParam(float v) { m_colorFx.setPrimaryPara
 void DeckChannelProcessor::setFxSlotEffectType(int slot, EffectType type) { if (auto* fx = fxChainSlot(slot)) fx->setEffectType(type); }
 void DeckChannelProcessor::setFxSlotAmount(int slot, float amount) { if (auto* fx = fxChainSlot(slot)) fx->setAmount(amount); }
 void DeckChannelProcessor::setFxSlotExternalDelayTime(int slot, float seconds) { if (auto* fx = fxChainSlot(slot)) fx->setExternalDelayTime(seconds); }
+void DeckChannelProcessor::setFxSlotQuantizeEnabled(int slot, bool enabled) { if (auto* fx = fxChainSlot(slot)) fx->setQuantizeEnabled(enabled); }
 void DeckChannelProcessor::setFxSlotPrimaryParam(int slot, float v) { if (auto* fx = fxChainSlot(slot)) fx->setPrimaryParam(v); }
 
 void DeckChannelProcessor::setBeatSyncPosition(double beatPosition, double beatDurationSec) {
