@@ -55,10 +55,11 @@ elseif(CCACHE_PROGRAM AND MSVC)
 endif()
 
 # Qt setup
-find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Concurrent ShaderTools)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Sql Concurrent ShaderTools Network)
 if(UNIX AND NOT APPLE)
     find_package(Qt6 REQUIRED COMPONENTS DBus)
 endif()
+find_package(Qt6 QUIET COMPONENTS Bluetooth)
 find_package(Threads REQUIRED)
 if(Qt6_VERSION VERSION_GREATER_EQUAL 6.5)
     qt_policy(SET QTP0001 NEW)
@@ -425,6 +426,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::QuickControls2
     Qt6::Sql
     Qt6::Concurrent
+    Qt6::Network
     ThirdParty::TagLib
     ThirdParty::KeyFinder
     ThirdParty::RubberBand
@@ -433,6 +435,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ThirdParty::SQLCipher
     Ableton::Link
 )
+
+if(TARGET Qt6::Bluetooth)
+    target_link_libraries(BrockDJ PRIVATE Qt6::Bluetooth)
+    target_compile_definitions(BrockDJ PRIVATE BROCKDJ_HAS_QT_BLUETOOTH=1)
+endif()
 
 if(UNIX AND NOT APPLE)
     target_link_libraries(${PROJECT_NAME} PRIVATE

@@ -841,6 +841,49 @@ bool headerPublicationTests(const std::string& header)
     return ok;
 }
 
+bool latencyPopupToggleTests(const std::string& header)
+{
+    const auto popupBegin = header.find("    Popup {\n        id: latencyPopup");
+    const auto content = header.find("        contentItem: Column {", popupBegin);
+    const auto mouseId = header.find("                id: latMouse");
+    const auto mouseBegin = header.rfind("            MouseArea {", mouseId);
+    const auto mouseEnd = header.find("\n            }", mouseId);
+    if (!require(popupBegin != std::string::npos && content != std::string::npos
+                 && mouseBegin != std::string::npos && mouseEnd != std::string::npos,
+                 "production latency controls exist")) return false;
+    QQmlEngine engine;
+    auto host = createQmlObject(engine, QStringLiteral(R"(
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+            width: 400; height: 300
+            id: root
+            function refreshLatencyInfo() {}
+    )") + QString::fromStdString(header.substr(popupBegin, content - popupBegin))
+        + QStringLiteral("height: 100\n}\nRectangle { id: monitorBlock; width: 120; height: 40\n")
+        + QString::fromStdString(header.substr(mouseBegin, mouseEnd + 14 - mouseBegin))
+        + QStringLiteral("\n}\n}"), "production latency toggle instantiates");
+    if (!host) return false;
+    QQuickWindow window;
+    window.resize(400, 300);
+    qobject_cast<QQuickItem*>(host.get())->setParentItem(window.contentItem());
+    window.show();
+    QCoreApplication::processEvents();
+    auto visible = [&] {
+        QQmlExpression expression(QQmlEngine::contextForObject(host.get()), host.get(),
+                                  QStringLiteral("latencyPopup.visible"));
+        return expression.evaluate().toBool();
+    };
+    bool ok = true;
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, {60, 20});
+        ok &= require(QTest::qWaitFor(visible), "latency opens on click");
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, {60, 20});
+        ok &= require(QTest::qWaitFor([&] { return !visible(); }), "second latency click closes without reopening");
+    }
+    return ok;
+}
+
 bool hamburgerToggleTests(const std::string& header)
 {
     const auto popupBegin = header.find("    Popup {\n        id: viewMenuPopup");
@@ -2742,6 +2785,7 @@ int main(int argc, char** argv)
     const auto appOverlays = read("src/qml/shell/AppOverlays.qml");
     ok &= headerPublicationTests(topHeader);
     ok &= hamburgerToggleTests(topHeader);
+    ok &= latencyPopupToggleTests(topHeader);
     const auto deckControl = read("src/qml/deck/DeckControl.qml");
     const auto slider = read("src/qml/components/Slider.qml");
     const auto mixerSection = read("src/qml/mixer/MixerSection.qml");

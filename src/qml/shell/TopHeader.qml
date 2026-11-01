@@ -121,7 +121,53 @@ Rectangle {
         }
     }
 
+    component StatusIcon: Canvas {
+        property string kind: "unknown"
+        property color ink: UiTheme.textSecondary
+        onKindChanged: requestPaint()
+        onInkChanged: requestPaint()
+        onPaint: {
+            const c = getContext("2d")
+            c.reset()
+            c.scale(width / 20, height / 20)
+            c.strokeStyle = ink
+            c.lineWidth = 1.5
+            c.lineCap = "round"
+            c.lineJoin = "round"
+            c.beginPath()
+            if (kind === "bluetooth") {
+                c.moveTo(9, 2); c.lineTo(15, 7); c.lineTo(5, 15)
+                c.moveTo(5, 5); c.lineTo(15, 13); c.lineTo(9, 18); c.lineTo(9, 2)
+            } else if (kind === "wifi") {
+                c.arc(10, 17, 14, -2.35, -0.79)
+                c.moveTo(3, 10); c.arc(10, 17, 10, -2.35, -0.79)
+                c.moveTo(6, 13); c.arc(10, 17, 6, -2.35, -0.79)
+                c.moveTo(9, 17); c.lineTo(11, 17)
+            } else if (kind === "ethernet") {
+                c.rect(3, 2, 14, 10)
+                c.moveTo(10, 12); c.lineTo(10, 17)
+                c.moveTo(3, 17); c.lineTo(17, 17)
+                c.moveTo(3, 15); c.lineTo(3, 19)
+                c.moveTo(17, 15); c.lineTo(17, 19)
+            } else if (kind === "usb") {
+                c.moveTo(10, 18); c.lineTo(10, 2)
+                c.moveTo(7, 5); c.lineTo(10, 2); c.lineTo(13, 5)
+                c.moveTo(10, 13); c.lineTo(5, 10); c.lineTo(5, 7)
+                c.moveTo(10, 10); c.lineTo(15, 8); c.lineTo(15, 5)
+                c.rect(14, 3, 2, 2)
+            } else {
+                c.arc(10, 10, 8, 0, Math.PI * 2)
+                c.moveTo(2, 10); c.lineTo(18, 10)
+                c.moveTo(10, 2); c.bezierCurveTo(4, 7, 4, 13, 10, 18)
+                c.bezierCurveTo(16, 13, 16, 7, 10, 2)
+            }
+            c.stroke()
+        }
+    }
+
     // ── State ────────────────────────────────────────────────────────────────
+    property string selectedSourceType: "local"
+    property string selectedSourceName: "Lokale Library"
     property string currentTime: "00:00"
     property real   totalLatencyMs: 0.0
     property var    latencyRows: []
@@ -229,9 +275,9 @@ Rectangle {
     // ── Latency popup ────────────────────────────────────────────────────────
     Popup {
         id: latencyPopup
-        parent: Overlay.overlay
+        parent: monitorBlock
         modal: false; focus: true
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
         padding: 1
         background: Rectangle { color: UiTheme.surface; border.color: UiTheme.borderSubtle; border.width: 1 }
 
@@ -598,6 +644,40 @@ Rectangle {
         z: 10
         spacing: 0
 
+        Rectangle {
+            id: sourceButton
+            Layout.preferredWidth: root.btnH
+            Layout.preferredHeight: root.btnH
+            color: sourceMouse.containsMouse ? UiTheme.surfaceRaised : UiTheme.panelInset
+            border.color: root.selectedSourceType === "usb" ? UiTheme.blue : UiTheme.borderSubtle
+            border.width: 1
+            Column {
+                anchors.centerIn: parent
+                spacing: 1
+                StatusIcon {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    kind: root.selectedSourceType === "usb" ? "usb" : "ethernet"
+                    ink: UiTheme.blue
+                    width: 17; height: 17
+                }
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: root.selectedSourceType === "usb" ? "USB" : "LOCAL"
+                    color: UiTheme.textPrimary
+                    font.pixelSize: 7; font.bold: true
+                }
+            }
+            ToolTip.visible: sourceMouse.containsMouse
+            ToolTip.text: root.selectedSourceName
+            MouseArea {
+                id: sourceMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: if (root.Window.window) root.Window.window.openLibrarySourceView()
+            }
+        }
+
         // ── Branding ─────────────────────────────────────────────────────────
         Item {
             Layout.preferredWidth: brandRow.implicitWidth + root.padH * 2
@@ -630,33 +710,6 @@ Rectangle {
 
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
-
-        Rectangle {
-            id: sourceButton
-            Layout.preferredWidth: 72
-            Layout.fillHeight: true
-            readonly property bool active: root.Window.window
-                                           ? root.Window.window.sourcePanelActive
-                                           : false
-            color: sourceMouse.pressed ? UiTheme.buttonBg(false, false, true)
-                 : active ? UiTheme.surfaceRaised
-                 : (sourceMouse.containsMouse ? UiTheme.surfaceRaised : UiTheme.panel)
-            Row {
-                anchors.centerIn: parent
-                spacing: 5
-                Text { text: "⊙"; color: sourceButton.active ? UiTheme.blue : UiTheme.textLabel; font.pixelSize: root.sp(14); anchors.verticalCenter: parent.verticalCenter }
-                Text { text: "SOURCE"; color: sourceButton.active ? UiTheme.textPrimary : UiTheme.textSecondary; font.pixelSize: root.sp(8); font.bold: true; font.letterSpacing: 0.5; anchors.verticalCenter: parent.verticalCenter }
-            }
-            Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 2; visible: sourceButton.active; color: root.accentBlue }
-            MouseArea {
-                id: sourceMouse
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: if (root.Window.window && root.Window.window.openLibrarySourceView)
-                               root.Window.window.openLibrarySourceView()
-            }
-        }
 
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
 
@@ -702,52 +755,6 @@ Rectangle {
         // This spacer keeps the navigation left-aligned and moves all mixer and
         // system controls into a single group on the right.
         Item { Layout.fillWidth: true }
-
-        // ── Anti-Clip ────────────────────────────────────────────────────────
-        Rectangle {
-            id: antiClipBlock
-            Layout.preferredWidth: Math.max(44, Math.round(root.btnH * 1.45))
-            Layout.fillHeight: true
-            property bool on: false
-            property real gr: deckA ? deckA.gainReduction : 1.0
-            color: !on ? UiTheme.panel
-                 : gr < 0.7 ? Qt.tint(UiTheme.panelInset,
-                                     Qt.rgba(UiTheme.error.r, UiTheme.error.g, UiTheme.error.b,
-                                             gr < 0.5 ? 0.24 : 0.14))
-                 : gr < 0.99 ? UiTheme.orangeDim
-                 : UiTheme.greenDim
-
-            Column {
-                anchors.centerIn: parent
-                spacing: 2
-
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: "A-CLP"
-                    color: !antiClipBlock.on ? UiTheme.textDim
-                         : antiClipBlock.gr < 0.99 ? UiTheme.textPrimary : UiTheme.green
-                    font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.3
-                }
-
-                Rectangle {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    width: 16; height: 2
-                    color: !antiClipBlock.on ? UiTheme.separatorSubtle
-                         : antiClipBlock.gr < 0.5  ? UiTheme.error
-                         : antiClipBlock.gr < 0.7  ? UiTheme.orange
-                         : antiClipBlock.gr < 0.99 ? UiTheme.warning
-                         : UiTheme.play
-                }
-            }
-
-            MouseArea {
-                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    antiClipBlock.on = !antiClipBlock.on
-                    if (deckA) deckA.setAntiClip(antiClipBlock.on)
-                }
-            }
-        }
 
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
@@ -1102,7 +1109,7 @@ Rectangle {
                 anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                 onClicked: {
                     root.refreshLatencyInfo()
-                    if (latencyPopup.opened) { latencyPopup.close(); return }
+                    if (latencyPopup.visible) { latencyPopup.close(); return }
                     var p = monitorBlock.mapToItem(latencyPopup.parent, 0, monitorBlock.height + 2)
                     latencyPopup.width = 340
                     latencyPopup.x = p.x; latencyPopup.y = p.y
@@ -1181,41 +1188,6 @@ Rectangle {
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
 
-        // ── View toggles ──────────────────────────────────────────────────────
-        Rectangle {
-            id: viewMenuBtn
-            Layout.preferredWidth: root.btnH
-            Layout.fillHeight: true
-            color: viewBtnMouse.pressed ? UiTheme.surfaceRaised : (viewBtnMouse.containsMouse ? UiTheme.panelRaised : UiTheme.panel)
-
-            Column {
-                anchors.centerIn: parent
-                spacing: 3
-                Repeater {
-                    model: 3
-                    Rectangle { width: 10; height: 1; color: UiTheme.textMuted }
-                }
-            }
-
-            MouseArea {
-                id: viewBtnMouse
-                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    if (viewMenuPopup.visible) {
-                        viewMenuPopup.close()
-                    } else {
-                        var p = viewMenuBtn.mapToItem(viewMenuPopup.parent, 0, viewMenuBtn.height + 2)
-                        viewMenuPopup.x = p.x - viewMenuPopup.width + viewMenuBtn.width
-                        viewMenuPopup.y = p.y
-                        viewMenuPopup.open()
-                    }
-                }
-            }
-        }
-
-        // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
-
         // ── Clock ─────────────────────────────────────────────────────────────
         Rectangle {
             Layout.preferredWidth: 52
@@ -1228,6 +1200,41 @@ Rectangle {
                 text: root.currentTime
                 color: UiTheme.textSecondary
                 font.pixelSize: root.sp(12); font.family: UiTheme.numericFontFamily; font.bold: true
+            }
+        }
+
+        Row {
+            Layout.preferredWidth: 58
+            Layout.alignment: Qt.AlignVCenter
+            spacing: 8
+            readonly property var monitor: typeof sysMonitor !== "undefined" ? sysMonitor : null
+            Item {
+                width: 20; height: 20
+                StatusIcon {
+                    anchors.fill: parent
+                    kind: parent.parent.monitor && parent.parent.monitor.networkOnline ? parent.parent.monitor.networkTransport : "unknown"
+                    ink: parent.parent.monitor && parent.parent.monitor.networkOnline ? UiTheme.textSecondary : UiTheme.textDim
+                }
+                Text {
+                    anchors.right: parent.right; anchors.bottom: parent.bottom
+                    text: "×"; color: UiTheme.error; font.pixelSize: 10; font.bold: true
+                    visible: parent.parent.monitor && parent.parent.monitor.networkKnown && !parent.parent.monitor.networkOnline
+                }
+                ToolTip.visible: networkHover.containsMouse
+                ToolTip.text: parent.monitor && parent.monitor.networkOnline
+                              ? (parent.monitor.networkTransport === "ethernet" ? "LAN verbunden" : parent.monitor.networkTransport === "wifi" ? "WLAN verbunden" : "Internet verbunden")
+                              : parent.monitor && parent.monitor.networkKnown ? "Kein Internet" : "Netzwerkstatus unbekannt"
+                MouseArea { id: networkHover; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
+            }
+            StatusIcon {
+                width: 20; height: 20
+                kind: "bluetooth"
+                ink: parent.monitor && parent.monitor.bluetoothEnabled ? UiTheme.blue : UiTheme.textDim
+                ToolTip.visible: bluetoothHover.containsMouse
+                ToolTip.text: parent.monitor && parent.monitor.bluetoothAvailable
+                              ? (parent.monitor.bluetoothEnabled ? "Bluetooth eingeschaltet" : "Bluetooth ausgeschaltet")
+                              : "Bluetooth nicht verfügbar"
+                MouseArea { id: bluetoothHover; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
             }
         }
 
@@ -1262,9 +1269,86 @@ Rectangle {
 
         RowLayout {
             anchors.centerIn: parent
-            width: Math.min(parent.width - UiTheme.space6 * 2, 680)
+            width: Math.min(parent.width - UiTheme.space6 * 2, 880)
             height: Math.max(0, Math.min(parent.height - UiTheme.space3 * 2, UiTheme.px(56)))
             spacing: UiTheme.space3
+
+        // ── View toggles ──────────────────────────────────────────────────────
+        Rectangle {
+            id: viewMenuBtn
+            Layout.preferredWidth: 60
+            Layout.fillHeight: true
+            color: viewBtnMouse.pressed ? UiTheme.surfaceRaised : (viewBtnMouse.containsMouse ? UiTheme.panelRaised : UiTheme.panel)
+
+            Text {
+                anchors.centerIn: parent
+                text: "VIEW ▾"
+                color: UiTheme.textPrimary
+                font.pixelSize: root.sp(9)
+                font.bold: true
+            }
+
+            MouseArea {
+                id: viewBtnMouse
+                anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    if (viewMenuPopup.visible) {
+                        viewMenuPopup.close()
+                    } else {
+                        var p = viewMenuBtn.mapToItem(viewMenuPopup.parent, 0, viewMenuBtn.height + 2)
+                        viewMenuPopup.x = p.x - viewMenuPopup.width + viewMenuBtn.width
+                        viewMenuPopup.y = p.y
+                        viewMenuPopup.open()
+                    }
+                }
+            }
+        }
+
+        // ── Anti-Clip ────────────────────────────────────────────────────────
+        Rectangle {
+            id: antiClipBlock
+            Layout.preferredWidth: 60
+            Layout.fillHeight: true
+            property bool on: false
+            property real gr: deckA ? deckA.gainReduction : 1.0
+            color: !on ? UiTheme.panel
+                 : gr < 0.7 ? Qt.tint(UiTheme.panelInset,
+                                     Qt.rgba(UiTheme.error.r, UiTheme.error.g, UiTheme.error.b,
+                                             gr < 0.5 ? 0.24 : 0.14))
+                 : gr < 0.99 ? UiTheme.orangeDim
+                 : UiTheme.greenDim
+
+            Column {
+                anchors.centerIn: parent
+                spacing: 2
+
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "A-CLP"
+                    color: !antiClipBlock.on ? UiTheme.textDim
+                         : antiClipBlock.gr < 0.99 ? UiTheme.textPrimary : UiTheme.green
+                    font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.3
+                }
+
+                Rectangle {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    width: 16; height: 2
+                    color: !antiClipBlock.on ? UiTheme.separatorSubtle
+                         : antiClipBlock.gr < 0.5  ? UiTheme.error
+                         : antiClipBlock.gr < 0.7  ? UiTheme.orange
+                         : antiClipBlock.gr < 0.99 ? UiTheme.warning
+                         : UiTheme.play
+                }
+            }
+
+            MouseArea {
+                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                onClicked: {
+                    antiClipBlock.on = !antiClipBlock.on
+                    if (deckA) deckA.setAntiClip(antiClipBlock.on)
+                }
+            }
+        }
 
             Rectangle {
                 Layout.fillWidth: true

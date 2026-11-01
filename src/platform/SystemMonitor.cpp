@@ -1,5 +1,9 @@
 #include "platform/SystemMonitor.h"
 #include <QFile>
+#include <QNetworkInformation>
+#ifdef BROCKDJ_HAS_QT_BLUETOOTH
+#include <QBluetoothLocalDevice>
+#endif
 #include <QDebug>
 #include <QtGlobal>
 #include <cmath>
@@ -18,6 +22,16 @@
 SystemMonitor::SystemMonitor(ControlClock& controlClock, QObject* parent)
     : QObject(parent)
 {
+    QNetworkInformation::loadDefaultBackend();
+    if (auto* network = QNetworkInformation::instance()) {
+        connect(network, &QNetworkInformation::reachabilityChanged, this, &SystemMonitor::connectivityChanged);
+        connect(network, &QNetworkInformation::transportMediumChanged, this, &SystemMonitor::connectivityChanged);
+    }
+#ifdef BROCKDJ_HAS_QT_BLUETOOTH
+    auto* bluetooth = new QBluetoothLocalDevice(this);
+    m_bluetooth = bluetooth;
+    connect(bluetooth, &QBluetoothLocalDevice::hostModeStateChanged, this, &SystemMonitor::connectivityChanged);
+#endif
     ControlClock::Callbacks callbacks;
     callbacks.housekeeping = [this](const ControlTickContext&) { poll(); };
     m_clockRegistration = controlClock.registerCallbacks(std::move(callbacks));
@@ -204,5 +218,48 @@ void SystemMonitor::poll()
             }
         }
     }
+#endif
+}
+
+QString SystemMonitor::networkTransport() const
+{
+    const auto* info = QNetworkInformation::instance();
+    if (!info) return QStringLiteral("unknown");
+    switch (info->transportMedium()) {
+    case QNetworkInformation::TransportMedium::Ethernet: return QStringLiteral("ethernet");
+    case QNetworkInformation::TransportMedium::WiFi: return QStringLiteral("wifi");
+    default: return QStringLiteral("unknown");
+    }
+}
+
+bool SystemMonitor::networkOnline() const
+{
+    const auto* info = QNetworkInformation::instance();
+    return info && info->reachability() == QNetworkInformation::Reachability::Online;
+}
+
+bool SystemMonitor::networkKnown() const
+{
+    const auto* info = QNetworkInformation::instance();
+    return info && info->reachability() != QNetworkInformation::Reachability::Unknown;
+}
+
+bool SystemMonitor::bluetoothAvailable() const
+{
+#ifdef BROCKDJ_HAS_QT_BLUETOOTH
+    const auto* device = static_cast<QBluetoothLocalDevice*>(m_bluetooth);
+    return device && device->isValid();
+#else
+    return false;
+#endif
+}
+
+bool SystemMonitor::bluetoothEnabled() const
+{
+#ifdef BROCKDJ_HAS_QT_BLUETOOTH
+    const auto* device = static_cast<QBluetoothLocalDevice*>(m_bluetooth);
+    return device && device->isValid() && device->hostMode() != QBluetoothLocalDevice::HostPoweredOff;
+#else
+    return false;
 #endif
 }

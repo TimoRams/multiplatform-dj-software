@@ -624,6 +624,9 @@ ApplicationWindow {
 
         TopHeader {
             id: topHeader
+            selectedSourceType: performanceWorkspace.librarySection.activeTab === "usb" ? "usb" : "local"
+            selectedSourceName: selectedSourceType === "usb" && deviceLibraryManager
+                                ? deviceLibraryManager.selectedDeviceName : "Lokale Library"
             Layout.fillWidth: true
             Layout.minimumHeight: window.topBarHeight
             Layout.preferredHeight: window.topBarHeight
