@@ -229,7 +229,6 @@ Rectangle {
         color: UiTheme.panelDeep
         radius: 0
 
-        property real peakHoldLevel: 0.0
         readonly property int segs: 28
         readonly property real segH: Math.max(1, (height - 2 - (segs - 1)) / segs)
         readonly property real displayLevel: normalizedDb(levelLinear)
@@ -247,15 +246,6 @@ Rectangle {
             return UiTheme.vuLow
         }
 
-        onDisplayLevelChanged: {
-            if (displayLevel > peakHoldLevel) { peakHoldLevel = displayLevel; decayTimer.restart() }
-        }
-        Timer { id: decayTimer; interval: 350; onTriggered: decayAnim.start() }
-        NumberAnimation {
-            id: decayAnim; target: vu; property: "peakHoldLevel"
-            from: vu.peakHoldLevel; to: 0.0; duration: 900; easing.type: Easing.InQuad
-        }
-
         Column {
             anchors.fill: parent
             anchors.margins: 1
@@ -269,8 +259,6 @@ Rectangle {
                     color: {
                         const ri = vu.segs - 1 - index
                         const lit = Math.ceil(vu.displayLevel * vu.segs)
-                        const peak = Math.floor(vu.peakHoldLevel * vu.segs) - 1
-                        if (ri === peak && peak >= 0) return UiTheme.vuPeak
                         if (ri < lit) return vu.segColor(ri)
                         return UiTheme.vuOff
                     }

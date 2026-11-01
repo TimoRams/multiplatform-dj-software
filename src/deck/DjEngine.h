@@ -363,6 +363,7 @@ public:
     // VU meter getters — read atomic peaks from the audio thread
     [[nodiscard]] float vuLevelL() const;
     [[nodiscard]] float vuLevelR() const;
+    [[nodiscard]] float takePreFaderFeedbackPeak() noexcept;
     [[nodiscard]] float preFaderVuLevelL() const;
     [[nodiscard]] float preFaderVuLevelR() const;
     [[nodiscard]] float masterVuLevelL() const;

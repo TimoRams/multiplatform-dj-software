@@ -62,7 +62,7 @@ public:
     void start();
     void stop();
     void prepareForShutdown() noexcept;
-    void onControlClockFeedbackTick(double deltaSeconds);
+    void onControlClockFeedbackTick(double monotonicSeconds);
 
     void clearAll();
     void refreshAll();
@@ -87,7 +87,7 @@ private:
     bool sendMidiShort(uint8_t status, uint8_t data1, uint8_t data2, const QString& type);
     DjEngine* deckEngine(int deck) const;
     bool deckHasBlinkingHotcue(int deck) const;
-    void updateVuMeters(double deltaSeconds);
+    void updateVuMeters();
     void updateBlinkPhase();
     void scheduleRawTestStep(int delayMs, const std::function<void()>& step);
 
@@ -99,5 +99,5 @@ private:
     bool m_enabled = false;
     bool m_rawTestActive = false;
     bool m_blinkPhase = false;
-    int m_feedbackTicksUntilBlink = 15;
+    double m_nextBlinkSeconds = -1.0;
 };

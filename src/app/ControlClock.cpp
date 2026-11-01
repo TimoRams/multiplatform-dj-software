@@ -246,14 +246,10 @@ void ControlClock::dispatch(double monotonicSeconds, double elapsedSeconds)
         emit linkTick();
     }
     if (due(m_feedbackDeadline, monotonicSeconds)) {
-        if (m_backgroundMode) {
-            ++m_stats.skippedFeedbackTicks;
-        } else if (severelyLate) {
-            ++m_stats.skippedFeedbackTicks;
-        } else {
-            run(&Callbacks::feedback, m_stats.feedback);
-            emit feedbackTick();
-        }
+        // Physical controller meters must keep following audio when the window
+        // is hidden or the GUI is late. due() coalesces missed ticks already.
+        run(&Callbacks::feedback, m_stats.feedback);
+        emit feedbackTick();
     }
     if (due(m_displayDeadline, monotonicSeconds)) {
         if (m_backgroundMode) {

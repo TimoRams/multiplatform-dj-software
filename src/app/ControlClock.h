@@ -57,9 +57,9 @@ public:
         int transportHz = 125;
         int syncHz = 125;
         int waveformHz = 60;
-        int feedbackHz = 30;
+        int feedbackHz = 120;
         int displayHz = 60;
-        int metersHz = 30;
+        int metersHz = 60;
         int statisticsHz = 10;
         int housekeepingHz = 2;
         int linkHz = 20;

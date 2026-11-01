@@ -386,6 +386,31 @@ int main(){bool ok=true;
  Sine sine(8000);auto mixer=std::make_unique<DeckChannelProcessor>(&sine);mixer->prepareToPlay(8192,48000);
  for(int size:{64,128,256,512,1024,2048,4096,8192}){const float p=render(*mixer,size);ok&=require(std::isfinite(p)&&p>0,"all block sizes audible finite");}
  const float flat=render(*mixer,2048);mixer->setFilterVal(-1);for(int i=0;i<4;++i)render(*mixer,2048);const float lowPass=render(*mixer,2048);ok&=require(lowPass<flat*0.7f,"low pass attenuates high tone");
+ {
+     Sine peakTone(1000);
+     auto peakMixer = std::make_unique<DeckChannelProcessor>(&peakTone);
+     peakMixer->prepareToPlay(512, 48000);
+     peakTone.setAmplitude(0.8f);
+     render(*peakMixer, 512);
+     peakTone.setAmplitude(0.0f);
+     for (int i = 0; i < 4; ++i) render(*peakMixer, 512);
+     ok &= require(peakMixer->m_preFaderPeakL.load() < 0.0001f,
+                   "the latest block is silent after a short channel peak");
+     ok &= require(peakMixer->takePreFaderFeedbackPeak() > 0.7f,
+                   "hardware feedback captures a short peak between polls");
+     const auto uiPeaks = peakMixer->takePreFaderUiPeaks();
+     ok &= require(uiPeaks[0] > 0.7f && uiPeaks[1] > 0.7f,
+                   "UI and hardware consume independent stereo peak windows");
+     const auto silence = peakMixer->takePreFaderUiPeaks();
+     ok &= require(peakMixer->takePreFaderFeedbackPeak() < 0.0001f
+                       && silence[0] < 0.0001f && silence[1] < 0.0001f,
+                   "reading the peak releases it immediately without an extra software hold");
+     peakTone.setAmplitude(0.2f);
+     render(*peakMixer, 512);
+     (void)peakMixer->takePreFaderFeedbackPeak();
+     ok &= require(peakMixer->takePreFaderFeedbackPeak() > 0.1f,
+                   "meter polls faster than audio blocks do not insert false silence");
+ }
  {Sine meterTone(1000);auto meterMixer=std::make_unique<DeckChannelProcessor>(&meterTone);meterMixer->prepareToPlay(1024,48000);for(int i=0;i<3;++i)render(*meterMixer,1024);const float openPre=meterMixer->m_preFaderPeakL.load();const float openPost=meterMixer->m_peakL.load();meterMixer->setFader(0.0f);for(int i=0;i<3;++i)render(*meterMixer,1024);const float closedPre=meterMixer->m_preFaderPeakL.load();const float closedPost=meterMixer->m_peakL.load();ok&=require(openPre>0.1f&&openPost>0.1f,"meter has signal with open fader");ok&=require(closedPre>0.1f,"pre-fader meter ignores closed channel fader");ok&=require(closedPost<0.001f,"post-fader meter follows closed channel fader");ok&=require(meterMixer->channelFaderGain()<0.0001f,"routing snapshot follows the audio-thread fader gain");}
  {Sine searchTone(1000);auto searchMixer=std::make_unique<DeckChannelProcessor>(&searchTone);searchMixer->prepareToPlay(512,48000);for(int i=0;i<3;++i)render(*searchMixer,512);searchMixer->setSearchMuted(true);float muted=1.0f;for(int i=0;i<4;++i)muted=render(*searchMixer,512);ok&=require(muted<0.0001f&&searchMixer->m_preFaderPeakL.load()<0.0001f,"fast transport search silences master and PFL source");searchMixer->setSearchMuted(false);float restored=0.0f;for(int i=0;i<4;++i)restored=render(*searchMixer,512);ok&=require(restored>0.1f,"fast transport search restores deck audio after release");}
  std::mt19937 rng(0xD5F00Du);for(int i=0;i<2000;++i){mixer->setEq((rng()%2001-1000)/1000.f,(rng()%2001-1000)/1000.f,(rng()%2001-1000)/1000.f);mixer->setFilterVal((rng()%2001-1000)/1000.f);mixer->setTrim((rng()%1001)/1000.f);mixer->setFader((rng()%1001)/1000.f);const int sizes[]={64,128,256,512,1024,2048,4096,8192};const float p=render(*mixer,sizes[rng()%8]);ok&=require(std::isfinite(p)&&p<8,"stress finite bounded");}

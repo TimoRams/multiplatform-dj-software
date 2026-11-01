@@ -720,8 +720,10 @@ void DjEngine::notifyVuMetersIfNeeded()
 {
     const float vuL    = vuLevelL();
     const float vuR    = vuLevelR();
-    const float preL   = preFaderVuLevelL();
-    const float preR   = preFaderVuLevelR();
+    const auto prePeaks = m_audioPipeline->mixerPtr()
+        ? m_audioPipeline->mixer().takePreFaderUiPeaks() : std::array<float, 2>{};
+    const float preL = prePeaks[0];
+    const float preR = prePeaks[1];
     const float masterL = masterVuLevelL();
     const float masterR = masterVuLevelR();
     const float gr     = gainReduction();
@@ -731,8 +733,8 @@ void DjEngine::notifyVuMetersIfNeeded()
     constexpr float kGrEps = 0.012f;
     const bool vuMoved = std::abs(vuL - m_lastNotifiedVuL) > kVuEps
                       || std::abs(vuR - m_lastNotifiedVuR) > kVuEps
-                      || std::abs(preL - m_lastNotifiedPreVuL) > kVuEps
-                      || std::abs(preR - m_lastNotifiedPreVuR) > kVuEps
+                      || std::abs(preL - m_lastNotifiedPreVuL) > 1.0e-6f
+                      || std::abs(preR - m_lastNotifiedPreVuR) > 1.0e-6f
                       || std::abs(masterL - m_lastNotifiedMasterVuL) > kVuEps
                       || std::abs(masterR - m_lastNotifiedMasterVuR) > kVuEps;
     const bool grMoved = std::abs(gr - m_lastNotifiedGr) > kGrEps;

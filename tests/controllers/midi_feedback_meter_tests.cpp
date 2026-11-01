@@ -1,7 +1,11 @@
 #include "controllers/midi/LevelMeterBallistics.h"
 #include "controllers/flx10/Flx10TransportControls.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
+#include <limits>
 #include <cmath>
 #include <iostream>
 
@@ -18,11 +22,13 @@ int main()
     assert(meter.update(0.0f, 1.0 / 30.0) == 0);
     assert(meter.update(1.0f, 1.0 / 30.0) == 89); // 0 dBFS reference, immediate attack
 
-    const auto firstRelease = meter.update(0.0f, 1.0 / 30.0);
-    assert(firstRelease >= 87); // release is deliberately slower than attack
-    for (int tick = 0; tick < 60; ++tick)
-        (void)meter.update(0.0f, 1.0 / 30.0);
-    assert(meter.update(0.0f, 1.0 / 30.0) == 0);
+    // The FLX10 owns release and peak hold: send downward changes immediately.
+    assert(meter.update(0.1f, 1.0 / 120.0) == 57);
+    assert(meter.update(0.0f, 1.0 / 120.0) == 0);
+    assert(meter.update(0.1f, 1.0 / 120.0) == 57);
+    assert(meter.update(std::pow(10.0f, -19.0f / 20.0f), 1.0 / 120.0) == 58);
+    assert(meter.update(0.0f, 0.1) == 0);
+    assert(meter.update(std::numeric_limits<float>::quiet_NaN(), 0.01) == 0);
 
     meter.reset();
     const auto minusTwentyDb = meter.update(0.1f, 1.0 / 30.0);

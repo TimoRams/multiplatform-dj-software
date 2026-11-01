@@ -499,15 +499,21 @@ float DjEngine::vuLevelR() const
 }
 
 
+float DjEngine::takePreFaderFeedbackPeak() noexcept
+{
+    return m_audioPipeline->mixerPtr() ? m_audioPipeline->mixer().takePreFaderFeedbackPeak() : 0.0f;
+}
+
+
 float DjEngine::preFaderVuLevelL() const
 {
-    return m_audioPipeline->mixerPtr() ? m_audioPipeline->mixer().m_preFaderPeakL.load(std::memory_order_relaxed) : 0.0f;
+    return m_lastNotifiedPreVuL;
 }
 
 
 float DjEngine::preFaderVuLevelR() const
 {
-    return m_audioPipeline->mixerPtr() ? m_audioPipeline->mixer().m_preFaderPeakR.load(std::memory_order_relaxed) : 0.0f;
+    return m_lastNotifiedPreVuR;
 }
 
 float DjEngine::masterVuLevelL() const

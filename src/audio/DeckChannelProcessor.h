@@ -1,6 +1,7 @@
 #pragma once
 
 #include "audio/AudioParameters.h"
+#include "audio/MeterPeakAccumulator.h"
 #include "fx/FxProcessor.h"
 
 #include <array>
@@ -130,7 +131,22 @@ public:
     std::atomic<float> m_preFaderPeakL { 0.0f };
     std::atomic<float> m_preFaderPeakR { 0.0f };
 
+    [[nodiscard]] std::array<float, 2> takePreFaderUiPeaks() noexcept
+    {
+        return {std::max(m_uiPeakL.take(), m_preFaderPeakL.load(std::memory_order_relaxed)),
+                std::max(m_uiPeakR.take(), m_preFaderPeakR.load(std::memory_order_relaxed))};
+    }
+    [[nodiscard]] float takePreFaderFeedbackPeak() noexcept
+    {
+        return std::max(m_feedbackPeak.take(),
+            std::max(m_preFaderPeakL.load(std::memory_order_relaxed),
+                     m_preFaderPeakR.load(std::memory_order_relaxed)));
+    }
+
+
 private:
+    MeterPeakAccumulator m_uiPeakL, m_uiPeakR, m_feedbackPeak;
+
     struct Parameters {
         float trim = 1.0f;
         float fader = 1.0f;

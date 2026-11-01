@@ -300,6 +300,11 @@ void DeckChannelProcessor::prepareToPlay(int samplesPerBlockExpected, double sam
         m_searchMuteSmooth.setCurrentAndTargetValue(
             m_searchMuted.load(std::memory_order_acquire) ? 0.0f : 1.0f);
         m_channelFaderGain.store(parameters.fader, std::memory_order_release);
+        m_preFaderPeakL.store(0.0f, std::memory_order_relaxed);
+        m_preFaderPeakR.store(0.0f, std::memory_order_relaxed);
+        (void)m_uiPeakL.take();
+        (void)m_uiPeakR.take();
+        (void)m_feedbackPeak.take();
 
 
         // 1.15 s ramp from full speed to a complete stop
@@ -643,6 +648,9 @@ void DeckChannelProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
             }
             m_preFaderPeakL.store(peakPreL, std::memory_order_relaxed);
             m_preFaderPeakR.store(peakPreR, std::memory_order_relaxed);
+            m_uiPeakL.publish(peakPreL);
+            m_uiPeakR.publish(peakPreR);
+            m_feedbackPeak.publish(std::max(peakPreL, peakPreR));
         }
 
         // Apply the channel fader with per-sample smoothing. Crossfader gain is master-owned.

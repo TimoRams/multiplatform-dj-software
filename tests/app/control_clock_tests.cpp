@@ -98,9 +98,9 @@ void basicAndRates()
     assert(counts.syncCoordinate == counts.syncInput);
     assert(counts.syncApply == counts.syncInput);
     assert(counts.waveform >= 59 && counts.waveform <= 61);
-    assert(counts.feedback >= 29 && counts.feedback <= 31);
+    assert(counts.feedback >= 119 && counts.feedback <= 121);
     assert(counts.display >= 59 && counts.display <= 61);
-    assert(counts.meters >= 29 && counts.meters <= 31);
+    assert(counts.meters >= 59 && counts.meters <= 61);
     assert(counts.statistics >= 9 && counts.statistics <= 11);
     assert(counts.housekeeping >= 1 && counts.housekeeping <= 3);
 }
@@ -145,11 +145,11 @@ void latenessAndCoalescing()
     assert(counts.transport == before.transport + 1);
     assert(counts.syncInput == before.syncInput + 1);
     assert(counts.waveform == before.waveform);
-    assert(counts.feedback == before.feedback);
+    assert(counts.feedback == before.feedback + 1);
     const auto stats = clock.stats();
     assert(stats.lateTicks == 1);
     assert(stats.skippedWaveformTicks == 1);
-    assert(stats.skippedFeedbackTicks == 1);
+    assert(stats.skippedFeedbackTicks == 0);
     assert(stats.skippedDisplayTicks == 1);
     assert(counts.meters == before.meters + 1);
     assert(stats.skippedMeterTicks == 0);
@@ -193,15 +193,18 @@ void sustainedLatePublication()
         clock.advanceForTesting(1.0 / 60.0);
     // Every tick is severely late relative to the 4 ms base timer. Both
     // publications used to remain stuck at their first value indefinitely.
-    assert(counts.meters >= 30 && counts.meters <= 31);
+    assert(counts.meters >= 60 && counts.meters <= 61);
+    assert(counts.feedback >= 60 && counts.feedback <= 61);
     assert(linkTicks >= 20 && linkTicks <= 21);
     assert(counts.waveform == 1);
     const int before = counts.meters;
     const int linkBefore = linkTicks;
     clock.advanceForTesting(2.0);
     assert(counts.meters == before + 1 && linkTicks == linkBefore + 1);
+    const int feedbackBeforeBackground = counts.feedback;
     clock.setBackgroundMode(true);
     clock.advanceForTesting(0.1);
+    assert(counts.feedback == feedbackBeforeBackground + 1);
     assert(counts.meters == before + 1);
     clock.setBackgroundMode(false);
     clock.advanceForTesting(0.1);
