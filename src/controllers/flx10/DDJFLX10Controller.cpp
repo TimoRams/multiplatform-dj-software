@@ -33,6 +33,12 @@ DDJFLX10Controller::DDJFLX10Controller(ControlClock& controlClock, QObject* pare
     for (auto& sink : m_deckPlayheadSinks)
         sink.store(nullptr, std::memory_order_relaxed);
 
+    for (int deck = 1; deck <= 2; ++deck) {
+        m_waveformRefresh[deck].setCallback([this, deck] {
+            if (!m_shuttingDown.load(std::memory_order_acquire))
+                requestPreviewWaveform(deck);
+        });
+    }
     m_uploadTimer.setTimerType(Qt::PreciseTimer);
     m_keepAliveTimer.setTimerType(Qt::PreciseTimer);
     m_keepAliveTimer.setInterval(kKeepAliveIntervalMs);
@@ -190,6 +196,8 @@ void DDJFLX10Controller::stop()
     m_shuttingDown.store(true, std::memory_order_release);
     disconnectDeckSignals();
     m_uploadTimer.stop();
+    for (auto& refresh : m_waveformRefresh)
+        refresh.reset();
     m_keepAliveTimer.stop();
     m_stateTimer.stop();
     m_tempoWaveformRefreshTimer.stop();
@@ -531,7 +539,7 @@ void DDJFLX10Controller::invalidateDeckSnapshot(int deck, const QString& trackPa
     m_uploadStartWindows[deck] = 0;
     m_uploadResweepPending[deck] = false;
     m_pendingTempoWaveformDeckMask &= static_cast<std::uint8_t>(~(1u << deck));
-    m_lastWaveformRefreshMs[deck] = 0;
+    m_waveformRefresh[deck].reset();
     m_lastWaveformUploadMs[deck] = 0;
     m_waveformUploadTrackGenerations[deck] = 0;
     m_waveformUploadQualityPermille[deck] = 0;
@@ -647,11 +655,7 @@ void DDJFLX10Controller::refreshDeckFromEngine(int deck)
     if (m_connected && !m_deckInitialised[deck])
         uploadDeck(deck, false);
 
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (m_lastWaveformRefreshMs[deck] > 0 && now - m_lastWaveformRefreshMs[deck] < 250)
-        return;
-    m_lastWaveformRefreshMs[deck] = now;
-    requestPreviewWaveform(deck);
+    m_waveformRefresh[deck].request();
 }
 
 void DDJFLX10Controller::scheduleTempoWaveformRefresh(int deck)

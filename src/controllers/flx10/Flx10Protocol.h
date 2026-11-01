@@ -480,10 +480,9 @@ inline QByteArray encodePwv5Entry(int height, int red, int green, int blue)
     return out;
 }
 
-// Draw a marker into the waveform data itself. The FLX10's native cue/beat
-// overlay commands are not active in the Serato HID waveform mode used here,
-// but PWV5 is. Encoding the markers as bright waveform columns therefore uses
-// the one rendering path known to be visible on the hardware.
+// Draw markers into the HID waveform payload. Keep jog-screen contents on
+// this path: legacy MIDI jog-display fields can interfere with HID rendering.
+// Native HID cue/beat overlay commands are not yet decoded for this mode.
 inline int waveformEntryForTimeline(double positionSeconds,
                                     double durationSeconds,
                                     int entryCount) noexcept

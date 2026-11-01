@@ -69,6 +69,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     controllers/midi/MidiDeviceEnumeration.cpp
     controllers/midi/MidiMappingLoader.cpp
     controllers/midi/MidiParameterDispatch.cpp
+    controllers/flx10/Flx10WaveformRefresh.h
     controllers/flx10/Flx10ControllerIdentity.h
     controllers/flx10/DDJFLX10Controller.h
     controllers/flx10/DDJFLX10Controller.cpp

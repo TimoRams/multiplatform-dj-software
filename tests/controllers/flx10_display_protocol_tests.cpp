@@ -1,4 +1,8 @@
 #include "controllers/flx10/Flx10Protocol.h"
+#include "controllers/flx10/Flx10WaveformRefresh.h"
+#include <QCoreApplication>
+#include <QEventLoop>
+#include <QTimer>
 #include "controllers/flx10/Flx10HidReport.h"
 #include "controllers/flx10/Flx10HidSupport.h"
 #if defined(Q_OS_MACOS)
@@ -32,6 +36,39 @@ using flx10_protocol::jogPhaseBytes;
 using flx10_protocol::kJogPhaseTicksPerRevolution;
 using flx10_protocol::kJogPhaseTicksPerSecond;
 using flx10_protocol::kJogRevolutionSeconds;
+
+void waveformRefreshDeliversTheFinalPublication()
+{
+    Flx10WaveformRefresh refresh;
+    int sourceRevision = 0;
+    int deliveredRevision = -1;
+    int calls = 0;
+    refresh.setCallback([&] { deliveredRevision = sourceRevision; ++calls; });
+    auto wait = [](int milliseconds) {
+        QEventLoop loop;
+        QTimer::singleShot(milliseconds, &loop, &QEventLoop::quit);
+        loop.exec();
+    };
+    refresh.request(); // Track loaded before the waveform is available.
+    assert(calls == 1 && deliveredRevision == 0);
+    for (int revision = 1; revision <= 100; ++revision) {
+        sourceRevision = revision;
+        refresh.request();
+    }
+    assert(calls == 1);
+    wait(350);
+    assert(calls == 2 && deliveredRevision == 100);
+    wait(300);
+    assert(calls == 2); // No polling or redundant work after the burst.
+    refresh.request();
+    assert(calls == 3);
+    refresh.request();
+    refresh.reset(); // Eject / disconnect cancels delayed work.
+    wait(350);
+    assert(calls == 3);
+    refresh.request();
+    assert(calls == 4); // A new track starts immediately.
+}
 
 void nativeHidReportLayout()
 {
@@ -290,8 +327,10 @@ void beatgridTintsWithoutInventingTransients()
 
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    QCoreApplication app(argc, argv);
+    waveformRefreshDeliversTheFinalPublication();
     nativeHidReportLayout();
     basicEncoding();
     continuousAtDisplayRate();

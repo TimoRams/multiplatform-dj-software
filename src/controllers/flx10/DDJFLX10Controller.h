@@ -3,6 +3,7 @@
 #include "controllers/midi/AlsaMidiTransport.h"
 #include "app/ControlClock.h"
 #include "Flx10Protocol.h"
+#include "Flx10WaveformRefresh.h"
 #include "Flx10HidSupport.h"
 
 #include <QObject>
@@ -255,7 +256,7 @@ private:
     std::array<QMetaObject::Connection, 5> m_progressConnections;
     std::array<QString, 5> m_lastCoverUrls;
     std::array<QString, 5> m_waveformTrackPaths;
-    std::array<qint64, 5> m_lastWaveformRefreshMs = {0, 0, 0, 0, 0};
+    std::array<Flx10WaveformRefresh, 5> m_waveformRefresh;
     std::array<qint64, 5> m_lastWaveformUploadMs = {0, 0, 0, 0, 0};
     std::array<std::uint64_t, 5> m_waveformUploadTrackGenerations = {0, 0, 0, 0, 0};
     std::array<std::uint32_t, 5> m_waveformUploadQualityPermille = {0, 0, 0, 0, 0};
