@@ -1832,6 +1832,11 @@ bool appOverlaysRuntimeTests(const std::string& source)
                       && startupItem->property("welcomeActive").toBool()
                       && appWindow->property("uncleanShutdownWarningVisible").toBool(),
                   "runtime readiness reveals the real layout, first-run welcome and recovery warning");
+    auto* startupTransition = startupItem->findChild<QQuickItem*>("startupTransition");
+    ok &= require(startupTransition && QTest::qWaitFor([&] {
+                      return !startupTransition->isVisible();
+                  }, 1000),
+                  "startup fade completes and releases the overlay after runtime readiness");
     appWindow->setProperty("startupAudioError", QStringLiteral("No output device is active."));
     QCoreApplication::processEvents();
     QObject* audioWarningText = nullptr;

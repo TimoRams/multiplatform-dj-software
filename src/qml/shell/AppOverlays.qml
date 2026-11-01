@@ -28,6 +28,60 @@ Item {
         mainLayout: root.mainLayout
     }
 
+    component LifecycleStatus: Rectangle {
+        id: lifecycleStatus
+        required property var appWindow
+        required property string statusText
+        property real progress: 0
+        color: UiTheme.displayBackground
+
+        Column {
+            anchors.centerIn: parent
+            width: Math.min(parent.width * 0.76, 320)
+            spacing: 28
+
+            Text {
+                width: parent.width
+                text: "BROCK DJ"
+                color: UiTheme.textPrimary
+                font.pixelSize: lifecycleStatus.appWindow.sp(24)
+                font.weight: Font.DemiBold
+                font.letterSpacing: 2
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            Column {
+                width: parent.width
+                spacing: 14
+
+                Rectangle {
+                    width: parent.width
+                    height: 2
+                    color: UiTheme.borderSubtle
+
+                    Rectangle {
+                        width: parent.width * Math.max(0, Math.min(1, lifecycleStatus.progress))
+                        height: parent.height
+                        color: UiTheme.textSecondary
+                        Behavior on width {
+                            enabled: lifecycleStatus.visible
+                            NumberAnimation { duration: 140; easing.type: Easing.OutQuad }
+                        }
+                    }
+                }
+
+                Text {
+                    width: parent.width
+                    text: lifecycleStatus.statusText
+                    color: UiTheme.textSecondary
+                    font.pixelSize: lifecycleStatus.appWindow.sp(12)
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                }
+            }
+        }
+    }
+
     component StartupOverlay: Item {
         id: root
         required property var appWindow
@@ -48,7 +102,6 @@ Item {
                 loadingIndicator.running = false
                 loadingIndicator.activeStage = loadingIndicator.startupStages.length - 1
                 loadingIndicator.stageProgress = 1.0
-                loadingIndicator.visible = false
                 mainLayout.visible = true
                 if (typeof appConfig !== "undefined" && appConfig && !appConfig.firstRunCompleted)
                     root.welcomeActive = true
@@ -201,215 +254,45 @@ Item {
             }
         }
 
-        Item {
-        id: loadingIndicator
-        property bool running: true
-        property int activeStage: 0
-        property real stageProgress: 0.04
-        property string statusTitle: "Preparing application"
-        property string statusDetail: "Loading QML interface"
-        readonly property var startupStages: [
-            {
-                shortName: "UI",
-                name: "Interface",
-                title: "Starting interface",
-                detail: "Preparing the low-latency control surface"
-            },
-            {
-                shortName: "LIB",
-                name: "Library",
-                title: "Opening library",
-                detail: "Connecting database, playlists and browser models"
-            },
-            {
-                shortName: "AUDIO",
-                name: "Audio Engine",
-                title: "Starting audio engine",
-                detail: "Creating DSP graph and device routing"
-            },
-            {
-                shortName: "DECKS",
-                name: "Decks",
-                title: "Configuring decks",
-                detail: "Preparing waveform services and deck state"
-            },
-            {
-                shortName: "MIDI",
-                name: "MIDI",
-                title: "Connecting control layer",
-                detail: "MIDI, mapping and runtime state are online"
-            }
-        ]
-        anchors.fill: parent
-        visible: true
-        z: 1000
-
-        function refreshStatus() {
-            var readyStage = 0
-
-            if (typeof libraryDb !== "undefined" && libraryDb) {
-                readyStage = 1
-            }
-            if (typeof deckA !== "undefined" && deckA && typeof deckB !== "undefined" && deckB) {
-                readyStage = 2
-            }
-            if (typeof deckC !== "undefined" && deckC && typeof deckD !== "undefined" && deckD) {
-                readyStage = 3
-            }
-            if (typeof midiManager !== "undefined" && midiManager) {
-                readyStage = 4
-            }
-
-            var visualStage = Math.max(0, Math.min(startupStages.length - 1, readyStage))
-
-            activeStage = Math.max(activeStage, visualStage)
-            stageProgress = Math.max(stageProgress, Math.max(0.04, (activeStage + 1) / startupStages.length))
-            statusTitle = startupStages[visualStage].title
-            statusDetail = startupStages[visualStage].detail
-        }
-
-        Rectangle {
+        LifecycleStatus {
+            id: loadingIndicator
+            objectName: "startupTransition"
             anchors.fill: parent
-            color: UiTheme.displayBackground
-        }
+            appWindow: root.appWindow
+            z: 1000
+            property bool running: true
+            property int activeStage: 0
+            property real stageProgress: 0.04
+            readonly property var startupStages: [
+                "Starting interface", "Opening library", "Starting audio engine",
+                "Preparing decks", "Connecting controller"
+            ]
+            statusText: running ? startupStages[activeStage] : "Ready"
+            progress: stageProgress
+            opacity: running ? 1 : 0
+            visible: opacity > 0
 
-        Column {
-            anchors.centerIn: parent
-            width: Math.min(parent.width * 0.72, 560)
-            spacing: 20
-
-            Text {
-                text: "BROCK DJ"
-                color: UiTheme.textPrimary
-                font.pixelSize: window.sp(24)
-                font.bold: true
-                font.family: UiTheme.numericFontFamily
-                font.letterSpacing: 1.8
-                horizontalAlignment: Text.AlignHCenter
-                width: parent.width
+            Behavior on opacity {
+                NumberAnimation { duration: 160; easing.type: Easing.OutQuad }
             }
 
-            Column {
-                width: parent.width
-                spacing: 6
+            // Keep input behind the startup gate blocked until runtime readiness.
+            MouseArea { anchors.fill: parent; enabled: loadingIndicator.running }
 
-                Text {
-                    width: parent.width
-                    text: loadingIndicator.statusTitle
-                    color: UiTheme.textPrimary
-                    font.pixelSize: window.sp(15)
-                    font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                    elide: Text.ElideRight
-                }
-
-                Text {
-                    width: parent.width
-                    text: loadingIndicator.statusDetail
-                    color: UiTheme.textSecondary
-                    font.pixelSize: window.sp(10)
-                    horizontalAlignment: Text.AlignHCenter
-                    elide: Text.ElideRight
-                    visible: false
-                }
-            }
-
-            Item {
-                width: parent.width
-                height: 112
-
-                Text {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    text: loadingIndicator.statusDetail
-                    color: UiTheme.textSecondary
-                    font.pixelSize: window.sp(10)
-                    horizontalAlignment: Text.AlignHCenter
-                    elide: Text.ElideRight
-                }
-
-                Rectangle {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.topMargin: 28
-                    height: 2
-                    color: UiTheme.knobTrack
-
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.top: parent.top
-                        anchors.bottom: parent.bottom
-                        width: Math.max(2, parent.width * loadingIndicator.stageProgress)
-                        color: UiTheme.textPrimary
-
-                        Behavior on width {
-                            enabled: loadingIndicator.running && loadingIndicator.visible
-                            NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
-                        }
-                    }
-                }
-
-                Row {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.topMargin: 62
-                    spacing: 0
-                    Repeater {
-                        model: loadingIndicator.startupStages
-
-                        Text {
-                            required property int index
-                            required property var modelData
-                            width: parent.width / loadingIndicator.startupStages.length
-                            text: modelData.name
-                            color: loadingIndicator.activeStage === index ? UiTheme.textPrimary
-                                  : loadingIndicator.activeStage > index ? UiTheme.textSecondary
-                                  : UiTheme.textDim
-                            horizontalAlignment: Text.AlignHCenter
-                            elide: Text.ElideRight
-                            font.pixelSize: window.sp(9)
-                            font.bold: loadingIndicator.activeStage === index
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 30
-                color: UiTheme.panelInset
-
-                Text {
-                    anchors.centerIn: parent
-                    text: loadingIndicator.activeStage >= 4
-                          ? "Runtime ready"
-                          : "Initializing low-latency deck environment"
-                    color: loadingIndicator.activeStage >= 4 ? UiTheme.play : UiTheme.textLabel
-                    font.pixelSize: window.sp(9)
-                    font.family: UiTheme.numericFontFamily
-                    font.letterSpacing: 0.6
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: UiTheme.divider
-            }
-
-            Text {
-                width: parent.width
-                text: "Audio device setup may take a moment on first launch."
-                color: UiTheme.textDim
-                font.pixelSize: window.sp(9)
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.WordWrap
+            function refreshStatus() {
+                var readyStage = 0
+                if (typeof libraryDb !== "undefined" && libraryDb)
+                    readyStage = 1
+                if (typeof deckA !== "undefined" && deckA && typeof deckB !== "undefined" && deckB)
+                    readyStage = 2
+                if (typeof deckC !== "undefined" && deckC && typeof deckD !== "undefined" && deckD)
+                    readyStage = 3
+                if (typeof midiManager !== "undefined" && midiManager)
+                    readyStage = 4
+                activeStage = Math.max(activeStage, readyStage)
+                stageProgress = Math.max(stageProgress, 0.9 * (activeStage + 1) / startupStages.length)
             }
         }
-    }
     }
 
     component StatusOverlay: Item {
@@ -627,16 +510,27 @@ Item {
             anchors.fill: parent
         }
 
+        LifecycleStatus {
+            anchors.fill: parent
+            appWindow: exitOverlay.appWindow
+            statusText: "Saving and closing…"
+            progress: window.exitProgress
+            opacity: window.exitShutdownInProgress ? 1 : 0
+            visible: opacity > 0
+            Behavior on opacity {
+                NumberAnimation { duration: 140; easing.type: Easing.OutQuad }
+            }
+        }
+
         Column {
             anchors.centerIn: parent
             width: Math.min(parent.width * 0.82, 460)
-            spacing: 14
+            spacing: 18
+            visible: !window.exitShutdownInProgress
 
             Text {
                 width: parent.width
-                text: window.exitShutdownInProgress
-                      ? "Closing..."
-                      : "Are you sure you want to quit?"
+                text: "Quit BrockDJ?"
                 color: UiTheme.textPrimary
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.WordWrap
@@ -659,7 +553,7 @@ Item {
 
                     Text {
                         anchors.centerIn: parent
-                        text: "OK"
+                        text: "Quit"
                         color: UiTheme.textPrimary
                         font.pixelSize: window.sp(13)
                         font.bold: true
@@ -698,33 +592,6 @@ Item {
                         onClicked: window.cancelAppClosePrompt()
                     }
                 }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 6
-                color: UiTheme.panelInset
-                border.width: 1
-                border.color: UiTheme.borderSubtle
-                visible: window.exitShutdownInProgress
-
-                Rectangle {
-                    x: parent.border.width
-                    y: parent.border.width
-                    width: Math.max(0, parent.width - 2 * parent.border.width)
-                           * Math.max(0, Math.min(1, window.exitProgress))
-                    height: Math.max(0, parent.height - 2 * parent.border.width)
-                    color: UiTheme.textLabel
-                }
-            }
-
-            Text {
-                width: parent.width
-                visible: window.exitShutdownInProgress
-                text: "Saving database and settings..."
-                color: UiTheme.textSecondary
-                horizontalAlignment: Text.AlignHCenter
-                font.pixelSize: window.sp(11)
             }
 
             Text {
