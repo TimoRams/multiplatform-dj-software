@@ -366,13 +366,15 @@ Item {
 
         Loader {
             id: sourcePageLoader
+            property bool keepLoaded: false
+            onLoaded: keepLoaded = true
             Layout.fillWidth: true
             Layout.fillHeight: window.sourcePageActive
             Layout.minimumHeight: window.sourcePageActive ? 1 : 0
             Layout.preferredHeight: 0
             Layout.maximumHeight: window.sourcePageActive ? window.height : 0
             visible: window.sourcePageActive
-            active: window.sourcePageActive
+            active: window.sourcePageActive || keepLoaded
             asynchronous: true
             sourceComponent: Component {
                 SourcePage {

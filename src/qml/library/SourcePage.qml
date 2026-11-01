@@ -12,7 +12,11 @@ Rectangle {
     signal usbLibraryRequested()
     signal sourceBackRequested()
 
-    color: UiTheme.panelDeep
+    readonly property color selectionSurface: UiTheme.browserSelectionSurface
+    readonly property color selectionAccent: UiTheme.browserSelectionAccent
+    property string cursorDeviceId: ""
+    property bool navigationReady: false
+    color: "#11171f"
     focus: visible
     property string sourcePane: "sources"
     property int sourceCursorIndex: 0
@@ -137,21 +141,36 @@ Rectangle {
         sourceBackRequested()
     }
 
-    onDevicesChanged: {
-        if (visible)
-            syncCursorToActiveSource()
-        else
-            ensureSourceCursor()
+    function rememberSourceCursor() {
+        if (!navigationReady) return
+        const device = sourceCursorIndex > 0 ? devices[sourceCursorIndex - 1] : null
+        cursorDeviceId = device ? String(device.id) : ""
     }
-    onActiveSourceTypeChanged: if (visible) syncCursorToActiveSource()
-    onActiveDeviceIdChanged: if (visible) syncCursorToActiveSource()
-    onVisibleChanged: {
-        if (visible) {
-            sourcePane = "sources"
-            serviceCursorIndex = 0
-            syncCursorToActiveSource()
-            forceActiveFocus()
+
+    function restoreSourceCursor() {
+        if (!navigationReady) return
+        var index = 0
+        if (cursorDeviceId) {
+            for (var i = 0; i < devices.length; ++i) {
+                if (String(devices[i].id) === cursorDeviceId) { index = i + 1; break }
+            }
+            if (index === 0) {
+                cursorDeviceId = ""
+                sourcePane = "sources"
+            }
         }
+        sourceCursorIndex = index
+        ensureSourceCursor()
+    }
+
+    onSourceCursorIndexChanged: rememberSourceCursor()
+    onDevicesChanged: restoreSourceCursor()
+    onVisibleChanged: if (visible && navigationReady) forceActiveFocus()
+    Component.onCompleted: {
+        syncCursorToActiveSource()
+        navigationReady = true
+        rememberSourceCursor()
+        if (visible) forceActiveFocus()
     }
 
     Connections {
@@ -203,7 +222,7 @@ Rectangle {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             width: (parent.width - parent.dividerWidth) / 2
-            color: UiTheme.panel
+            color: "#151c25"
 
             ColumnLayout {
                 anchors.fill: parent
@@ -212,7 +231,7 @@ Rectangle {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
-                    color: UiTheme.panelRaised
+                    color: "#171f29"
                     Text {
                         anchors.left: parent.left
                         anchors.leftMargin: 22
@@ -231,23 +250,21 @@ Rectangle {
                     readonly property bool focused: root.sourcePane === "sources"
                                                     && root.sourceCursorIndex === 0
                     readonly property bool active: root.activeSourceType === "local"
-                    color: focused || active ? UiTheme.blueDim
-                          : (localMouse.containsMouse ? UiTheme.panelRaised : UiTheme.panelInset)
+                    color: focused ? root.selectionSurface : "#151c25"
 
                     Rectangle {
                         anchors.left: parent.left
                         anchors.top: parent.top
                         anchors.bottom: parent.bottom
                         width: 80
-                        color: UiTheme.panelInset
+                        color: "#151c25"
                         Rectangle {
                             anchors.left: parent.left
                             anchors.top: parent.top
                             anchors.bottom: parent.bottom
                             width: 3
-                            color: UiTheme.green
+                            color: root.selectionAccent
                             visible: root.sourcePane === "sources" && root.sourceCursorIndex === 0
-                                     || root.activeSourceType === "local"
                         }
                         Text {
                             anchors.centerIn: parent
@@ -264,7 +281,7 @@ Rectangle {
                         anchors.leftMargin: 102
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Internal Collection"
-                        color: parent.active ? UiTheme.green : UiTheme.textPrimary
+                        color: UiTheme.textPrimary
                         font.pixelSize: 18
                         font.weight: Font.DemiBold
                     }
@@ -306,14 +323,14 @@ Rectangle {
                             Rectangle {
                                 width: 80
                                 height: parent.height
-                                color: UiTheme.panelInset
+                                color: "#151c25"
                                 Rectangle {
                                     anchors.left: parent.left
                                     anchors.top: parent.top
                                     anchors.bottom: parent.bottom
                                     width: 3
-                                    color: deviceAccent
-                                    visible: Boolean(modelData.color) || focused || active
+                                    color: root.selectionAccent
+                                    visible: focused
                                 }
                                 Column {
                                     anchors.centerIn: parent
@@ -337,8 +354,7 @@ Rectangle {
                             Rectangle {
                                 width: parent.width - 80
                                 height: parent.height
-                                color: focused || active ? UiTheme.blueDim
-                                               : (deviceMouse.containsMouse ? UiTheme.panelRaised : UiTheme.panelInset)
+                                color: focused ? root.selectionSurface : "#151c25"
                                 Text {
                                     anchors.left: parent.left
                                     anchors.leftMargin: 20
@@ -347,7 +363,7 @@ Rectangle {
                                     anchors.right: deviceAction.left
                                     anchors.rightMargin: 12
                                     text: modelData.name || ("USB " + (index + 1))
-                                    color: active ? UiTheme.green : UiTheme.textPrimary
+                                    color: UiTheme.textPrimary
                                     font.pixelSize: 17
                                     font.weight: Font.DemiBold
                                     elide: Text.ElideRight
@@ -448,7 +464,7 @@ Rectangle {
             anchors.right: parent.right
             anchors.top: parent.top
             anchors.bottom: parent.bottom
-            color: UiTheme.panel
+            color: "#151c25"
 
             ColumnLayout {
                 anchors.fill: parent
@@ -457,12 +473,12 @@ Rectangle {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 52
-                    color: UiTheme.panelRaised
+                    color: "#171f29"
                     Text {
                         anchors.left: parent.left
                         anchors.leftMargin: 30
                         anchors.verticalCenter: parent.verticalCenter
-                        text: "Available:"
+                        text: "SOURCE"
                         color: UiTheme.textSecondary
                         font.pixelSize: 14
                     }
@@ -470,36 +486,22 @@ Rectangle {
                         anchors.left: parent.left
                         anchors.leftMargin: 108
                         anchors.verticalCenter: parent.verticalCenter
+                        anchors.right: parent.right
+                        anchors.rightMargin: 24
+                        elide: Text.ElideRight
                         text: root.selectedSourceLabel()
                         color: UiTheme.textPrimary
-                        font.pixelSize: 20
-                        font.weight: Font.DemiBold
+                        font.pixelSize: 17
+                        font.weight: Font.Medium
                     }
-                    Text {
-                        anchors.right: serviceSettings.left
-                        anchors.rightMargin: 24
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "ⓘ"
-                        color: UiTheme.textSecondary
-                        font.pixelSize: 19
-                    }
-                    Text {
-                        id: serviceSettings
-                        anchors.right: parent.right
-                        anchors.rightMargin: 26
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "⚙"
-                        color: UiTheme.textSecondary
-                        font.pixelSize: 20
-                    }
+
                 }
 
                 Repeater {
                     model: [
                         { key: "library", icon: "▣",
-                          label: root.sourceCursorIndex === 0 ? "Local\nLibrary" : "USB\nLibrary",
-                          enabled: true },
-                        { key: "cloud", icon: "☁", label: "Cloud", enabled: false }
+                          label: root.sourceCursorIndex === 0 ? "Local Library" : "USB Library",
+                          enabled: true }
                     ]
 
                     delegate: Rectangle {
@@ -507,13 +509,9 @@ Rectangle {
                         required property int index
                         readonly property bool focused: root.sourcePane === "services"
                                                      && root.serviceCursorIndex === index
-                        // The Library service is the active destination for the
-                        // source selected in the left pane, even when focus stays
-                        // on that source pane.
-                        readonly property bool active: modelData.key === "library"
                         Layout.fillWidth: true
                         Layout.preferredHeight: 94
-                        color: focused ? UiTheme.blueDim : (active ? UiTheme.panelRaised : UiTheme.panelInset)
+                        color: focused ? root.selectionSurface : "#151c25"
 
                         Rectangle {
                             anchors.bottom: parent.bottom
@@ -527,9 +525,8 @@ Rectangle {
                             anchors.left: parent.left
                             anchors.leftMargin: 31
                             anchors.verticalCenter: parent.verticalCenter
-                            text: parent.focused || parent.active ? "◉" : "○"
-                            color: parent.focused ? UiTheme.blue
-                                  : (parent.active ? UiTheme.green : UiTheme.textDim)
+                            text: parent.focused ? "›" : ""
+                            color: root.selectionAccent
                             font.pixelSize: 20
                         }
 

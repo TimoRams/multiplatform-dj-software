@@ -5,7 +5,7 @@ import DJSoftware as Design
 
 Rectangle {
     id: libraryRoot
-    color: Design.UiTheme.panelDeep
+    color: libraryRoot.bgBase
     focus: true
 
     // ── External API ───────────────────────────────────────────────────────
@@ -68,11 +68,15 @@ Rectangle {
     //   "search"  — search TextField has active focus
     property string focusedPanel: "tracks"
 
+    property string fileCursorName: ""
+    property string fileCursorFolder: ""
+    readonly property bool fileCursorInFolder: libraryManager && fileCursorFolder === libraryManager.currentFolder
     property int  browserCursorIndex:  -1
     property bool browserCursorActive: false
 
     property int  sidebarCursorIndex:  -1
     property bool sidebarCursorActive: false
+    property string sidebarCursorPlaylistId: ""
 
     // ── Active track selection (single source of truth) ─────────────────
     property string activeTrackId:       ""
@@ -97,7 +101,21 @@ Rectangle {
     }
 
     onVisiblePlaylistsChanged: {
-        syncSidebarCursorToSelection()
+        const savedIndex = focusedPanel === "sidebar" && sidebarCursorPlaylistId
+                         ? _playlistIndexForId(sidebarCursorPlaylistId) : -1
+        if (savedIndex >= 0) {
+            sidebarCursorIndex = sidebarPlaylistStartIndex + savedIndex
+            sidebarCursorActive = true
+            _ensureSidebarVisible(sidebarCursorIndex)
+        } else {
+            syncSidebarCursorToSelection()
+        }
+    }
+
+    onSidebarCursorIndexChanged: {
+        if (sidebarCursorIndex < 0) return
+        const entry = sidebarEntryAt(sidebarCursorIndex)
+        sidebarCursorPlaylistId = entry && entry.type === "playlist" && entry.data ? entry.data.id : ""
     }
 
     onCurrentPlaylistIdChanged: {
@@ -117,18 +135,18 @@ Rectangle {
     }
 
     // ── Theme ───────────────────────────────────────────────────────────────
-    readonly property color bgBase:      Design.UiTheme.panelDeep
-    readonly property color bgSidebar:   Design.UiTheme.panel
-    readonly property color bgSidebarHv: Design.UiTheme.panelRaised
-    readonly property color bgToolbar:   Design.UiTheme.panel
-    readonly property color bgHeader:    Design.UiTheme.panelRaised
-    readonly property color bgRowEven:   Design.UiTheme.panelInset
-    readonly property color bgRowOdd:    Design.UiTheme.panel
-    readonly property color bgRowHover:  Design.UiTheme.bg4
-    readonly property color bgRowActive: Design.UiTheme.blueDim
-    readonly property color borderSub:   Design.UiTheme.borderSubtle
-    readonly property color borderMain:  Design.UiTheme.border
-    readonly property color borderHigh:  Design.UiTheme.borderStrong
+    readonly property color bgBase:      "#11171f"
+    readonly property color bgSidebar:   "#151c25"
+    readonly property color bgSidebarHv: "#202a36"
+    readonly property color bgToolbar:   "#171f29"
+    readonly property color bgHeader:    "#151d27"
+    readonly property color bgRowEven:   "#11171f"
+    readonly property color bgRowOdd:    "#11171f"
+    readonly property color bgRowHover:  "#1d2835"
+    readonly property color bgRowActive: Design.UiTheme.browserSelectionSurface
+    readonly property color borderSub:   "#19232f"
+    readonly property color borderMain:  "#26313f"
+    readonly property color borderHigh:  "#465366"
     readonly property color textPrimary: Design.UiTheme.textPrimary
     readonly property color textSecond:  Design.UiTheme.textSecondary
     readonly property color textDim:     Design.UiTheme.textDim
@@ -142,20 +160,20 @@ Rectangle {
     readonly property color accentKey:   Design.UiTheme.blue
     readonly property color accentKeyMatch: Design.UiTheme.green
     readonly property color accentKeyCompat: Design.UiTheme.deckD
-    readonly property color sidebarSel:  Design.UiTheme.blueDim
+    readonly property color sidebarSel:  Design.UiTheme.browserSelectionSurface
     readonly property color textMeta:    Design.UiTheme.textLabel
     readonly property color textNav:     Design.UiTheme.textSecondary
 
-    readonly property int rowH:       24
-    readonly property int rowHNormal: 56
-    readonly property int hdrH:       26
-    readonly property int toolbarH:   touchMode ? 52 : 36
-    readonly property int sidebarW:   touchMode ? 0 : 200
+    readonly property int rowH:       34
+    readonly property int rowHNormal: 64
+    readonly property int hdrH:       34
+    readonly property int toolbarH:   touchMode ? 56 : 48
+    readonly property int sidebarW:   touchMode ? 0 : 216
     property string viewMode: "compact"
     readonly property bool touchMode: window.allInOneMode
     property string aioBrowseScreen: "home" // home | artist | album | key | playlist | history | matching | folder
-    readonly property int aioNavPad: 4
-    readonly property int aioNavGap: 2
+    readonly property int aioNavPad: 8
+    readonly property int aioNavGap: 6
     readonly property int aioNavTileW: 104
     readonly property int aioNavTileH: 48
     readonly property int aioNavPanelW: touchMode ? aioNavTileW + aioNavPad * 2 : 0
@@ -435,7 +453,49 @@ Rectangle {
             window.openLibrarySourceView()
     }
 
+    function navigateBrowserBack() {
+        if (activeTab === "usb") {
+            usbNavigateBack()
+            return
+        }
+        if (touchMode) {
+            if (aioFocusZone === "nav" && !aioBrowseDrilled) {
+                if (window && window.openLibrarySourceView) window.openLibrarySourceView()
+            } else {
+                aioBrowseCursorLeft()
+            }
+            return
+        }
+        if (focusedPanel !== "sidebar") {
+            setFocusedPanel("sidebar")
+            return
+        }
+        const entry = sidebarEntryAt(sidebarCursorIndex)
+        if (entry && entry.type === "playlist" && entry.data
+                && (entry.data.parentId || expandedPlaylists[entry.data.id])) {
+            collapseSidebarItem()
+        } else if (window && window.openLibrarySourceView) {
+            window.openLibrarySourceView()
+        }
+    }
+
+    function activateSidebarCursor() {
+        const entry = sidebarEntryAt(sidebarCursorIndex)
+        if (!entry) return
+        const folder = entry.type === "playlist" && entry.data && entry.data.hasChildren
+        selectSidebarItem()
+        if (!folder) setFocusedPanel("tracks")
+    }
+
     function confirmLibrarySelection(deckLetter) {
+        if (touchMode && activeTab !== "usb" && aioFocusZone !== "tracks") {
+            aioBrowseCursorActivate()
+            return
+        }
+        if (!touchMode && focusedPanel === "sidebar") {
+            activateSidebarCursor()
+            return
+        }
         if (activeTab === "usb" && usbFocusArea !== "tracks") {
             activateUsbCursor()
             return
@@ -1197,7 +1257,7 @@ Rectangle {
         var lvl = keyMatchLevel(rowKey)
         if (lvl === 2) return accentKeyMatch
         if (lvl === 1) return accentKeyCompat
-        return rowKey ? accentKey : textDim
+        return rowKey ? textSecond : textDim
     }
 
     function openSmartCollEditor(sc) {
@@ -1208,12 +1268,12 @@ Rectangle {
     }
 
     // ── Fixed column widths ────────────────────────────────────────────────
-    readonly property int colStatus: 26
+    readonly property int colStatus: 36
     readonly property int colTime:   56
     readonly property int colBpm:    62
     readonly property int colKey:    50
     readonly property int colKbps:   50
-    readonly property int colPad:    14
+    readonly property int colPad:    50
 
     // ── Resizable title/artist split ───────────────────────────────────────
     // titleFraction is dragged via the header resize handle.
@@ -1479,6 +1539,9 @@ Rectangle {
     }
 
     function setActiveTrackFromRow(index, trackId, filePath, source) {
+        focusedPanel = "tracks"
+        if (touchMode) aioFocusZone = "tracks"
+        if (activeTab === "usb") usbFocusArea = "tracks"
         browserCursorIndex = index
         browserCursorActive = true
         _applyActiveTrack(index, trackId, filePath, source || activeTab)
@@ -1588,6 +1651,16 @@ Rectangle {
     }
 
     function moveCursor(rawDelta) {
+        if (activeTab === "files") {
+            if (!filteredFileTracks.length) return
+            var current = fileCursorInFolder ? filteredFileTracks.indexOf(fileCursorName) : -1
+            fileCursorFolder = libraryManager ? libraryManager.currentFolder : ""
+            var next = Math.max(0, Math.min(filteredFileTracks.length - 1,
+                current < 0 ? (rawDelta >= 0 ? 0 : filteredFileTracks.length - 1) : current + rawDelta))
+            fileCursorName = filteredFileTracks[next]
+            trackList.positionViewAtIndex(next, ListView.Contain)
+            return
+        }
         if (activeTab === "usb" && usbFocusArea !== "tracks") {
             moveUsbCursor(rawDelta)
             return
@@ -1621,12 +1694,14 @@ Rectangle {
     }
 
     function getCursorFilePath() {
+        if (activeTab === "files") return fileCursorName && fileCursorInFolder ? libraryManager.currentFolder + "/" + fileCursorName : ""
         if (!browserCursorActive || browserCursorIndex < 0) return ""
         if (activeTrackIndex !== browserCursorIndex) syncActiveTrackFromCursor()
         return activeTrackFilePath || ""
     }
 
     function getCursorTrackId() {
+        if (activeTab === "files") return ""
         if (!browserCursorActive || browserCursorIndex < 0) return ""
         if (activeTrackIndex !== browserCursorIndex) syncActiveTrackFromCursor()
         return activeTrackId || ""
@@ -1759,7 +1834,7 @@ Rectangle {
         } else {
             forceActiveFocus()
             if (panel === "sidebar") {
-                syncSidebarCursorToSelection()
+                if (!sidebarCursorActive) syncSidebarCursorToSelection()
             } else if (panel === "tracks") {
                 ensureActiveTrackForCurrentTab()
             }
@@ -1899,6 +1974,8 @@ Rectangle {
                             libraryRoot.moveUsbCursor(value)
                     } else if (libraryRoot.touchMode) {
                         libraryRoot.aioMoveBrowseVertical(value)
+                    } else if (libraryRoot.focusedPanel === "sidebar") {
+                        libraryRoot.moveSidebarCursor(value)
                     } else {
                         libraryRoot.moveCursor(value)
                     }
@@ -1911,35 +1988,20 @@ Rectangle {
             } else if (id === "library_playlist_prev") {
                 if (value > 0) libraryRoot.selectNextPlaylist(-1)
             } else if (id === "library_back") {
-                if (value > 0) {
-                    if (libraryRoot.activeTab === "usb")
-                        libraryRoot.usbNavigateBack()
-                    else if (libraryRoot.touchMode)
-                        libraryRoot.aioBrowseCursorLeft()
-                    else
-                        libraryRoot.activeTab = "library"
-                }
+                if (value > 0) libraryRoot.navigateBrowserBack()
             } else if (id === "library_expand") {
                 if (value > 0) {
                     if (libraryRoot.activeTab === "usb")
                         libraryRoot.activateUsbCursor()
                     else if (libraryRoot.touchMode)
                         libraryRoot.aioBrowseCursorRight()
+                    else if (libraryRoot.focusedPanel === "sidebar")
+                        libraryRoot.activateSidebarCursor()
                     else if (libraryRoot.currentPlaylistId)
                         libraryRoot.toggleExpanded(libraryRoot.currentPlaylistId)
                 }
             } else if (id === "library_collapse") {
-                if (value > 0) {
-                    if (libraryRoot.activeTab === "usb")
-                        libraryRoot.usbNavigateBack()
-                    else if (libraryRoot.touchMode)
-                        libraryRoot.aioBrowseCursorLeft()
-                    else if (libraryRoot.currentPlaylistId) {
-                        var ex = Object.assign({}, libraryRoot.expandedPlaylists)
-                        delete ex[libraryRoot.currentPlaylistId]
-                        libraryRoot.expandedPlaylists = ex
-                    }
-                }
+                if (value > 0) libraryRoot.navigateBrowserBack()
             }
         }
     }
@@ -2020,8 +2082,8 @@ Rectangle {
                 event.accepted = true
             } else if (event.key === Qt.Key_P) {
                 togglePreview(getCursorFilePath()); event.accepted = true
-            } else if (event.key === Qt.Key_Escape) {
-                browserCursorActive = false; event.accepted = true
+            } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Escape) {
+                navigateBrowserBack(); event.accepted = true
             }
         } else if (focusedPanel === "sidebar") {
             if (event.key === Qt.Key_Up) {
@@ -2029,11 +2091,11 @@ Rectangle {
             } else if (event.key === Qt.Key_Down) {
                 moveSidebarCursor(1); event.accepted = true
             } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                selectSidebarItem(); event.accepted = true
+                activateSidebarCursor(); event.accepted = true
             } else if (event.key === Qt.Key_Right) {
-                expandSidebarItem(); event.accepted = true
+                activateSidebarCursor(); event.accepted = true
             } else if (event.key === Qt.Key_Left) {
-                collapseSidebarItem(); event.accepted = true
+                navigateBrowserBack(); event.accepted = true
             } else if (event.key === Qt.Key_Escape) {
                 sidebarCursorActive = false
                 focusedPanel = "tracks"
@@ -2338,12 +2400,9 @@ Rectangle {
         width: parent ? parent.width : libraryRoot.aioNavTileW
         height: libraryRoot.aioNavTileH
         clip: true
-        radius: 0
-        color: tileMa.pressed ? Design.UiTheme.panelRaised
-              : tileCursor || tileActive ? Design.UiTheme.blueDim
-              : Design.UiTheme.panelInset
-        border.color: tileCursor ? libraryRoot.accentGreen
-                    : tileActive ? aioTile.tileAccent : libraryRoot.borderSub
+        radius: 5
+        color: tileCursor ? libraryRoot.sidebarSel : "transparent"
+        border.color: tileCursor ? Design.UiTheme.browserSelectionAccent : "transparent"
         border.width: 1
 
         Column {
@@ -2354,14 +2413,14 @@ Rectangle {
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: aioTile.tileIcon
-                color: tileActive ? aioTile.tileAccent : libraryRoot.textSecond
+                color: tileActive ? libraryRoot.accentBlue : libraryRoot.textSecond
                 font.pixelSize: window.sp(compact ? 14 : 20)
             }
             Text {
                 width: parent.width
                 text: aioTile.tileLabel
                 color: tileActive ? libraryRoot.textPrimary : libraryRoot.textSecond
-                font.pixelSize: window.sp(compact ? 6 : 7)
+                font.pixelSize: window.sp(compact ? 9 : 10)
                 font.bold: tileActive
                 horizontalAlignment: Text.AlignHCenter
                 elide: Text.ElideRight
@@ -2378,7 +2437,7 @@ Rectangle {
             width: Math.max(16, badgeLbl.implicitWidth + 4)
             height: 12
             radius: 0
-            color: Design.UiTheme.panelRaised
+            color: libraryRoot.bgSidebarHv
             Text {
                 id: badgeLbl
                 anchors.centerIn: parent
@@ -2412,8 +2471,8 @@ Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
             height: 2
-            color: libraryRoot.accentGreen
-            visible: libraryRoot.aioCursorPickerActive
+            color: "transparent"
+            visible: false
             z: 2
         }
 
@@ -2463,21 +2522,17 @@ Rectangle {
                 readonly property string rowName: modelData.name || modelData.label || ""
                 width: browsePickerList.width
                 height: rowFocused ? 52 : 40
-                color: rowMa.pressed ? libraryRoot.bgRowHover
-                     : rowFocused ? libraryRoot.bgRowActive
-                     : (index % 2 === 0 ? libraryRoot.bgRowEven : libraryRoot.bgRowOdd)
+                color: rowFocused ? libraryRoot.bgRowActive : libraryRoot.bgBase
 
-                readonly property bool rowFocused:
-                    (libraryRoot.aioFocusZone === "picker" && index === libraryRoot.aioBrowseFocusIndex)
-                    || (libraryRoot.aioFocusZone !== "picker"
-                        && libraryRoot.aioBrowseEntryKey(modelData) === browsePicker.focusKey)
+                readonly property bool rowFocused: libraryRoot.aioFocusZone === "picker"
+                    && index === libraryRoot.aioBrowseFocusIndex
 
                 Rectangle {
                     anchors.left: parent.left
                     anchors.top: parent.top
                     anchors.bottom: parent.bottom
                     width: rowFocused ? 3 : 0
-                    color: libraryRoot.accentBlueLt
+                    color: Design.UiTheme.browserSelectionAccent
                 }
 
                 Column {
@@ -2612,20 +2667,17 @@ Rectangle {
                 libraryRoot.openSwipeRowIndex = -1
         }
 
-        readonly property bool isCursorRow: libraryRoot.browserCursorActive
+        readonly property bool isCursorRow: libraryRoot.focusedPanel === "tracks"
+                                           && (libraryRoot.activeTab !== "usb" || libraryRoot.usbFocusArea === "tracks")
+                                           && libraryRoot.browserCursorActive
                                            && libraryRoot.browserCursorIndex === rowIndex
                                            && libraryRoot.aioCursorTracksActive
                                            && (isPlaylistTrack
                                                ? libraryRoot.activeTab === "playlist"
                                                : libraryRoot.activeTab === rowSourceTab)
 
-        readonly property color artBgColor: {
-            var s = rowTitle || rowArtist || ""
-            if (s.length === 0) return Design.UiTheme.panelInset
-            var h = 0
-            for (var i = 0; i < s.length && i < 20; i++) h = (h * 31 + s.charCodeAt(i)) & 0xFFFF
-            return Qt.hsla((h % 360) / 360.0, 0.42, 0.20, 1.0)
-        }
+        readonly property bool rowSelected: isCursorRow
+        readonly property color artBgColor: "#263342"
 
         height: libraryRoot.trackRowHeight()
         width: viewWidth > 0 ? viewWidth : (parent ? parent.width : 0)
@@ -2687,7 +2739,7 @@ Rectangle {
                         Text {
                             anchors.centerIn: parent
                             text: "▶ " + modelData
-                            color: libraryRoot.accentBlueLt; font.pixelSize: window.sp(11); font.bold: true
+                            color: libraryRoot.accentBlueLt; font.pixelSize: window.sp(12); font.bold: true
                         }
                         MouseArea {
                             id: loadDeckMa; anchors.fill: parent
@@ -2708,22 +2760,16 @@ Rectangle {
                 id: trContent
                 width: tr.viewWidth > 0 ? tr.viewWidth : tr.width
                 height: parent.height
-                color: trMouse.containsMouse
-                       ? libraryRoot.bgRowHover
-                     : (tr.keyMatch === 2 ? Design.UiTheme.greenDim
-                     : (tr.keyMatch === 1 ? Design.UiTheme.panelInset
-                     : (isCursorRow
-                        ? Design.UiTheme.greenDim
-                        : (rowIndex % 2 === 0 ? libraryRoot.bgRowEven : libraryRoot.bgRowOdd))))
+                color: tr.rowSelected ? libraryRoot.bgRowActive : libraryRoot.bgBase
                 opacity: trDragPayload.dragging ? 0.4 : 1.0
 
         Rectangle {
             anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
             width: tr.rowColor !== "" ? 3 : 2
-            color: tr.isCursorRow ? libraryRoot.accentGreen
+            color: tr.rowSelected ? Design.UiTheme.browserSelectionAccent
                  : tr.rowColor !== "" ? tr.rowColor
                  : libraryRoot.accentBlue
-            visible: trMouse.containsMouse || tr.isCursorRow || tr.rowColor !== ""
+            visible: tr.rowSelected || tr.rowColor !== ""
         }
         
         // Drop zone indicators for playlist track reordering
@@ -2749,11 +2795,11 @@ Rectangle {
 
             Item {
                 width: libraryRoot.colStatus
-                height: 20
+                height: 26
                 anchors.verticalCenter: parent.verticalCenter
                 Rectangle {
                     anchors.centerIn: parent
-                    width: 18; height: 18; radius: 0
+                    width: 24; height: 24; radius: 3
                     color: tr.artBgColor; clip: true
                     Image {
                         id: trCoverCompact
@@ -2778,7 +2824,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 text: tr.rowTitle || "—"
                 color: libraryRoot.textPrimary
-                font.pixelSize: window.sp(11)
+                font.pixelSize: window.sp(12)
                 elide: Text.ElideRight
             }
             Text {
@@ -2786,11 +2832,9 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 text: tr.rowIsHistory
                       ? ((tr.rowArtist || "—") + (tr.rowPlayedAt > 0 ? "  ·  " + libraryRoot.formatHistoryDate(tr.rowPlayedAt) : ""))
-                      : ((tr.rowArtist || "—")
-                         + (tr.rowAlbum ? "  ·  " + tr.rowAlbum : "")
-                         + (tr.rowGenre ? "  ·  " + tr.rowGenre : ""))
+                      : (tr.rowArtist || "—")
                 color: libraryRoot.textSecond
-                font.pixelSize: window.sp(11)
+                font.pixelSize: window.sp(12)
                 elide: Text.ElideRight
             }
             Text {
@@ -2803,15 +2847,15 @@ Rectangle {
                       : "—"
                 color: tr.rowIsHistory ? libraryRoot.accentBlueLt
                     : (tr.rowDurationSec > 0 ? libraryRoot.textMeta : libraryRoot.textDim)
-                font.pixelSize: window.sp(11); font.family: "monospace"
+                font.pixelSize: window.sp(12); font.family: Design.UiTheme.numericFontFamily
                 horizontalAlignment: Text.AlignHCenter
             }
             Text {
                 width: libraryRoot.colBpm
                 anchors.verticalCenter: parent.verticalCenter
                 text: tr.rowBpm > 0 ? tr.rowBpm.toFixed(1) : "—"
-                color: tr.rowBpm > 0 ? libraryRoot.accentGreen : libraryRoot.textDim
-                font.pixelSize: window.sp(11); font.family: "monospace"
+                color: tr.rowBpm > 0 ? libraryRoot.textPrimary : libraryRoot.textDim
+                font.pixelSize: window.sp(12); font.family: Design.UiTheme.numericFontFamily
                 horizontalAlignment: Text.AlignHCenter
             }
             Text {
@@ -2819,7 +2863,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 text: tr.rowKey || "—"
                 color: libraryRoot.keyMatchColor(tr.rowKey)
-                font.pixelSize: window.sp(11); font.family: "monospace"
+                font.pixelSize: window.sp(12); font.family: Design.UiTheme.numericFontFamily
                 font.bold: tr.keyMatch === 2
                 horizontalAlignment: Text.AlignHCenter
             }
@@ -2828,10 +2872,11 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 text: tr.rowBitrateKbps > 0 ? tr.rowBitrateKbps.toString() : "—"
                 color: tr.rowBitrateKbps > 0 ? libraryRoot.textSecond : libraryRoot.textDim
-                font.pixelSize: window.sp(10); font.family: "monospace"
+                font.pixelSize: window.sp(10); font.family: Design.UiTheme.numericFontFamily
                 horizontalAlignment: Text.AlignHCenter
             }
             Row {
+                visible: tr.rowRating > 0
                 width: 44
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 2
@@ -2858,7 +2903,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 width: tr.touchMode ? 52 : 44
                 height: tr.touchMode ? 52 : 44
-                radius: 0
+                radius: 4
                 color: tr.artBgColor
                 clip: true
 
@@ -2875,8 +2920,9 @@ Rectangle {
                 Rectangle {
                     anchors.top: parent.top; anchors.right: parent.right
                     anchors.topMargin: 3; anchors.rightMargin: 3
-                    width: 8; height: 8; radius: 4
-                    color: tr.rowIsAnalyzed ? libraryRoot.accentGreen : Design.UiTheme.knobTrack
+                    width: 6; height: 6; radius: 3
+                    visible: !tr.rowIsAnalyzed
+                    color: libraryRoot.textDim
                     z: 2
                 }
 
@@ -2892,7 +2938,7 @@ Rectangle {
             // Title + Artist column
             Column {
                 anchors.left: trArtBox.right; anchors.leftMargin: 12
-                anchors.right: tr.touchMode ? trTouchMeta.right : trInfoCol.left
+                anchors.right: tr.touchMode ? trTouchMeta.left : trInfoCol.left
                 anchors.rightMargin: 8
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: tr.rowIsHistory ? 3 : 5
@@ -2901,7 +2947,7 @@ Rectangle {
                     width: parent.width
                     text: tr.rowTitle || "—"
                     color: libraryRoot.textPrimary
-                    font.pixelSize: window.sp(12); font.weight: Font.Medium
+                    font.pixelSize: window.sp(tr.touchMode ? 15 : 13); font.weight: Font.Medium
                     elide: Text.ElideRight
                 }
                 Text {
@@ -2916,9 +2962,8 @@ Rectangle {
                     width: parent.width
                     text: (tr.rowArtist || "—")
                           + (tr.rowAlbum ? "  ·  " + tr.rowAlbum : "")
-                          + (tr.rowGenre ? "  ·  " + tr.rowGenre : "")
                     color: libraryRoot.textSecond
-                    font.pixelSize: window.sp(10)
+                    font.pixelSize: window.sp(11)
                     elide: Text.ElideRight
                 }
                 Row {
@@ -2926,14 +2971,14 @@ Rectangle {
                     spacing: 10
                     Text {
                         text: tr.rowBpm > 0 ? tr.rowBpm.toFixed(1) + " BPM" : "— BPM"
-                        color: tr.rowBpm > 0 ? libraryRoot.accentGreen : libraryRoot.textDim
-                        font.pixelSize: window.sp(9); font.family: "monospace"
+                        color: tr.rowBpm > 0 ? libraryRoot.textPrimary : libraryRoot.textDim
+                        font.pixelSize: window.sp(9); font.family: Design.UiTheme.numericFontFamily
                     }
                     Text {
                         text: tr.rowKey || "—"
                         color: libraryRoot.keyMatchColor(tr.rowKey)
                         font.bold: tr.keyMatch === 2
-                        font.pixelSize: window.sp(9); font.family: "monospace"
+                        font.pixelSize: window.sp(9); font.family: Design.UiTheme.numericFontFamily
                     }
                 }
             }
@@ -2952,7 +2997,7 @@ Rectangle {
                           ? (Math.floor(tr.rowDurationSec / 60) + ":" + ("0" + (tr.rowDurationSec % 60)).slice(-2))
                           : "—"
                     color: tr.rowDurationSec > 0 ? libraryRoot.textMeta : libraryRoot.textDim
-                    font.pixelSize: window.sp(10); font.family: "monospace"
+                    font.pixelSize: window.sp(10); font.family: Design.UiTheme.numericFontFamily
                 }
             }
 
@@ -2973,7 +3018,7 @@ Rectangle {
                           : "—"
                     color: tr.rowIsHistory ? libraryRoot.accentBlueLt
                         : (tr.rowDurationSec > 0 ? libraryRoot.textMeta : libraryRoot.textDim)
-                    font.pixelSize: window.sp(11); font.family: "monospace"
+                    font.pixelSize: window.sp(12); font.family: Design.UiTheme.numericFontFamily
                 }
 
                 Text {
@@ -2982,7 +3027,7 @@ Rectangle {
                     text: "Play #" + tr.rowTrackPlayCount
                     color: libraryRoot.textMeta
                     font.pixelSize: window.sp(9)
-                    font.family: "monospace"
+                    font.family: Design.UiTheme.numericFontFamily
                 }
 
                 Row {
@@ -2991,14 +3036,14 @@ Rectangle {
 
                     Text {
                         text: tr.rowBpm > 0 ? tr.rowBpm.toFixed(1) : "—"
-                        color: tr.rowBpm > 0 ? libraryRoot.accentGreen : libraryRoot.textDim
-                        font.pixelSize: window.sp(10); font.family: "monospace"
+                        color: tr.rowBpm > 0 ? libraryRoot.textPrimary : libraryRoot.textDim
+                        font.pixelSize: window.sp(10); font.family: Design.UiTheme.numericFontFamily
                     }
                     Text {
                         text: tr.rowKey || "—"
                         color: libraryRoot.keyMatchColor(tr.rowKey)
                         font.bold: tr.keyMatch === 2
-                        font.pixelSize: window.sp(10); font.family: "monospace"
+                        font.pixelSize: window.sp(10); font.family: Design.UiTheme.numericFontFamily
                     }
                 }
                 Row {
@@ -3019,6 +3064,7 @@ Rectangle {
         Rectangle {
             anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
             height: 1; color: libraryRoot.borderSub
+            anchors.leftMargin: 6
         }
 
         Item {
@@ -3256,10 +3302,6 @@ Rectangle {
             }
         } // slideRow
 
-        Rectangle {
-            anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
-            height: 1; color: libraryRoot.borderSub
-        }
     } // TrackRow
 
     // ── Inline component: sidebar nav button ──────────────────────────────
@@ -3277,22 +3319,14 @@ Rectangle {
                               && libraryRoot.sidebarCursorActive
                               && libraryRoot.sidebarCursorIndex === cursorIndex
 
-        width: parent ? parent.width : 0; height: 42
-         color: libraryRoot.activeTab === tabKey
-             ? libraryRoot.sidebarSel
-             : (isCursor ? Design.UiTheme.greenDim : (navMa.containsMouse ? libraryRoot.bgSidebarHv : "transparent"))
+        width: parent ? parent.width : 0; height: 44
+        color: isCursor ? libraryRoot.sidebarSel : "transparent"
         Behavior on color { ColorAnimation { duration: 120 } }
 
         Rectangle {
             anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-            width: 3; color: libraryRoot.accentBlue
-            visible: libraryRoot.activeTab === navBtn.tabKey
-        }
-
-        Rectangle {
-            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-            width: 3; color: libraryRoot.accentGreen
-            visible: navBtn.isCursor && libraryRoot.activeTab !== navBtn.tabKey
+            width: 2; color: Design.UiTheme.browserSelectionAccent
+            visible: navBtn.isCursor
         }
 
         Row {
@@ -3301,8 +3335,8 @@ Rectangle {
             spacing: 10
 
             Rectangle {
-                width: 26; height: 26; radius: 0
-                color: libraryRoot.activeTab === navBtn.tabKey ? Design.UiTheme.blueDim : Design.UiTheme.panelInset
+                width: 22; height: 24; radius: 0
+                color: "transparent"
                 anchors.verticalCenter: parent.verticalCenter
 
                 Text {
@@ -3328,8 +3362,8 @@ Rectangle {
             visible: navBtn.badgeCount > 0
             anchors.verticalCenter: parent.verticalCenter
             anchors.right: parent.right; anchors.rightMargin: 10
-            width: Math.max(24, navBadgeLabel.implicitWidth + 10); height: 16; radius: 0
-            color: libraryRoot.activeTab === navBtn.tabKey ? Design.UiTheme.blueDim : Design.UiTheme.panelInset
+            width: Math.max(24, navBadgeLabel.implicitWidth + 10); height: 20; radius: 4
+            color: "transparent"
 
             Text {
                 id: navBadgeLabel
@@ -3337,7 +3371,7 @@ Rectangle {
                 text: navBtn.badgeCount > 0 ? navBtn.badgeCount : ""
                 color: libraryRoot.activeTab === navBtn.tabKey
                        ? libraryRoot.accentBlueLt : libraryRoot.textDim
-                font.pixelSize: window.sp(9)
+                font.pixelSize: window.sp(10)
             }
         }
 
@@ -3371,11 +3405,11 @@ Rectangle {
         required property bool   ascending
         signal tapped()
 
-        height: libraryRoot.touchMode ? 36 : 20; radius: 0
+        height: libraryRoot.touchMode ? 36 : 26; radius: 4
         width: Math.max(libraryRoot.touchMode ? 56 : 0,
                         pillLabel.implicitWidth + (isActive ? pillArrow.implicitWidth + 28 : 20))
-        color: isActive ? Design.UiTheme.blueDim : Design.UiTheme.panelInset
-        border.color: isActive ? libraryRoot.accentBlue : libraryRoot.borderSub; border.width: 1
+        color: isActive ? libraryRoot.bgRowActive : "transparent"
+        border.color: "transparent"; border.width: 0
         Behavior on color        { ColorAnimation { duration: 110 } }
         Behavior on border.color { ColorAnimation { duration: 110 } }
         Behavior on width        { NumberAnimation { duration: 120; easing.type: Easing.OutQuad } }
@@ -3386,7 +3420,7 @@ Rectangle {
                 id: pillLabel
                 text: pill.label
                 color: pill.isActive ? libraryRoot.textPrimary : libraryRoot.textSecond
-                font.pixelSize: window.sp(10)
+                font.pixelSize: window.sp(11)
                 anchors.verticalCenter: parent.verticalCenter
             }
             Text {
@@ -3426,7 +3460,7 @@ Rectangle {
             Rectangle {
                 anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
                 anchors.rightMargin: 1
-                height: 2; color: libraryRoot.accentGreen
+                height: 1; color: libraryRoot.borderHigh
                 visible: libraryRoot.focusedPanel === "sidebar"
                 z: 10
             }
@@ -3648,12 +3682,9 @@ Rectangle {
                                 libraryRoot.sidebarCursorActive &&
                                 libraryRoot.sidebarCursorIndex === sidebarIndex
 
-                            width: parent.width; height: 36
-                            color: isSelected          ? libraryRoot.sidebarSel
-                                 : dropZone === "into" ? Design.UiTheme.greenDim
-                                 : isSidebarCursor     ? Design.UiTheme.greenDim
-                                 : plMouse.containsMouse ? libraryRoot.bgSidebarHv
-                                 : "transparent"
+                            width: parent.width; height: 40
+                            color: isSidebarCursor ? libraryRoot.sidebarSel
+                                 : dropZone === "into" ? libraryRoot.bgSidebarHv : "transparent"
 
                             Behavior on color { ColorAnimation { duration: 100 } }
                             opacity: plMouse.drag.active ? 0.45 : 1.0
@@ -3661,13 +3692,7 @@ Rectangle {
                             // Selection accent (blue)
                             Rectangle {
                                 anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                                width: 3; color: libraryRoot.accentBlue; visible: isSelected
-                            }
-                            // Keyboard cursor accent (green)
-                            Rectangle {
-                                anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                                width: 3; color: libraryRoot.accentGreen
-                                visible: plRow.isSidebarCursor && !isSelected
+                                width: 2; color: Design.UiTheme.browserSelectionAccent; visible: isSidebarCursor
                             }
                             Rectangle {
                                 anchors { left: parent.left; right: parent.right; top: parent.top }
@@ -3714,12 +3739,12 @@ Rectangle {
                                 visible: modelData.trackCount > 0
                                 anchors.verticalCenter: parent.verticalCenter
                                 anchors.right: parent.right; anchors.rightMargin: 10
-                                width: Math.max(22, plBadge.implicitWidth + 10); height: 16; radius: 0
-                                color: Design.UiTheme.panelInset
+                                width: Math.max(22, plBadge.implicitWidth + 10); height: 20; radius: 4
+                                color: "transparent"
                                 Text {
                                     id: plBadge; anchors.centerIn: parent
                                     text: modelData.trackCount
-                                    color: libraryRoot.textDim; font.pixelSize: window.sp(8)
+                                    color: libraryRoot.textDim; font.pixelSize: window.sp(10)
                                 }
                             }
 
@@ -4119,7 +4144,7 @@ Rectangle {
                             width: libraryRoot.touchMode ? 28 : 22
                             height: libraryRoot.touchMode ? 28 : 22
                             radius: 0
-                            color: Design.UiTheme.blueDim
+                            color: "transparent"
                             anchors.verticalCenter: parent.verticalCenter
 
                             Text {
@@ -4153,7 +4178,7 @@ Rectangle {
                                     : libraryRoot.activeTab === "streaming"  ? "Streaming"
                                     : "USB")
                             color: libraryRoot.textPrimary
-                            font.pixelSize: window.sp(libraryRoot.touchMode ? 13 : 12)
+                            font.pixelSize: window.sp(libraryRoot.touchMode ? 15 : 14)
                             font.weight: Font.Medium
                             anchors.verticalCenter: parent.verticalCenter
                         }
@@ -4170,9 +4195,9 @@ Rectangle {
                     Rectangle {
                         id: analyzeBtn
                         Layout.preferredWidth: libraryRoot.touchMode ? 148 : 176
-                        Layout.preferredHeight: libraryRoot.touchMode ? 40 : 26
+                        Layout.preferredHeight: libraryRoot.touchMode ? 40 : 32
                         Layout.alignment: Qt.AlignVCenter
-                        radius: 0; clip: true
+                        radius: 5; clip: true
                         color: analyzeHover.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
                         border.color: libraryAnalyzer && libraryAnalyzer.running
                                       ? libraryRoot.accentBlue : libraryRoot.borderSub
@@ -4257,7 +4282,7 @@ Rectangle {
                     // ── View mode toggle ───────────────────────────────────
                     Rectangle {
                         Layout.preferredWidth: libraryRoot.touchMode ? 72 : 54
-                        Layout.preferredHeight: libraryRoot.touchMode ? 40 : 26
+                        Layout.preferredHeight: libraryRoot.touchMode ? 40 : 32
                         Layout.alignment: Qt.AlignVCenter
                         radius: 0
                         color: Design.UiTheme.panelInset
@@ -4293,7 +4318,7 @@ Rectangle {
                                 Text {
                                     anchors.centerIn: parent; text: "▤"
                                     color: libraryRoot.viewMode === "normal" ? libraryRoot.accentBlueLt : libraryRoot.textSecond
-                                    font.pixelSize: window.sp(11)
+                                    font.pixelSize: window.sp(12)
                                 }
                                 MouseArea {
                                     anchors.fill: parent; cursorShape: Qt.PointingHandCursor
@@ -4308,9 +4333,9 @@ Rectangle {
                         Layout.preferredWidth: libraryRoot.touchMode
                                                    ? Math.min(360, Math.max(200, parent.width * 0.45))
                                                    : Math.min(260, Math.max(150, parent.width * 0.28))
-                        Layout.preferredHeight: libraryRoot.touchMode ? 40 : 26
+                        Layout.preferredHeight: libraryRoot.touchMode ? 40 : 32
                         Layout.alignment: Qt.AlignVCenter
-                        color: Design.UiTheme.panelInset; radius: 0
+                        color: libraryRoot.bgBase; radius: 5
                         border.color: searchField.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub
                         border.width: 1
                         Behavior on border.color { ColorAnimation { duration: 150 } }
@@ -4343,7 +4368,7 @@ Rectangle {
                             anchors.left: parent.left; anchors.leftMargin: 27
                             text: "Suchen…"
                             color: libraryRoot.textDim
-                            font.pixelSize: window.sp(11)
+                            font.pixelSize: window.sp(12)
                             visible: !searchField.activeFocus && searchField.text.length === 0
                         }
 
@@ -4361,7 +4386,7 @@ Rectangle {
 
                             Text {
                                 anchors.centerIn: parent; text: "×"
-                                color: libraryRoot.textMeta; font.pixelSize: window.sp(11)
+                                color: libraryRoot.textMeta; font.pixelSize: window.sp(12)
                             }
                             MouseArea {
                                 id: clearHover; anchors.fill: parent
@@ -4374,7 +4399,7 @@ Rectangle {
                             id: searchField
                             anchors.fill: parent
                             selectByMouse: true; color: libraryRoot.textPrimary
-                            placeholderText: ""; font.pixelSize: window.sp(11)
+                            placeholderText: ""; font.pixelSize: window.sp(12)
                             leftPadding: 27
                             rightPadding: searchField.text.length > 0 ? (libraryRoot.touchMode ? 48 : 30) : 8
                             topPadding: 0; bottomPadding: 0
@@ -4408,10 +4433,11 @@ Rectangle {
                     // ── Filter button (library tab) ────────────────────────
                     Rectangle {
                         Layout.preferredWidth: libraryRoot.touchMode ? 44 : 30
-                        Layout.preferredHeight: libraryRoot.touchMode ? 40 : 26
+                        Layout.preferredHeight: libraryRoot.touchMode ? 40 : 32
                         Layout.alignment: Qt.AlignVCenter
-                        radius: 0
-                        color: filterBtnMa.containsMouse || libraryRoot.filterPanelOpen ? Design.UiTheme.blueDim : Design.UiTheme.panelInset
+                        radius: 5
+                        color: libraryRoot.filterPanelOpen ? libraryRoot.bgRowActive
+                             : filterBtnMa.containsMouse ? libraryRoot.bgSidebarHv : libraryRoot.bgBase
                         border.color: libraryRoot.filtersActive ? libraryRoot.accentBlue : libraryRoot.borderSub
                         border.width: 1
                         visible: libraryRoot.activeTab === "library"
@@ -5441,8 +5467,8 @@ Rectangle {
                                 delegate: Rectangle {
                                     required property string modelData; required property int index
                                     width: ListView.view.width; height: libraryRoot.rowH
-                                    color: folderMouse.containsMouse ? libraryRoot.bgRowHover : "transparent"
-                                    Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 2; color: libraryRoot.accentBlue; visible: folderMouse.containsMouse }
+                                    color: "transparent"
+                                    Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 2; color: libraryRoot.accentBlue; visible: false }
                                     Row {
                                         anchors.verticalCenter: parent.verticalCenter
                                         anchors.left: parent.left; anchors.leftMargin: 10; spacing: 7
@@ -5478,11 +5504,10 @@ Rectangle {
                                     id: trackDelegate
                                     required property string modelData; required property int index
                                     width: ListView.view.width; height: libraryRoot.rowH
-                                    color: dragArea.containsMouse ? libraryRoot.bgRowHover
-                                           : (index % 2 === 0 ? libraryRoot.bgRowEven : libraryRoot.bgRowOdd)
+                                    color: libraryRoot.focusedPanel === "tracks" && libraryRoot.fileCursorInFolder && libraryRoot.fileCursorName === modelData ? libraryRoot.bgRowActive : libraryRoot.bgBase
                                     opacity: dragArea.drag.active ? 0.4 : 1.0
 
-                                    Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 2; color: libraryRoot.accentBlue; visible: dragArea.containsMouse }
+                                    Rectangle { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 2; color: Design.UiTheme.browserSelectionAccent; visible: libraryRoot.focusedPanel === "tracks" && libraryRoot.fileCursorInFolder && libraryRoot.fileCursorName === modelData }
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         anchors.left: parent.left; anchors.leftMargin: 12
@@ -5505,6 +5530,12 @@ Rectangle {
                                         id: dragArea; anchors.fill: parent; hoverEnabled: true
                                         cursorShape: drag.active ? Qt.DragMoveCursor : Qt.PointingHandCursor
                                         drag.target: dragPayload; drag.axis: Drag.XAndYAxis; drag.threshold: 6
+                                        onPressed: {
+                                            libraryRoot.fileCursorName = modelData
+                                            libraryRoot.fileCursorFolder = libraryManager ? libraryManager.currentFolder : ""
+                                            libraryRoot.focusedPanel = "tracks"
+                                            libraryRoot.forceActiveFocus()
+                                        }
                                         onReleased: { dragPayload.Drag.drop(); dragPayload.x = 0; dragPayload.y = 0 }
                                     }
                                 }
@@ -5598,14 +5629,11 @@ Rectangle {
                                         readonly property bool isSelected: deviceLibraryManager
                                             && deviceLibraryManager.selectedDeviceId === modelData.id
                                         width: ListView.view.width; height: 54
-                                        color: isSelected
-                                               ? libraryRoot.sidebarSel
-                                               : (usbDeviceMouse.containsMouse
-                                                  ? libraryRoot.bgSidebarHv : "transparent")
+                                        color: "transparent"
                                         Rectangle {
                                             anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                                            width: 3; color: deviceAccent
-                                            visible: isSelected
+                                            width: 0; color: deviceAccent
+                                            visible: false
                                         }
                                         // The device's own colour, shown as a small dot rather
                                         // than by tinting anything larger.
@@ -5710,10 +5738,10 @@ Rectangle {
                                     color: libraryRoot.usbFocusArea === "source"
                                            && libraryRoot.usbSourceCursorIndex === 0
                                            ? libraryRoot.sidebarSel
-                                           : (usbAllTracksMouse.containsMouse ? libraryRoot.bgSidebarHv : "transparent")
+                                           : "transparent"
                                     Rectangle {
                                         anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                                        width: 3; color: libraryRoot.accentBlue
+                                        width: 2; color: Design.UiTheme.browserSelectionAccent
                                         visible: libraryRoot.usbFocusArea === "source"
                                                  && libraryRoot.usbSourceCursorIndex === 0
                                     }
@@ -5741,10 +5769,10 @@ Rectangle {
                                     color: libraryRoot.usbFocusArea === "source"
                                            && libraryRoot.usbSourceCursorIndex === 1
                                            ? libraryRoot.sidebarSel
-                                           : (usbPlaylistRootMouse.containsMouse ? libraryRoot.bgSidebarHv : "transparent")
+                                           : "transparent"
                                     Rectangle {
                                         anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                                        width: 3; color: libraryRoot.accentBlue
+                                        width: 2; color: Design.UiTheme.browserSelectionAccent
                                         visible: libraryRoot.usbFocusArea === "source"
                                                  && libraryRoot.usbSourceCursorIndex === 1
                                     }
@@ -5940,11 +5968,10 @@ Rectangle {
                                                                              && libraryRoot.usbPrimaryCursorIndex === index
                                                 width: ListView.view.width; height: 38
                                                 color: focused ? libraryRoot.sidebarSel
-                                                               : (usbPrimaryMouse.containsMouse
-                                                                  ? libraryRoot.bgSidebarHv : "transparent")
+                                                               : "transparent"
                                                 Rectangle {
                                                     anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                                                    width: 3; color: libraryRoot.accentBlue; visible: parent.focused
+                                                    width: 2; color: Design.UiTheme.browserSelectionAccent; visible: parent.focused
                                                 }
                                                 Text {
                                                     anchors.left: parent.left; anchors.leftMargin: 14

@@ -36,7 +36,7 @@ QtObject {
     readonly property int controlHeightSmall: px(22)
     readonly property int controlHeightNormal: px(30)
     readonly property int toolbarHeight: px(48)
-    readonly property int toolbarPullExtra: px(76)
+    readonly property int toolbarPullExtra: px(144)
     readonly property int deckHeaderHeight: px(42)
     readonly property int transportStripHeight: px(62)
     readonly property int waveformMinimumHeight: px(120)
@@ -59,6 +59,8 @@ QtObject {
     readonly property color error:             "#e03535"
     readonly property color play:              "#43d17b"
     readonly property color cue:               "#f2b134"
+    readonly property color browserSelectionAccent: "#f0bf63"
+    readonly property color browserSelectionSurface: "#393023"
     readonly property color sync:              "#56a8ff"
 
     // Tinted translucency, without refraction, gloss or faux-3D.

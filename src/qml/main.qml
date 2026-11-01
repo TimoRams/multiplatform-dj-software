@@ -51,6 +51,11 @@ ApplicationWindow {
     // Temporary quick-access overlay, controlled by the handle in TopHeader.
     // This intentionally is not persisted: it is a momentary touch affordance.
     property real topBarPullProgress: 0.0
+    property bool topBarPullDragging: false
+    Behavior on topBarPullProgress {
+        enabled: !window.topBarPullDragging
+        NumberAnimation { duration: 170; easing.type: Easing.OutCubic }
+    }
     property bool _desktopShowMixer: true
     property bool _desktopShowFxBar: true
     property bool _uiStateRestoring: false
@@ -624,6 +629,11 @@ ApplicationWindow {
 
         TopHeader {
             id: topHeader
+            onSearchRequested: {
+                window.activeMainTab = "library"
+                window.showLibrary = true
+                Qt.callLater(function() { performanceWorkspace.librarySection.setFocusedPanel("search") })
+            }
             selectedSourceType: performanceWorkspace.librarySection.activeTab === "usb" ? "usb" : "local"
             selectedSourceName: selectedSourceType === "usb" && deviceLibraryManager
                                 ? deviceLibraryManager.selectedDeviceName : "Lokale Library"

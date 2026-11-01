@@ -180,6 +180,9 @@ bool libraryActionTests(const std::string& source)
         import QtQuick
         QtObject {
             property string activeTab: "library"
+            property bool touchMode: false
+            property string focusedPanel: "tracks"
+            function activateSidebarCursor() { ++navigations }
             property string usbFocusArea: "tracks"
             property string cursorPath: "fixture.wav"
             property string cursorTrackId: "local-id"
@@ -246,6 +249,11 @@ bool libraryActionTests(const std::string& source)
                       && library->property("lastPath").toString() == QStringLiteral("rekordbox:device:track")
                       && library->property("lastTrackId").toString() == QStringLiteral("external-id"),
                   "USB track confirmation forwards external identity unchanged");
+    library->setProperty("focusedPanel", "sidebar");
+    const auto loadsBeforeSidebar = library->property("loads").toInt();
+    ok &= require(confirm("A") && library->property("loads").toInt() == loadsBeforeSidebar
+                      && library->property("navigations").toInt() == 2,
+                  "confirmation activates the clicked sidebar cursor instead of an old track");
     return ok;
 }
 
@@ -838,6 +846,191 @@ bool headerPublicationTests(const std::string& header)
     QQmlExpression valid(QQmlEngine::contextForObject(host.get()), host.get(),
                           QStringLiteral("beatInfo.valid"));
     ok &= require(!valid.evaluate().toBool(), "eject or unanalyzed track clears the header count");
+    return ok;
+}
+
+bool pullDownHandleTests(const std::string& header)
+{
+    const auto handle = componentSection(header, "PullDownHandle");
+    if (!require(!handle.empty(), "production pull-down handle exists")) return false;
+    QQmlEngine engine;
+    auto host = createQmlObject(engine, QStringLiteral(R"(
+        import QtQuick
+        Item {
+            width: 400; height: 320
+            property alias progress: state.topBarPullProgress
+            property alias dragging: state.topBarPullDragging
+            QtObject {
+                id: state
+                property real topBarPullProgress: 0
+                property bool topBarPullDragging: false
+                function openTopBarPullDown() { topBarPullProgress = 1 }
+                function closeTopBarPullDown() { topBarPullProgress = 0 }
+                function toggleTopBarPullDown() { topBarPullProgress = topBarPullProgress >= 0.5 ? 0 : 1 }
+            }
+    )") + QString::fromStdString(handle)
+        + QStringLiteral("\nPullDownHandle { objectName: \"handle\"; controller: state }\n}"),
+        "production moving handle instantiates");
+    if (!host) return false;
+    QQuickWindow window;
+    window.resize(400, 320);
+    qobject_cast<QQuickItem*>(host.get())->setParentItem(window.contentItem());
+    window.show();
+    QCoreApplication::processEvents();
+    auto* grip = host->findChild<QQuickItem*>(QStringLiteral("handle"));
+    if (!require(grip != nullptr, "handle is available")) return false;
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, {200, 50});
+    QTest::mouseMove(&window, {200, 100}, 20);
+    QTest::mouseMove(&window, {200, 150}, 20);
+    QCoreApplication::processEvents();
+    bool ok = require(std::abs(host->property("progress").toDouble() - 100.0 / 144.0) < 0.02
+                      && grip->y() > 130, "drag follows the finger using fixed coordinates while the handle moves");
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, {200, 150});
+    ok &= require(host->property("progress").toDouble() == 1
+                      && !host->property("dragging").toBool(), "downward drag settles open");
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, {200, 194});
+    QTest::mouseMove(&window, {200, 94}, 20);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, {200, 94});
+    ok &= require(host->property("progress").toDouble() == 0, "moving handle can be dragged back closed");
+    auto* touch = QTest::createTouchDevice(QInputDevice::DeviceType::TouchScreen);
+    QTest::touchEvent(&window, touch).press(0, {200, 50}, &window);
+    QTest::touchEvent(&window, touch).move(0, {200, 150}, &window);
+    QTest::touchEvent(&window, touch).release(0, {200, 150}, &window);
+    QCoreApplication::processEvents();
+    ok &= require(host->property("progress").toDouble() == 1, "touch drag opens the tray");
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, {200, 194});
+    ok &= require(host->property("progress").toDouble() == 0, "tapping the moving handle still toggles the tray");
+    return ok;
+}
+
+bool libraryControllerPaneTests(const std::string& source)
+{
+    QString methods;
+    if (!extractFunctions(source, {"navigateBrowserBack", "activateSidebarCursor",
+                                  "selectSidebarItem", "moveSidebarCursor",
+                                  "collapseSidebarItem", "confirmLibrarySelection"}, methods))
+        return false;
+    QQmlEngine engine;
+    auto host = createQmlObject(engine, QStringLiteral(R"(
+        import QtQuick
+        Item {
+            id: root
+            property bool touchMode: false
+            property string activeTab: "favorites"
+            property string focusedPanel: "tracks"
+            property string aioFocusZone: "tracks"
+            property bool aioBrowseDrilled: false
+            property string usbFocusArea: "tracks"
+            property int sidebarCursorIndex: 1
+            property bool sidebarCursorActive: true
+            property var expandedPlaylists: ({})
+            readonly property bool folderOpen: expandedPlaylists.folder === true
+            property string currentPlaylistId: ""
+            property string currentPlaylistName: ""
+            property string currentSmartCollectionId: ""
+            property string currentSmartCollectionName: ""
+            property string librarySubTab: "allSongs"
+            property int sourceOpens: 0
+            property int loads: 0
+            property int touchActivations: 0
+            property string loadedDeck: ""
+            property var window: ({openLibrarySourceView: function() { ++root.sourceOpens }})
+            property var entries: [
+                {type: "nav", tab: "library"}, {type: "nav", tab: "favorites"},
+                {type: "playlist", data: {id: "folder", name: "Folder", hasChildren: true}},
+                {type: "playlist", data: {id: "list", name: "Playlist", hasChildren: false}}]
+            function sidebarEntryAt(i) { return entries[i] }
+            function sidebarTotalCount() { return entries.length }
+            function _ensureSidebarVisible(i) {}
+            function setFocusedPanel(panel) { focusedPanel = panel }
+            function loadPlaylistTracks() {}
+            function loadSmartCollectionTracks(id) {}
+            function toggleExpanded(id) {
+                var next = Object.assign({}, expandedPlaylists)
+                next[id] = !next[id]
+                expandedPlaylists = next
+            }
+            function loadCursorTrackToDeck(deck) { ++loads; loadedDeck = deck }
+            function aioBrowseCursorLeft() { aioFocusZone = "nav" }
+            function aioBrowseCursorActivate() { ++touchActivations; aioFocusZone = "tracks" }
+            function usbNavigateBack() {}
+            function activateUsbCursor() {}
+        )") + methods + QStringLiteral("\n}"), "controller pane navigation instantiates");
+    if (!host) return false;
+    auto run = [&](const QString& script) {
+        QQmlExpression expression(QQmlEngine::contextForObject(host.get()), host.get(), script);
+        expression.evaluate();
+        return !expression.hasError();
+    };
+    bool ok = require(run("navigateBrowserBack()")
+                      && host->property("focusedPanel").toString() == "sidebar"
+                      && host->property("activeTab").toString() == "favorites"
+                      && host->property("sidebarCursorIndex").toInt() == 1,
+                      "BACK reaches the left sidebar without resetting the selected collection");
+    ok &= require(run("moveSidebarCursor(1); confirmLibrarySelection('B')")
+                      && host->property("focusedPanel").toString() == "sidebar"
+                      && host->property("folderOpen").toBool()
+                      && host->property("loads").toInt() == 0,
+                      "encoder selects and opens a sidebar folder without loading a stale track");
+    ok &= require(run("moveSidebarCursor(1); confirmLibrarySelection('B')")
+                      && host->property("currentPlaylistId").toString() == "list"
+                      && host->property("focusedPanel").toString() == "tracks"
+                      && host->property("loads").toInt() == 0,
+                      "confirming a leaf playlist moves the cursor back into its track list");
+    ok &= require(run("confirmLibrarySelection('B')")
+                      && host->property("loads").toInt() == 1
+                      && host->property("loadedDeck").toString() == "B",
+                      "next encoder press loads the selected track to the requested deck");
+    ok &= require(run("navigateBrowserBack(); moveSidebarCursor(-2); confirmLibrarySelection('A')")
+                      && host->property("activeTab").toString() == "favorites",
+                      "controller can return left and select another collection");
+    ok &= require(run("touchMode = true; navigateBrowserBack(); confirmLibrarySelection('A')")
+                      && host->property("touchActivations").toInt() == 1
+                      && host->property("loads").toInt() == 1,
+                      "AIO confirmation navigates the left rail before allowing a track load");
+    return ok;
+}
+
+bool sourceCursorPersistenceTests(const std::string& source)
+{
+    QString methods;
+    if (!extractFunctions(source, {"rememberSourceCursor", "restoreSourceCursor",
+                                   "ensureSourceCursor", "moveCursor", "goBack"}, methods))
+        return false;
+    QQmlEngine engine;
+    auto state = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool navigationReady: true
+            property string cursorDeviceId: "usb-b"
+            property int sourceCursorIndex: 2
+            property int serviceCursorIndex: 0
+            property int serviceCount: 1
+            property string sourcePane: "services"
+            property var devices: [{id: "usb-a"}, {id: "usb-b"}]
+            readonly property int sourceCount: 1 + devices.length
+            property var deviceList: ({positionViewAtIndex: function(i, mode) {}})
+            signal sourceBackRequested()
+        )") + methods + QStringLiteral("\n}"), "source cursor state instantiates");
+    if (!state) return false;
+    auto evaluate = [&](const QString& script) {
+        QQmlExpression expression(QQmlEngine::contextForObject(state.get()), state.get(), script);
+        expression.evaluate();
+        return !expression.hasError();
+    };
+    bool ok = require(evaluate("devices = [{id: 'usb-b'}, {id: 'usb-a'}]; restoreSourceCursor()")
+                      && state->property("sourceCursorIndex").toInt() == 1
+                      && state->property("sourcePane").toString() == QStringLiteral("services"),
+                      "device refresh preserves selected USB identity and navigation pane");
+    ok &= require(evaluate("goBack()") && state->property("sourceCursorIndex").toInt() == 1,
+                  "back returns to the selected source instead of resetting to Local");
+    ok &= require(evaluate("sourceCursorIndex = 2; rememberSourceCursor()")
+                      && state->property("cursorDeviceId").toString() == QStringLiteral("usb-a"),
+                  "pointer-selected source becomes the navigation origin");
+    ok &= require(evaluate("devices = [{id: 'usb-b'}]; restoreSourceCursor()")
+                      && state->property("sourceCursorIndex").toInt() == 0
+                      && state->property("cursorDeviceId").toString().isEmpty(),
+                  "removed USB source falls back to a valid local cursor");
     return ok;
 }
 
@@ -2786,6 +2979,7 @@ int main(int argc, char** argv)
     ok &= headerPublicationTests(topHeader);
     ok &= hamburgerToggleTests(topHeader);
     ok &= latencyPopupToggleTests(topHeader);
+    ok &= pullDownHandleTests(topHeader);
     const auto deckControl = read("src/qml/deck/DeckControl.qml");
     const auto slider = read("src/qml/components/Slider.qml");
     const auto mixerSection = read("src/qml/mixer/MixerSection.qml");
@@ -2860,12 +3054,14 @@ int main(int argc, char** argv)
                   "headless smoke verifies Qt Quick software rendering, normal and early QML-policy closes, and skips hardware discovery");
     const auto library = read("src/qml/library/Library.qml");
     ok &= libraryActionTests(library);
+    ok &= libraryControllerPaneTests(library);
     ok &= librarySwipeTests(library);
     ok &= require(library.find("tr.touchMode && tr.rowSourceTab !== \"usb\" ? 148 : 0")
                       != std::string::npos
                       && library.find("miscActionW > 0 && swipeX") != std::string::npos,
                   "USB rows retain deck swipes but do not expose local mutation actions");
     const auto sourcePage = read("src/qml/library/SourcePage.qml");
+    ok &= sourceCursorPersistenceTests(sourcePage);
     const auto waveformScreen = read("src/qml/performance/PerformanceWaveformScreen.qml");
     const auto beatgridPanel = componentSection(
         waveformScreen, "PerformanceBeatgridPanel");
@@ -3190,8 +3386,8 @@ int main(int argc, char** argv)
                           != std::string::npos
                       && sourcePage.find("function syncCursorToActiveSource()")
                           != std::string::npos
-                      && sourcePage.find("color: active ? UiTheme.green : UiTheme.textPrimary")
-                          != std::string::npos,
+                      && sourcePage.find("function restoreSourceCursor()") != std::string::npos
+                      && workspace.find("active: window.sourcePageActive || keepLoaded") != std::string::npos,
                   "standalone Source reflects the active Local or USB library");
     ok &= require(library.find("readonly property bool usbTrackViewVisible")
                           != std::string::npos

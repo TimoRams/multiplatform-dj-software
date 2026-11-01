@@ -6,7 +6,7 @@ import DJSoftware
 
 Rectangle {
     id: root
-    color: UiTheme.surface
+    color: "#171c24"
     // The expanded tray deliberately paints below this fixed-height item as an
     // overlay.  Keeping it unclipped prevents the workspace from being moved.
     clip: false
@@ -14,6 +14,10 @@ Rectangle {
     // Height is fully controlled by parent layout — no implicitHeight here.
     // The first row remains fixed while the pull-down quick-access tray opens.
     readonly property int collapsedHeight: UiTheme.toolbarHeight
+
+    readonly property bool compactBar: width < 1050
+    readonly property color barHover: "#242c38"
+    signal searchRequested()
 
     // ── Sizing helpers ───────────────────────────────────────────────────────
     readonly property int btnH:    Math.max(1, root.collapsedHeight)
@@ -75,7 +79,7 @@ Rectangle {
         signal toggleRequested()
 
         width: cardWidth
-        height: hidden ? 0 : 26
+        height: hidden ? 0 : 34
         visible: !hidden
         color: toggleMouse.containsMouse ? UiTheme.surfaceRaised : UiTheme.panel
 
@@ -87,7 +91,7 @@ Rectangle {
             anchors.rightMargin: 8
             text: toggleCard.label
             color: toggleCard.on ? UiTheme.textPrimary : UiTheme.textMuted
-            font.pixelSize: root.sp(9)
+            font.pixelSize: root.sp(11)
             elide: Text.ElideRight
         }
 
@@ -143,6 +147,16 @@ Rectangle {
                 c.moveTo(3, 10); c.arc(10, 17, 10, -2.35, -0.79)
                 c.moveTo(6, 13); c.arc(10, 17, 6, -2.35, -0.79)
                 c.moveTo(9, 17); c.lineTo(11, 17)
+            } else if (kind === "search") {
+                c.arc(8, 8, 5, 0, Math.PI * 2)
+                c.moveTo(12, 12); c.lineTo(17, 17)
+            } else if (kind === "library") {
+                c.rect(3, 3, 3, 14); c.rect(8, 3, 3, 14)
+                c.moveTo(13, 4); c.lineTo(16, 3); c.lineTo(19, 16); c.lineTo(16, 17); c.closePath()
+            } else if (kind === "computer") {
+                c.rect(2, 3, 16, 11)
+                c.moveTo(10, 14); c.lineTo(10, 18)
+                c.moveTo(6, 18); c.lineTo(14, 18)
             } else if (kind === "ethernet") {
                 c.rect(3, 2, 14, 10)
                 c.moveTo(10, 12); c.lineTo(10, 17)
@@ -648,15 +662,19 @@ Rectangle {
             id: sourceButton
             Layout.preferredWidth: root.btnH
             Layout.preferredHeight: root.btnH
-            color: sourceMouse.containsMouse ? UiTheme.surfaceRaised : UiTheme.panelInset
-            border.color: root.selectedSourceType === "usb" ? UiTheme.blue : UiTheme.borderSubtle
-            border.width: 1
+            Layout.fillHeight: true
+            color: sourceMouse.containsMouse ? root.barHover : "#202936"
+            Rectangle {
+                anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                width: 2
+                color: root.selectedSourceType === "usb" ? UiTheme.blue : UiTheme.textDim
+            }
             Column {
                 anchors.centerIn: parent
                 spacing: 1
                 StatusIcon {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    kind: root.selectedSourceType === "usb" ? "usb" : "ethernet"
+                    kind: root.selectedSourceType === "usb" ? "usb" : "computer"
                     ink: UiTheme.blue
                     width: 17; height: 17
                 }
@@ -664,7 +682,7 @@ Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: root.selectedSourceType === "usb" ? "USB" : "LOCAL"
                     color: UiTheme.textPrimary
-                    font.pixelSize: 7; font.bold: true
+                    font.pixelSize: 9; font.bold: true
                 }
             }
             ToolTip.visible: sourceMouse.containsMouse
@@ -694,29 +712,22 @@ Rectangle {
                     Text {
                         text: "BROCKDJ"
                         color: UiTheme.textPrimary
-                        font.pixelSize: root.sp(10)
+                        font.pixelSize: root.sp(13)
                         font.bold: true
                         font.letterSpacing: 1.4
                     }
-                    Text {
-                        text: "ramsbrock.net"
-                        color: UiTheme.textDim
-                        font.pixelSize: root.sp(6)
-                        font.letterSpacing: 0.3
-                    }
+
                 }
             }
         }
 
         // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
-
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
+        Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; Layout.alignment: Qt.AlignVCenter; color: UiTheme.separatorSubtle }
 
         // ── Primary navigation ───────────────────────────────────────────────
         Rectangle {
             id: libraryButton
-            Layout.preferredWidth: 78
+            Layout.preferredWidth: root.compactBar ? 38 : 88
             Layout.fillHeight: true
             readonly property bool active: root.Window.window
                                            ? (root.Window.window.allInOneMode
@@ -724,55 +735,59 @@ Rectangle {
                                               : root.Window.window.showLibrary)
                                            : false
             color: libraryMouse.pressed ? UiTheme.buttonBg(false, false, true)
-                 : active ? UiTheme.surfaceRaised
-                 : (libraryMouse.containsMouse ? UiTheme.surfaceRaised : UiTheme.panel)
+                 : libraryMouse.containsMouse ? root.barHover : "transparent"
             Row {
                 anchors.centerIn: parent
                 spacing: 5
-                Text { text: "▤"; color: libraryButton.active ? UiTheme.blue : UiTheme.textLabel; font.pixelSize: root.sp(15); anchors.verticalCenter: parent.verticalCenter }
-                Text { text: "LIBRARY"; color: libraryButton.active ? UiTheme.textPrimary : UiTheme.textSecondary; font.pixelSize: root.sp(8); font.bold: true; font.letterSpacing: 0.5; anchors.verticalCenter: parent.verticalCenter }
+                StatusIcon { kind: "library"; ink: libraryButton.active ? UiTheme.blue : UiTheme.textLabel; width: 18; height: 18; anchors.verticalCenter: parent.verticalCenter }
+                Text { visible: !root.compactBar; text: "Library"; color: libraryButton.active ? UiTheme.textPrimary : UiTheme.textSecondary; font.pixelSize: root.sp(11); font.bold: true; font.letterSpacing: 0.2; anchors.verticalCenter: parent.verticalCenter }
             }
             Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 2; visible: libraryButton.active; color: root.accentBlue }
             MouseArea { id: libraryMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: if (root.Window.window) root.Window.window.toggleAllInOneLibrary() }
         }
 
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
+        Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; Layout.alignment: Qt.AlignVCenter; color: UiTheme.separatorSubtle }
 
         Rectangle {
             id: searchButton
-            Layout.preferredWidth: 74
+            Layout.preferredWidth: root.compactBar ? 38 : 88
             Layout.fillHeight: true
-            color: searchMouse.pressed ? UiTheme.surfaceRaised : (searchMouse.containsMouse ? UiTheme.panelRaised : UiTheme.panel)
+            color: searchMouse.containsMouse ? root.barHover : "transparent"
             Row {
                 anchors.centerIn: parent
                 spacing: 4
-                Text { text: "⌕"; color: UiTheme.textLabel; font.pixelSize: root.sp(17); anchors.verticalCenter: parent.verticalCenter }
-                Text { text: "SEARCH"; color: UiTheme.textSecondary; font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.3; anchors.verticalCenter: parent.verticalCenter }
+                StatusIcon { kind: "search"; ink: UiTheme.textLabel; width: 18; height: 18; anchors.verticalCenter: parent.verticalCenter }
+                Text { visible: !root.compactBar; text: "Search"; color: UiTheme.textSecondary; font.pixelSize: root.sp(11); font.bold: true; font.letterSpacing: 0.2; anchors.verticalCenter: parent.verticalCenter }
             }
-            MouseArea { id: searchMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }
+            MouseArea { id: searchMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.searchRequested() }
         }
 
-        // This spacer keeps the navigation left-aligned and moves all mixer and
-        // system controls into a single group on the right.
+        // Balance the larger output/status group while reserving meter space.
+        Item { Layout.fillWidth: true; Layout.preferredWidth: 180 }
+        Item {
+            id: meterSlot
+            Layout.preferredWidth: root.compactBar ? 112 : 164
+            Layout.fillHeight: true
+        }
         Item { Layout.fillWidth: true }
 
         // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
+        Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; Layout.alignment: Qt.AlignVCenter; color: UiTheme.separatorSubtle }
 
         // ── Master volume ─────────────────────────────────────────────────────
         Rectangle {
-            Layout.preferredWidth: root.dialSz + root.padH * 2 + 12
+            Layout.preferredWidth: root.compactBar ? 58 : 100
             Layout.fillHeight: true
-            color: UiTheme.panel
+            color: "transparent"
 
             Row {
                 anchors.centerIn: parent
                 spacing: 4
 
                 Text {
-                    text: "MST"
+                    text: root.compactBar ? "MST" : "MASTER"
                     color: UiTheme.textLabel
-                    font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.3
+                    font.pixelSize: root.sp(11); font.bold: true; font.letterSpacing: 0.2
                     anchors.verticalCenter: parent.verticalCenter
                 }
 
@@ -854,14 +869,14 @@ Rectangle {
         }
 
         // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
+        Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; Layout.alignment: Qt.AlignVCenter; color: UiTheme.separatorSubtle }
 
         // ── Headphone cue ────────────────────────────────────────────────────
         Rectangle {
             id: headphoneCueBlock
-            Layout.preferredWidth: root.dialSz + root.padH * 2 + 42
+            Layout.preferredWidth: root.compactBar ? 88 : 112
             Layout.fillHeight: true
-            color: UiTheme.panel
+            color: "transparent"
 
             property bool syncingCueMix: false
             readonly property bool masterCueOn: deckA ? deckA.masterCueEnabled : false
@@ -890,7 +905,7 @@ Rectangle {
 
                     Text {
                         anchors.centerIn: parent
-                        text: "MC"
+                        text: "CUE"
                         color: headphoneCueBlock.masterCueOn ? UiTheme.blue : UiTheme.textMuted
                         font.pixelSize: root.sp(7)
                         font.bold: true
@@ -987,7 +1002,7 @@ Rectangle {
                 }
 
                 Text {
-                    text: "MST"
+                    text: root.compactBar ? "MST" : "MASTER"
                     color: headphoneCueBlock.masterCueOn ? UiTheme.blue : UiTheme.textMuted
                     font.pixelSize: root.sp(7)
                     font.bold: true
@@ -997,19 +1012,19 @@ Rectangle {
         }
 
         // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
+        Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; Layout.alignment: Qt.AlignVCenter; color: UiTheme.separatorSubtle }
 
         // ── System monitor — LAT + CPU + RAM ─────────────────────────────────
         Rectangle {
             id: monitorBlock
-            Layout.preferredWidth: 106   // fixed — prevents layout jitter as values change
+            Layout.preferredWidth: root.compactBar ? 112 : 128 // fixed to prevent value jitter
             Layout.fillHeight: true
-            color: latMouse.containsMouse ? UiTheme.surfaceRaised : UiTheme.panel
+            color: latMouse.containsMouse ? root.barHover : "transparent"
             Behavior on color { ColorAnimation { duration: 100 } }
 
             readonly property color latClr: root.totalLatencyMs >= 35.0 ? UiTheme.error
                                            : root.totalLatencyMs >= 20.0 ? UiTheme.warning
-                                           : UiTheme.sync
+                                           : UiTheme.textPrimary
             readonly property real cpuVal: sysMonitor ? sysMonitor.cpuUsage : 0
             readonly property real ramVal: sysMonitor ? sysMonitor.ramUsage : 0
 
@@ -1022,85 +1037,23 @@ Rectangle {
 
             Column {
                 anchors.centerIn: parent
-                spacing: 2
-
-                // ── Row 1: Latency ────────────────────────────────────────────
+                spacing: 4
                 Row {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    spacing: 3
-
+                    spacing: 6
+                    Text { text: "LAT"; color: UiTheme.textDim; font.pixelSize: 9; anchors.verticalCenter: parent.verticalCenter }
                     Text {
-                        text: "LAT"; color: UiTheme.textDim
-                        font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.5
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Text {
-                        width: 44
-                        text: root.totalLatencyMs > 0 ? root.totalLatencyMs.toFixed(1) + " ms" : "—  ms"
+                        text: root.totalLatencyMs > 0 ? root.totalLatencyMs.toFixed(1) + " ms" : "— ms"
                         color: monitorBlock.latClr
-                        font.pixelSize: root.sp(8); font.bold: true; font.family: UiTheme.numericFontFamily
-                        horizontalAlignment: Text.AlignRight
-                        anchors.verticalCenter: parent.verticalCenter
+                        font.pixelSize: 11; font.bold: true; font.family: UiTheme.numericFontFamily
                     }
-                    Text {
-                        text: latencyPopup.opened ? "▴" : "▾"
-                        color: UiTheme.textDim; font.pixelSize: root.sp(7)
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
+                    Text { text: latencyPopup.visible ? "▴" : "▾"; color: UiTheme.textDim; font.pixelSize: 9 }
                 }
-
-                // ── Row 2: CPU | RAM side-by-side with mini bars ──────────────
                 Row {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    spacing: 2
-
-                    Text {
-                        text: "C"; color: UiTheme.textMuted
-                        font.pixelSize: root.sp(7); font.bold: true
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Rectangle {
-                        width: 18; height: 3; radius: 1; color: UiTheme.knobTrack
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: Math.max(0, Math.round(parent.width * monitorBlock.cpuVal))
-                            height: parent.height; radius: 1
-                            color: monitorBlock.barColor(monitorBlock.cpuVal, UiTheme.greenDim)
-                            Behavior on width { NumberAnimation { duration: 350; easing.type: Easing.OutQuad } }
-                        }
-                    }
-                    Text {
-                        width: 18; text: Math.round(monitorBlock.cpuVal * 100) + "%"
-                        color: monitorBlock.metricColor(monitorBlock.cpuVal)
-                        font.pixelSize: root.sp(7); font.family: UiTheme.numericFontFamily
-                        horizontalAlignment: Text.AlignRight
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-
-                    Rectangle { width: 1; height: 7; color: UiTheme.separatorSubtle; anchors.verticalCenter: parent.verticalCenter }
-
-                    Text {
-                        text: "R"; color: UiTheme.textMuted
-                        font.pixelSize: root.sp(7); font.bold: true
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
-                    Rectangle {
-                        width: 18; height: 3; radius: 1; color: UiTheme.knobTrack
-                        anchors.verticalCenter: parent.verticalCenter
-                        Rectangle {
-                            width: Math.max(0, Math.round(parent.width * monitorBlock.ramVal))
-                            height: parent.height; radius: 1
-                            color: monitorBlock.barColor(monitorBlock.ramVal, UiTheme.blueDim)
-                            Behavior on width { NumberAnimation { duration: 350; easing.type: Easing.OutQuad } }
-                        }
-                    }
-                    Text {
-                        width: 18; text: Math.round(monitorBlock.ramVal * 100) + "%"
-                        color: monitorBlock.metricColor(monitorBlock.ramVal)
-                        font.pixelSize: root.sp(7); font.family: UiTheme.numericFontFamily
-                        horizontalAlignment: Text.AlignRight
-                        anchors.verticalCenter: parent.verticalCenter
-                    }
+                    spacing: 8
+                    Text { text: "CPU " + Math.round(monitorBlock.cpuVal * 100) + "%"; color: monitorBlock.metricColor(monitorBlock.cpuVal); font.pixelSize: 9; font.family: UiTheme.numericFontFamily }
+                    Text { text: "RAM " + Math.round(monitorBlock.ramVal * 100) + "%"; color: monitorBlock.metricColor(monitorBlock.ramVal); font.pixelSize: 9; font.family: UiTheme.numericFontFamily }
                 }
             }
 
@@ -1119,14 +1072,14 @@ Rectangle {
         }
 
         // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
+        Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; Layout.alignment: Qt.AlignVCenter; color: UiTheme.separatorSubtle }
 
         // ── Ableton Link ─────────────────────────────────────────────────────
         Rectangle {
             id: linkBlock
-            Layout.preferredWidth: 48
+            Layout.preferredWidth: 52
             Layout.fillHeight: true
-            color: linkMouse.pressed ? UiTheme.greenDim : ((linkManager && linkManager.enabled) ? UiTheme.greenDim : UiTheme.panel)
+            color: "transparent"
 
             readonly property bool on: linkManager && linkManager.enabled
             readonly property int beatIndex: linkManager ? (((Math.floor(linkManager.beat) % 4) + 4) % 4) : 0
@@ -1146,7 +1099,7 @@ Rectangle {
                     Text {
                         text: "LINK"
                         color: linkBlock.on ? UiTheme.play : UiTheme.textMuted
-                        font.pixelSize: root.sp(6)
+                        font.pixelSize: root.sp(7)
                         font.bold: true
                         font.letterSpacing: 0.3
                     }
@@ -1186,20 +1139,20 @@ Rectangle {
         }
 
         // ── Separator ────────────────────────────────────────────────────────
-        Rectangle { width: root.sepW; Layout.fillHeight: true; color: UiTheme.separatorSubtle }
+        Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; Layout.alignment: Qt.AlignVCenter; color: UiTheme.separatorSubtle }
 
         // ── Clock ─────────────────────────────────────────────────────────────
         Rectangle {
-            Layout.preferredWidth: 52
+            Layout.preferredWidth: 64
             Layout.fillHeight: true
-            color: UiTheme.panel
+            color: "transparent"
 
             Text {
                 id: clockText
                 anchors.centerIn: parent
                 text: root.currentTime
                 color: UiTheme.textSecondary
-                font.pixelSize: root.sp(12); font.family: UiTheme.numericFontFamily; font.bold: true
+                font.pixelSize: root.sp(14); font.family: UiTheme.numericFontFamily; font.bold: true
             }
         }
 
@@ -1240,6 +1193,14 @@ Rectangle {
 
     }
 
+    Rectangle {
+        anchors.left: parent.left; anchors.right: parent.right
+        y: root.collapsedHeight - 1
+        height: 1
+        color: UiTheme.borderSubtle
+        z: 12
+    }
+
     // ── Pull-down quick access ──────────────────────────────────────────────
     // The same tray is available in desktop and AIO mode.  It gives touch
     // users generously sized shortcuts without permanently taking deck space.
@@ -1253,7 +1214,10 @@ Rectangle {
         y: root.collapsedHeight - height
            + height * (root.Window.window ? root.Window.window.topBarPullProgress : 0.0)
         height: UiTheme.toolbarPullExtra
-        color: UiTheme.surface
+        color: "#171c24"
+        border.color: UiTheme.borderSubtle
+        border.width: 1
+        onVisibleChanged: if (!visible) viewMenuPopup.close()
         opacity: Math.min(1.0, (root.Window.window ? root.Window.window.topBarPullProgress : 0.0) * 3.0)
         visible: opacity > 0.01
         z: 5
@@ -1267,24 +1231,45 @@ Rectangle {
             color: UiTheme.separatorSubtle
         }
 
-        RowLayout {
-            anchors.centerIn: parent
+        Text {
+            anchors.left: parent.left
+            anchors.leftMargin: Math.max(24, (parent.width - 880) / 2)
+            anchors.top: parent.top
+            anchors.topMargin: 10
+            text: "WORKSPACE"
+            color: UiTheme.textMuted
+            font.pixelSize: 9
+            font.bold: true
+            font.letterSpacing: 1.4
+        }
+
+        GridLayout {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: UiTheme.px(18)
             width: Math.min(parent.width - UiTheme.space6 * 2, 880)
-            height: Math.max(0, Math.min(parent.height - UiTheme.space3 * 2, UiTheme.px(56)))
-            spacing: UiTheme.space3
+            height: Math.max(0, parent.height - UiTheme.px(48))
+            columns: 4
+            rowSpacing: UiTheme.px(8)
+            columnSpacing: UiTheme.px(8)
 
         // ── View toggles ──────────────────────────────────────────────────────
         Rectangle {
             id: viewMenuBtn
-            Layout.preferredWidth: 60
+            Layout.preferredWidth: 1
+            Layout.fillWidth: true
             Layout.fillHeight: true
+                Layout.preferredHeight: 44
+            radius: 5
+            border.width: 1
+            border.color: UiTheme.borderSubtle
             color: viewBtnMouse.pressed ? UiTheme.surfaceRaised : (viewBtnMouse.containsMouse ? UiTheme.panelRaised : UiTheme.panel)
 
             Text {
                 anchors.centerIn: parent
-                text: "VIEW ▾"
+                text: "View ▾"
                 color: UiTheme.textPrimary
-                font.pixelSize: root.sp(9)
+                font.pixelSize: root.sp(11)
                 font.bold: true
             }
 
@@ -1307,16 +1292,17 @@ Rectangle {
         // ── Anti-Clip ────────────────────────────────────────────────────────
         Rectangle {
             id: antiClipBlock
-            Layout.preferredWidth: 60
+            Layout.preferredWidth: 1
+            Layout.fillWidth: true
             Layout.fillHeight: true
+                Layout.preferredHeight: 44
             property bool on: false
             property real gr: deckA ? deckA.gainReduction : 1.0
-            color: !on ? UiTheme.panel
-                 : gr < 0.7 ? Qt.tint(UiTheme.panelInset,
-                                     Qt.rgba(UiTheme.error.r, UiTheme.error.g, UiTheme.error.b,
-                                             gr < 0.5 ? 0.24 : 0.14))
-                 : gr < 0.99 ? UiTheme.orangeDim
-                 : UiTheme.greenDim
+            radius: 5
+            border.width: 1
+            border.color: on ? UiTheme.green : UiTheme.borderSubtle
+            color: UiTheme.panel
+
 
             Column {
                 anchors.centerIn: parent
@@ -1324,10 +1310,10 @@ Rectangle {
 
                 Text {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    text: "A-CLP"
+                    text: "Anti-Clip"
                     color: !antiClipBlock.on ? UiTheme.textDim
                          : antiClipBlock.gr < 0.99 ? UiTheme.textPrimary : UiTheme.green
-                    font.pixelSize: root.sp(7); font.bold: true; font.letterSpacing: 0.3
+                    font.pixelSize: root.sp(11); font.bold: true; font.letterSpacing: 0.2
                 }
 
                 Rectangle {
@@ -1352,13 +1338,17 @@ Rectangle {
 
             Rectangle {
                 Layout.fillWidth: true
+                Layout.preferredWidth: 1
                 Layout.fillHeight: true
-                radius: 0
+                Layout.preferredHeight: 44
+                radius: 5
+                border.width: 1
+                border.color: UiTheme.borderSubtle
                 color: UiTheme.buttonBg(false, false, quickModeMouse.pressed)
                 Text {
                     anchors.centerIn: parent
                     text: root.Window.window && root.Window.window.allInOneMode ? "AIO MODE" : "DESKTOP MODE"
-                    color: UiTheme.blue; font.pixelSize: root.sp(10); font.bold: true
+                    color: UiTheme.blue; font.pixelSize: root.sp(11); font.bold: true
                 }
                 MouseArea {
                     id: quickModeMouse; anchors.fill: parent
@@ -1371,13 +1361,17 @@ Rectangle {
 
             Rectangle {
                 Layout.fillWidth: true
+                Layout.preferredWidth: 1
                 Layout.fillHeight: true
-                radius: 0
+                Layout.preferredHeight: 44
+                radius: 5
+                border.width: 1
+                border.color: UiTheme.borderSubtle
                 color: UiTheme.buttonBg(false, false, quickLibraryMouse.pressed)
                 Text {
                     anchors.centerIn: parent
-                    text: "LIBRARY"
-                    color: UiTheme.textPrimary; font.pixelSize: root.sp(10); font.bold: true
+                    text: "Library"
+                    color: UiTheme.textPrimary; font.pixelSize: root.sp(11); font.bold: true
                 }
                 MouseArea {
                     id: quickLibraryMouse; anchors.fill: parent
@@ -1390,13 +1384,17 @@ Rectangle {
 
             Rectangle {
                 Layout.fillWidth: true
+                Layout.preferredWidth: 1
                 Layout.fillHeight: true
-                radius: 0
+                Layout.preferredHeight: 44
+                radius: 5
+                border.width: 1
+                border.color: UiTheme.borderSubtle
                 color: UiTheme.buttonBg(false, false, quickSourceMouse.pressed)
                 Text {
                     anchors.centerIn: parent
-                    text: "SOURCE"
-                    color: UiTheme.textPrimary; font.pixelSize: root.sp(10); font.bold: true
+                    text: "Source"
+                    color: UiTheme.textPrimary; font.pixelSize: root.sp(11); font.bold: true
                 }
                 MouseArea {
                     id: quickSourceMouse; anchors.fill: parent
@@ -1409,13 +1407,17 @@ Rectangle {
 
             Rectangle {
                 Layout.fillWidth: true
+                Layout.preferredWidth: 1
                 Layout.fillHeight: true
-                radius: 0
+                Layout.preferredHeight: 44
+                radius: 5
+                border.width: 1
+                border.color: UiTheme.borderSubtle
                 color: UiTheme.buttonBg(false, false, quickPerformanceMouse.pressed)
                 Text {
                     anchors.centerIn: parent
-                    text: "PERFORMANCE"
-                    color: UiTheme.textPrimary; font.pixelSize: root.sp(10); font.bold: true
+                    text: "Performance"
+                    color: UiTheme.textPrimary; font.pixelSize: root.sp(11); font.bold: true
                 }
                 MouseArea {
                     id: quickPerformanceMouse; anchors.fill: parent
@@ -1429,15 +1431,19 @@ Rectangle {
             Rectangle {
                 id: quickSettingsBlock
                 Layout.fillWidth: true
+                Layout.preferredWidth: 1
                 Layout.fillHeight: true
-                radius: 0
+                Layout.preferredHeight: 44
+                radius: 5
+                border.width: 1
+                border.color: UiTheme.borderSubtle
                 readonly property bool active: root.Window.window ? root.Window.window.settingsPanelActive : false
                 color: UiTheme.buttonBg(quickSettingsBlock.active, false, quickSettingsMouse.pressed)
                 Text {
                     anchors.centerIn: parent
-                    text: "SETTINGS"
+                    text: "Settings"
                     color: quickSettingsBlock.active ? UiTheme.blue : UiTheme.textPrimary
-                    font.pixelSize: root.sp(10); font.bold: true
+                    font.pixelSize: root.sp(11); font.bold: true
                 }
                 MouseArea {
                     id: quickSettingsMouse; anchors.fill: parent
@@ -1457,33 +1463,18 @@ Rectangle {
 
             Rectangle {
                 Layout.fillWidth: true
+                Layout.preferredWidth: 1
                 Layout.fillHeight: true
-                radius: 0
-                color: UiTheme.buttonBg(false, false, quickRecMouse.pressed)
-                Row {
-                    anchors.centerIn: parent
-                    spacing: 5
-                    Rectangle { width: 7; height: 7; radius: 4; color: UiTheme.error; anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: "REC"; color: UiTheme.textSecondary; font.pixelSize: root.sp(10); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                }
-                MouseArea {
-                    id: quickRecMouse
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    // Recording control is kept as the existing placeholder.
-                }
-            }
-
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                radius: 0
+                Layout.preferredHeight: 44
+                radius: 5
+                border.width: 1
+                border.color: UiTheme.borderSubtle
                 color: UiTheme.buttonBg(false, false, quickFullscreenMouse.pressed)
                 Row {
                     anchors.centerIn: parent
                     spacing: 5
                     Text { text: "⛶"; color: UiTheme.textSecondary; font.pixelSize: root.sp(15); anchors.verticalCenter: parent.verticalCenter }
-                    Text { text: "FULLSCREEN"; color: UiTheme.textPrimary; font.pixelSize: root.sp(9); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                    Text { text: "Fullscreen"; color: UiTheme.textPrimary; font.pixelSize: root.sp(11); font.bold: true; anchors.verticalCenter: parent.verticalCenter }
                 }
                 MouseArea {
                     id: quickFullscreenMouse
@@ -1503,60 +1494,86 @@ Rectangle {
         }
     }
 
-    // A familiar Android-style handle: drag it down to reveal the tray, or
-    // tap it to toggle.  It sits above the content, so it is reachable in both
-    // AIO and desktop mode.
-    Item {
-        id: pullHandle
+    component PullDownHandle: Item {
+        id: grip
+        required property var controller
+        property real travel: 144
+        property real restingY: 38
+        property color idleColor: "#738094"
+        property color activeColor: "#dce5f0"
         anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: parent.bottom
-        width: 112
-        height: 16
-        z: 20
+        y: restingY + travel * (controller ? controller.topBarPullProgress : 0)
+        width: 120
+        height: 24
+        z: 30
 
         Rectangle {
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.verticalCenter: parent.verticalCenter
-            width: 54
+            anchors.centerIn: parent
+            width: gripMouse.pressed || gripMouse.containsMouse ? 54 : 42
             height: 4
             radius: 2
-            color: pullHandleMouse.pressed ? UiTheme.textPrimary : UiTheme.textLabel
+            color: gripMouse.pressed || gripMouse.containsMouse ? grip.activeColor : grip.idleColor
+            Behavior on width { NumberAnimation { duration: 120 } }
+            Behavior on color { ColorAnimation { duration: 120 } }
         }
 
         MouseArea {
-            id: pullHandleMouse
+            id: gripMouse
             anchors.fill: parent
             hoverEnabled: true
-            cursorShape: Qt.OpenHandCursor
+            cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
             preventStealing: true
             property real pressY: 0
             property real pressProgress: 0
+            property real maxDistance: 0
 
-            onPressed: function(mouse) {
-                pressY = mouse.y
-                pressProgress = root.Window.window ? root.Window.window.topBarPullProgress : 0
-                cursorShape = Qt.ClosedHandCursor
+            function followPointer(mouse) {
+                // The grip moves with the tray: measure against its fixed parent.
+                const point = mapToItem(grip.parent, mouse.x, mouse.y)
+                const delta = point.y - pressY
+                maxDistance = Math.max(maxDistance, Math.abs(delta))
+                grip.controller.topBarPullProgress = Math.max(0, Math.min(1,
+                    pressProgress + delta / Math.max(1, grip.travel)))
             }
-            onPositionChanged: function(mouse) {
-                if (!pressed || !root.Window.window)
-                    return
-                var next = pressProgress + (mouse.y - pressY) / UiTheme.toolbarPullExtra
-                root.Window.window.topBarPullProgress = Math.max(0.0, Math.min(1.0, next))
+            onPressed: (mouse) => {
+                if (!grip.controller) return
+                pressY = mapToItem(grip.parent, mouse.x, mouse.y).y
+                pressProgress = grip.controller.topBarPullProgress
+                maxDistance = 0
+                grip.controller.topBarPullDragging = true
             }
-            onReleased: function(mouse) {
-                if (!root.Window.window)
-                    return
-                var moved = Math.abs(mouse.y - pressY)
-                if (moved < 4)
-                    root.Window.window.toggleTopBarPullDown()
-                else if (root.Window.window.topBarPullProgress >= 0.35)
-                    root.Window.window.openTopBarPullDown()
+            onPositionChanged: (mouse) => {
+                if (pressed && grip.controller) followPointer(mouse)
+            }
+            onReleased: (mouse) => {
+                if (!grip.controller) return
+                followPointer(mouse)
+                grip.controller.topBarPullDragging = false
+                if (maxDistance < 5)
+                    grip.controller.toggleTopBarPullDown()
+                else if (grip.controller.topBarPullProgress >= 0.5)
+                    grip.controller.openTopBarPullDown()
                 else
-                    root.Window.window.closeTopBarPullDown()
-                cursorShape = Qt.OpenHandCursor
+                    grip.controller.closeTopBarPullDown()
             }
-            onCanceled: cursorShape = Qt.OpenHandCursor
+            onCanceled: {
+                if (!grip.controller) return
+                grip.controller.topBarPullDragging = false
+                if (grip.controller.topBarPullProgress >= 0.5)
+                    grip.controller.openTopBarPullDown()
+                else
+                    grip.controller.closeTopBarPullDown()
+            }
         }
+    }
+
+    PullDownHandle {
+        id: pullHandle
+        controller: root.Window.window
+        travel: UiTheme.toolbarPullExtra
+        restingY: root.collapsedHeight - height / 2
+        idleColor: UiTheme.textDim
+        activeColor: UiTheme.textPrimary
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1565,14 +1582,13 @@ Rectangle {
     // ════════════════════════════════════════════════════════════════════════
     Rectangle {
         id: centerMeter
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.top: parent.top
-        anchors.topMargin: Math.round((root.collapsedHeight - height) / 2) - 5
+        parent: meterSlot
+        anchors.centerIn: parent
         z: 11
-        width: 136
-        height: 22
-        radius: 0
-        color: UiTheme.displayBackground
+        width: meterSlot.width
+        height: 28
+        radius: 4
+        color: "#0e131b"
         border.width: 1
         border.color: clipHold > 0 ? UiTheme.error : UiTheme.borderSubtle
 
@@ -1621,8 +1637,8 @@ Rectangle {
                     model: centerMeter.segs
                     Rectangle {
                         required property int index
-                        width: 4
-                        height: 3
+                        width: root.compactBar ? 3 : 5
+                        height: 4
                         radius: 1
                         readonly property int litCount: centerMeter.litSegments(centerMeter.displayL)
                         color: index < litCount ? centerMeter.segColor(index) : UiTheme.knobTrack
@@ -1636,8 +1652,8 @@ Rectangle {
                     model: centerMeter.segs
                     Rectangle {
                         required property int index
-                        width: 4
-                        height: 3
+                        width: root.compactBar ? 3 : 5
+                        height: 4
                         radius: 1
                         readonly property int litCount: centerMeter.litSegments(centerMeter.displayR)
                         color: index < litCount ? centerMeter.segColor(index) : UiTheme.knobTrack
