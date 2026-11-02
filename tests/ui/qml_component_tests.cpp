@@ -2637,6 +2637,19 @@ bool qmlMergeRuntimeTests()
                 && clickItem(performanceWindow, quantize, "scrolled deck B quantize is clickable");
             ok &= require(deckB->property("quantizeEnabled").toBool() != previousQuantize,
                           "deck B bottom action stays functional after resizing");
+            auto* fxQuantize = beatFxPanel->findChild<QQuickItem*>(QStringLiteral("fxQuantizeRow"));
+            const bool previousFxQuantize = fxManager->property("quantizeEnabled1").toBool();
+            const bool otherFxQuantize = fxManager->property("quantizeEnabled2").toBool();
+            ok &= revealAction(beatFxPanel, fxQuantize)
+                && clickItem(performanceWindow, fxQuantize, "right-side FX Quantize is reachable and clickable");
+            ok &= require(fxManager->property("quantizeEnabled1").toBool() != previousFxQuantize
+                              && fxManager->property("syncEnabled1").toBool()
+                              && fxManager->property("quantizeEnabled2").toBool() == otherFxQuantize
+                              && fxQuantize && fxQuantize->property("active").toBool() != previousFxQuantize,
+                          "right-side FX Quantize updates its unit and mirrors the canonical state");
+            ok &= clickItem(performanceWindow, fxQuantize, "right-side FX Quantize switches back off");
+            ok &= require(fxManager->property("quantizeEnabled1").toBool() == previousFxQuantize,
+                          "right-side FX Quantize can restore its previous state");
             auto* engage = beatFxPanel->findChild<QQuickItem*>(QStringLiteral("fxEngageRow"));
             const bool previousEnabled = fxManager->property("enabled1").toBool();
             ok &= revealAction(beatFxPanel, engage)

@@ -899,6 +899,25 @@ Item {
                 }
             }
 
+            PerformanceActionButton {
+                objectName: "fxQuantizeRow"
+                Layout.leftMargin: 6
+                Layout.rightMargin: 6
+                Layout.bottomMargin: 6
+                rowHeight: 34
+                label: "FX QUANTIZE  " + (active ? "ON" : "OFF")
+                accent: root.activeColor
+                active: root.fx ? root.fx.quantizeEnabled1 : false
+                enabled: root.fx !== null
+                onClicked: if (root.fx) root.fx.setQuantizeEnabled(1, !root.fx.quantizeEnabled1)
+                ToolTip.text: "Align effect starts and modulation to the beatgrid. Enables BPM sync."
+                Accessible.role: Accessible.CheckBox
+                Accessible.name: "FX Quantize"
+                Accessible.checkable: true
+                Accessible.checked: active
+                Accessible.onPressAction: clicked()
+            }
+
             Rectangle {
                 objectName: "fxEngageRow"
                 Layout.fillWidth: true; Layout.preferredHeight: 42
