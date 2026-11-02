@@ -62,7 +62,8 @@ public:
                                   double sampleRate,
                                   double eventIntervalSeconds,
                                   double measuredRate
-                                      = std::numeric_limits<double>::quiet_NaN()) noexcept;
+                                      = std::numeric_limits<double>::quiet_NaN(),
+                                  bool clampEventSpike = true) noexcept;
 
     bool submitReleaseRelative(engine::audio::RenderModeRouter* bridge,
                                double deltaSec) noexcept;

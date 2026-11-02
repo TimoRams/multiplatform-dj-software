@@ -43,7 +43,9 @@ public:
 
         m_touching = true;
         m_released = false;
+        m_lastTouchDirection = 0;
         m_speed.reset(timestampSeconds);
+        m_velocity.reset();
         m_stream->beginTouch(timestampSeconds);
         return RealtimeIngressResult::Accepted;
     }
@@ -57,7 +59,8 @@ public:
         if (!m_touching)
             return RealtimeIngressResult::Ignored;
 
-        const double releaseRate = m_speed.rate(timestampSeconds);
+        const double releaseRate = m_speed.rate(timestampSeconds) == 0.0
+            ? 0.0 : m_velocity.current();
         m_touching = false;
         m_released = true;
         m_stream->endTouch(releaseRate, timestampSeconds);
@@ -77,11 +80,28 @@ public:
         if (!m_touching)
             return RealtimeIngressResult::Ignored;
 
-        const double rate = m_speed.push(ticks, timestampSeconds);
+        const int direction = ticks > 0.0 ? 1 : -1;
+        if (m_lastTouchDirection != 0 && direction != m_lastTouchDirection)
+            m_velocity.reset();
+        m_lastTouchDirection = direction;
+        m_speed.push(ticks, timestampSeconds);
+        const auto fit = m_speed.motionFit(timestampSeconds);
+        const double shortRate = m_speed.rate(timestampSeconds);
+        const double speedDifference = std::abs(shortRate - fit.rate);
+        const double accelerationThreshold = 0.15
+            * std::max(0.5, std::abs(fit.rate));
+        const double fastWeight = std::clamp(
+            (speedDifference - accelerationThreshold)
+                / accelerationThreshold,
+            0.0, 1.0);
+        const double rate = m_velocity.push(
+            fit.rate + fastWeight * (shortRate - fit.rate),
+            timestampSeconds);
         m_stream->publishTouchMotion(scratchDeltaSeconds(ticks),
                                      rate,
                                      m_speed.lastEventIntervalSeconds(),
-                                     timestampSeconds);
+                                     timestampSeconds,
+                                     scratchDeltaSeconds(fit.positionOffsetTicks));
         return RealtimeIngressResult::Accepted;
     }
 
@@ -98,7 +118,8 @@ public:
         if (m_touching || !m_released)
             return RealtimeIngressResult::Ignored;
 
-        const double rate = m_speed.push(ticks, timestampSeconds);
+        const double rate = m_velocity.push(
+            m_speed.push(ticks, timestampSeconds), timestampSeconds);
         m_stream->publishReleaseVelocity(rate,
                                          m_speed.lastEventIntervalSeconds(),
                                          timestampSeconds);
@@ -110,7 +131,9 @@ public:
         const std::lock_guard lock(m_mutex);
         m_touching = false;
         m_released = false;
+        m_lastTouchDirection = 0;
         m_speed.reset(timestampSeconds);
+        m_velocity.reset();
         m_lastEvents = {};
         m_stream->reset(timestampSeconds);
     }
@@ -154,10 +177,12 @@ private:
 
     mutable std::mutex m_mutex;
     JogSpeedEstimator m_speed;
+    JogVelocitySmoother m_velocity;
     std::shared_ptr<engine::scratch::RealtimeScratchInput> m_stream;
     std::array<LastWireEvent, static_cast<std::size_t>(EventKind::Count)> m_lastEvents {};
     bool m_touching = false;
     bool m_released = false;
+    int m_lastTouchDirection = 0;
 };
 
 } // namespace flx10

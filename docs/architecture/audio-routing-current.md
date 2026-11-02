@@ -34,6 +34,28 @@ Master and Booth are separate physical assignments of the same post-limiter Mast
 therefore share software Master Gain. Recording reads that same tap. A separate Booth level,
 where present, is hardware-owned.
 
+## Signalsmith keylock quality
+
+The normal reader already changes pitch with playback rate. Signalsmith processes
+equal input/output lengths and applies the reciprocal rate, plus any manual Key
+Shift. Keylock uses a linear, full-band pitch map: an 8 kHz tonality knee cannot
+undo the reader's shift above that knee. The knee is retained only for manual
+Key Shift with keylock off. Changing the keylock toggle must update this map even
+when the numeric pitch factor stays unchanged.
+
+The quality-oriented configuration uses a 120 ms analysis window with eight
+overlapping hops and split computation. This favours bass resolution and lower
+steady-tone modulation over low latency: total algorithmic latency is about
+135 ms at 44.1, 48 and 96 kHz. Analysis is capped at 16384 samples and the hop at
+2048 samples, so higher sample rates have shorter windows. Scratch still uses
+the direct bypass. The 65536-sample history holds twice the maximum pipeline
+latency for worker-side priming.
+
+These settings target the 0.8x--1.2x tempo range; they do not guarantee perceptual
+transparency. Tonal regression measurements and real-track listening cover
+different failure modes. In particular, the spectral peak mapper retains some
+deep-bass pitch error, and a longer window can soften transients.
+
 ## Realtime Boundary
 
 The callback uses preallocated buffers, coherent snapshots, bounded lock-free commands,
