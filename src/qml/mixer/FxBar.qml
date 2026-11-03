@@ -139,7 +139,13 @@ Rectangle {
             : effectsList[0]
         readonly property string paramType: currentEffect.paramType
         readonly property string knobLabel: currentEffect.knobLabel
-        readonly property bool   hasBpmSync: currentEffect.bpmSync
+        readonly property bool hasBpmSync: {
+            const selectedName = fxManager != null
+                ? (unitId === 1 ? fxManager.effectType1 : fxManager.effectType2) : currentEffect.name
+            const name = selectedName === "Trans" ? "Tremolo"
+                       : selectedName === "MT Delay" ? "Multi-Tap Delay" : selectedName
+            return effectsList.some(function(effect) { return effect.name === name && effect.bpmSync })
+        }
 
         // ── Sync state (mirrors fxManager properties) ────────────────────────
         readonly property bool   syncOn:   unitId === 1
@@ -380,7 +386,7 @@ Rectangle {
                 Rectangle {
                     Layout.preferredWidth:  50
                     Layout.preferredHeight: 18
-                    visible: root.hasBpmSync
+                    opacity: root.hasBpmSync ? 1.0 : 0.5
                     color: UiTheme.displayBackground
                     radius: 0
 
@@ -397,7 +403,7 @@ Rectangle {
                 Rectangle {
                     Layout.preferredWidth:  32
                     Layout.preferredHeight: 18
-                    visible: root.hasBpmSync
+                    opacity: root.hasBpmSync ? 1.0 : 0.5
                     radius: 0
                     color: root.syncOn ? UiTheme.greenDim : UiTheme.panelDeep
 
@@ -434,7 +440,7 @@ Rectangle {
                     objectName: "fxQuantizeButton"
                     Layout.preferredWidth: 54
                     Layout.preferredHeight: 22
-                    visible: root.hasBpmSync
+                    opacity: root.hasBpmSync ? 1.0 : 0.5
                     text: "FX QNT"
                     checkable: true
                     checked: root.quantizeOn

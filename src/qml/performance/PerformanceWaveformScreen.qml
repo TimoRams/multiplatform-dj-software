@@ -24,7 +24,7 @@ Item {
             settingsManager.setUiState("performanceFxPanelOpen", rightPanelOpen ? "1" : "0")
     }
 
-    readonly property real panelWidth: Math.min(230, Math.max(176, width * 0.155))
+    readonly property real panelWidth: 208
     readonly property real handleWidth: 22
     property real leftPanelReveal: leftPanel === "closed" ? 0.0 : 1.0
     property real rightPanelReveal: rightPanelOpen ? 1.0 : 0.0
@@ -84,9 +84,74 @@ Item {
         }
         MouseArea { id: buttonMouse; anchors.fill: parent; hoverEnabled: true; onClicked: parent.clicked() }
         ToolTip.visible: buttonMouse.containsMouse
+        ToolTip.delay: 600
         ToolTip.text: label
     }
 
+    component PerformanceLevelDial: Item {
+        id: dial
+        property real amount: 0
+        property color accent: UiTheme.blue
+        property bool engaged: false
+        signal edited(real amount)
+        onAmountChanged: if (dialArc) dialArc.requestPaint()
+        onEngagedChanged: if (dialArc) dialArc.requestPaint()
+        onAccentChanged: if (dialArc) dialArc.requestPaint()
+        Canvas {
+            id: dialArc
+            anchors.fill: parent
+            antialiasing: true
+            onPaint: {
+                const ctx = getContext("2d")
+                ctx.reset()
+                const cx = width / 2, cy = height / 2
+                const radius = Math.max(1, Math.min(width, height) / 2 - 5)
+                const start = Math.PI * 0.75, span = Math.PI * 1.5
+                const end = start + span * Math.max(0, Math.min(1, dial.amount))
+                ctx.lineWidth = 3; ctx.lineCap = "round"
+                ctx.strokeStyle = UiTheme.borderStrong
+                ctx.beginPath(); ctx.arc(cx, cy, radius, start, start + span); ctx.stroke()
+                ctx.strokeStyle = dial.engaged ? dial.accent : UiTheme.textSecondary
+                ctx.beginPath(); ctx.arc(cx, cy, radius, start, end); ctx.stroke()
+                ctx.fillStyle = ctx.strokeStyle
+                ctx.beginPath(); ctx.arc(cx + Math.cos(end) * radius, cy + Math.sin(end) * radius, 4, 0, Math.PI * 2); ctx.fill()
+            }
+        }
+        Column {
+            anchors.centerIn: parent
+            spacing: 3
+            PerformanceText {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: Math.round(dial.amount * 100) + "%"
+                color: UiTheme.textPrimary
+                font.pixelSize: Math.max(12, Math.min(32, dial.width * 0.23))
+                font.weight: Font.Medium
+            }
+            PerformanceText {
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: dial.width >= 96
+                text: "LEVEL / DEPTH"; color: UiTheme.textLabel
+                font.pixelSize: 9; font.letterSpacing: 0.5
+            }
+        }
+        MouseArea {
+            objectName: "fxLevelDialInput"
+            anchors.fill: parent
+            cursorShape: Qt.SizeVerCursor
+            preventStealing: true
+            property real startY: 0
+            property real startAmount: 0
+            onPressed: (mouse) => { startY = mouse.y; startAmount = dial.amount }
+            onPositionChanged: (mouse) => {
+                if (pressed) dial.edited(Math.max(0, Math.min(1, startAmount + (startY - mouse.y) / 150)))
+            }
+            onDoubleClicked: dial.edited(0)
+            onWheel: (wheel) => {
+                dial.edited(Math.max(0, Math.min(1, dial.amount + wheel.angleDelta.y / 120 * 0.025)))
+                wheel.accepted = true
+            }
+        }
+    }
 
     component PerformanceBeatgridPanel: Rectangle {
         id: root
@@ -94,13 +159,14 @@ Item {
         property var engine: null
         property string deckName: "A"
         signal closeRequested()
+        implicitHeight: gridContent.implicitHeight + 2
 
         readonly property int headerHeight: 32
         readonly property int rowHeight: 32
         readonly property int panelMargin: 10
         readonly property color accentColor: UiTheme.deckColor(deckName)
 
-        color: "transparent"
+        color: UiTheme.inspectorSurface
         border.color: UiTheme.borderSubtle
         border.width: 1
         radius: 0
@@ -118,7 +184,7 @@ Item {
             id: gridContent
             parent: gridScroll.contentItem
             width: gridScroll.width
-            height: Math.max(gridScroll.height, implicitHeight)
+            height: implicitHeight
             spacing: 0
 
             Rectangle {
@@ -207,7 +273,6 @@ Item {
                 }
             }
 
-            Item { Layout.fillHeight: true }
         }
     }
 
@@ -219,14 +284,19 @@ Item {
         property bool selected: false
         signal selectedRequested()
         signal gridRequested()
+        implicitHeight: deckContent.implicitHeight + 2 * verticalPadding + 2
 
-        readonly property int rowSpacing: 0
+        readonly property int horizontalPadding: 5
+        readonly property int verticalPadding: 4
+        readonly property real contentScale: Math.min(1, Math.max(1, deckScroll.height - 2 * verticalPadding)
+                                                        / Math.max(1, deckContent.implicitHeight))
+        readonly property int rowSpacing: 2
         readonly property int bpmTenths: engine && engine.currentBpm > 0
                                         ? Math.round(engine.currentBpm * 10) : 0
         readonly property color panelText: UiTheme.textPrimary
         readonly property color mutedText: UiTheme.textSecondary
         readonly property color lineColor: UiTheme.borderSubtle
-        readonly property color rowColor: Qt.rgba(0, 0, 0, 0.08)
+        readonly property color rowColor: UiTheme.inspectorInset
         readonly property color accentColor: UiTheme.deckColor(deckName)
         readonly property color playingColor: UiTheme.play
         readonly property bool externalSourceTrack: engine && engine.hasTrack
@@ -237,8 +307,8 @@ Item {
         // the deck is stopped — paused, or sitting at the end of the track.
         readonly property bool canEject: engine && engine.hasTrack && !engine.isPlaying
 
-        color: "transparent"
-        border.color: selected ? accentColor : lineColor
+        color: UiTheme.inspectorSurface
+        border.color: lineColor
         border.width: 1
         radius: 0
 
@@ -266,28 +336,35 @@ Item {
             objectName: "deckScroll"
             anchors.fill: parent
             anchors.margins: 1
-            contentHeight: deckContent.height
+            contentHeight: height
+            interactive: false
+            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
         }
         ColumnLayout {
             id: deckContent
             parent: deckScroll.contentItem
-            width: deckScroll.width
-            height: Math.max(deckScroll.height, implicitHeight)
+            x: root.horizontalPadding
+            y: root.verticalPadding
+            transformOrigin: Item.TopLeft
+            scale: root.contentScale
+            width: Math.max(0, deckScroll.width - 2 * root.horizontalPadding) / scale
+            height: Math.max(1, deckScroll.height - 2 * root.verticalPadding) / scale
             spacing: root.rowSpacing
 
             // ── Deck header ─────────────────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 28
-                Layout.minimumHeight: 28
-                color: root.selected ? Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.12) : Qt.rgba(1, 1, 1, 0.06)
+                Layout.preferredHeight: 24
+                Layout.minimumHeight: 24
+                color: "transparent"
 
                 Rectangle {
                     id: deckChip
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.leftMargin: 7
-                    width: 6; height: 14
+                    width: 3; height: 18
+                    opacity: root.selected ? 1.0 : 0.4
                     color: root.accentColor
                 }
 
@@ -360,70 +437,101 @@ Item {
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.lineColor }
-
-            // ── Loaded track ────────────────────────────────────────────────────
             Rectangle {
-                Layout.fillWidth: true; Layout.fillHeight: true
-                Layout.minimumHeight: 28
-                color: root.rowColor
-
-                Row {
-                    anchors.left: parent.left; anchors.leftMargin: 9
-                    anchors.right: parent.right; anchors.rightMargin: 9
+                id: trackDisplay
+                objectName: "sidebarTrackDisplay"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredHeight: 42
+                Layout.minimumHeight: 42
+                color: "transparent"
+                Column {
+                    anchors.left: parent.left; anchors.right: parent.right
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: 8
-                    PerformanceText {
-                        width: 48
-                        text: "SOURCE"
-                        color: UiTheme.textLabel
-                        font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.7
+                    spacing: coverShell.visible ? 6 : 1
+                    Item {
+                        id: coverShell
+                        width: parent.width
+                        height: Math.min(112, Math.max(0, trackDisplay.height - 68))
+                        visible: trackDisplay.height >= 124
+                        Rectangle {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: parent.height; height: width; radius: 4
+                            color: root.rowColor
+                            border.color: root.lineColor
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: parent.width * 0.6; height: width; radius: width / 2
+                                color: "transparent"; border.color: UiTheme.borderStrong
+                                Rectangle {
+                                    anchors.centerIn: parent; width: 6; height: 6; radius: 3
+                                    color: root.mutedText
+                                }
+                            }
+                            Image {
+                                anchors.fill: parent
+                                source: root.visible && coverShell.visible && root.engine
+                                        ? (root.engine.coverArtUrl || "") : ""
+                                sourceSize: Qt.size(256, 256)
+                                asynchronous: true; cache: true
+                                fillMode: Image.PreserveAspectFit
+                            }
+                        }
                     }
                     PerformanceText {
-                        width: Math.max(0, parent.width - 56)
+                        width: parent.width
+                        objectName: "deckTrackTitle"
+                        text: root.engine && root.engine.hasTrack
+                              ? (root.engine.trackTitle || "Untitled track") : "No track loaded"
+                        color: root.panelText
+                        font.pixelSize: 13; font.weight: Font.DemiBold
+                        wrapMode: Text.Wrap
+                        maximumLineCount: trackDisplay.height >= 124 ? 2 : 1
+                        elide: Text.ElideRight
+                    }
+                    PerformanceText {
+                        width: parent.width
+                        objectName: "deckTrackArtist"
+                        text: root.engine && root.engine.hasTrack
+                              ? (root.engine.trackArtist || "Unknown artist") : "Load a track to begin"
+                        color: root.mutedText
+                        font.pixelSize: 10
+                        elide: Text.ElideRight
+                    }
+                    PerformanceText {
+                        width: parent.width
                         text: root.loadedSourceLabel()
-                        color: root.engine && root.engine.hasTrack ? root.sourceColor : root.mutedText
-                        font.pixelSize: 12; font.weight: Font.DemiBold
+                        color: UiTheme.textLabel
+                        font.pixelSize: 8; font.letterSpacing: 0.5
                         elide: Text.ElideRight
                     }
                 }
-                MouseArea { anchors.fill: parent; onClicked: root.selectedRequested() }
-            }
-
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.lineColor }
-
-            // ── KEY ─────────────────────────────────────────────────────────────
-            Rectangle {
-                Layout.fillWidth: true; Layout.fillHeight: true
-                Layout.minimumHeight: 28
-                color: root.rowColor
-                PerformanceText {
-                    anchors.left: parent.left; anchors.leftMargin: 9
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "KEY"; color: UiTheme.textLabel
-                    font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.6
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: root.selectedRequested()
                 }
-                PerformanceText {
-                    anchors.right: parent.right; anchors.rightMargin: 9
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: root.engine && root.engine.trackKey !== "" ? root.engine.trackKey : "—"
-                    color: root.panelText; font.pixelSize: 17
-                }
-                MouseArea { anchors.fill: parent; onClicked: root.selectedRequested() }
             }
-
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.lineColor }
 
             // ── BPM ─────────────────────────────────────────────────────────────
             Rectangle {
-                Layout.fillWidth: true; Layout.fillHeight: true
-                Layout.minimumHeight: 28
+                Layout.fillWidth: true; Layout.preferredHeight: Math.min(52, Math.max(32, root.height * 0.13))
+                Layout.minimumHeight: 32
                 color: root.rowColor
                 PerformanceText {
                     anchors.left: parent.left; anchors.leftMargin: 9
                     anchors.verticalCenter: parent.verticalCenter
+                    anchors.verticalCenterOffset: -7
                     text: "BPM"; color: UiTheme.textLabel
-                    font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.6
+                    font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 0.6
+                }
+                PerformanceText {
+                    anchors.left: parent.left; anchors.leftMargin: 9
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.verticalCenterOffset: 7
+                    width: 65
+                    text: "KEY  " + (root.engine && root.engine.trackKey ? root.engine.trackKey : "—")
+                    color: root.mutedText; font.pixelSize: 10
+                    elide: Text.ElideRight
                 }
                 // Split so the decimal stays small, the way a player prints a tempo.
                 PerformanceText {
@@ -440,7 +548,7 @@ Item {
                     anchors.right: bpmDecimals.left
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.bpmTenths > 0 ? Math.floor(root.bpmTenths / 10).toString() : "---"
-                    color: root.panelText; font.pixelSize: 19; font.weight: Font.Medium
+                    color: root.panelText; font.pixelSize: 22; font.weight: Font.Medium
                 }
                 MouseArea { anchors.fill: parent; onClicked: root.selectedRequested() }
             }
@@ -456,14 +564,14 @@ Item {
 
             // ── BEAT JUMP ───────────────────────────────────────────────────────
             Rectangle {
-                Layout.fillWidth: true; Layout.fillHeight: true
-                Layout.minimumHeight: 32
+                Layout.fillWidth: true; Layout.preferredHeight: 28
+                Layout.minimumHeight: 28
                 color: root.rowColor
                 PerformanceText {
                     anchors.left: parent.left; anchors.leftMargin: 9
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.right: jumpMinus.left; anchors.rightMargin: 6
-                    text: "BEAT\nJUMP"; color: UiTheme.textLabel; lineHeight: 0.95
+                    text: "JUMP"; color: UiTheme.textLabel; lineHeight: 0.95
                     font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.6
                     elide: Text.ElideRight
                 }
@@ -508,18 +616,16 @@ Item {
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.lineColor }
-
             // ── Quantize ────────────────────────────────────────────────────────
             Rectangle {
                 objectName: "quantizeRow"
-                Layout.fillWidth: true; Layout.fillHeight: true
-                Layout.minimumHeight: 28
+                Layout.fillWidth: true; Layout.preferredHeight: 26
+                Layout.minimumHeight: 26
                 color: root.rowColor
                 PerformanceText {
                     anchors.left: parent.left; anchors.leftMargin: 9
                     anchors.verticalCenter: parent.verticalCenter
-                    text: "Q"
+                    text: "QUANTIZE"
                     color: root.engine && root.engine.quantizeEnabled ? root.accentColor : root.mutedText
                     font.pixelSize: 12; font.weight: Font.DemiBold
                 }
@@ -542,16 +648,25 @@ Item {
         id: root
         property var fx: null
         signal closeRequested()
+        implicitHeight: fxContent.implicitHeight + 2 * verticalPadding + 2
 
-        readonly property int headerHeight: 28
+        readonly property int horizontalPadding: 5
+        readonly property int verticalPadding: 4
+        readonly property real contentScale: Math.min(1, Math.max(1, fxScroll.height - 2 * verticalPadding)
+                                                        / Math.max(1, fxContent.implicitHeight))
+        readonly property int headerHeight: 26
         readonly property color panelText: UiTheme.textPrimary
         readonly property color mutedText: UiTheme.textSecondary
         readonly property color lineColor: UiTheme.borderSubtle
-        readonly property color rowColor: Qt.rgba(0, 0, 0, 0.08)
+        readonly property color rowColor: UiTheme.inspectorInset
         readonly property color activeColor: UiTheme.blue
         readonly property color accentColor: UiTheme.blue
 
+        readonly property bool expandedMixControl: height >= 400
         readonly property bool percentParameter: fx && fx.effectType1 === "Reverb"
+        readonly property bool timingRelevant: fx && ["Echo", "Low Cut Echo", "MT Delay", "Multi-Tap Delay",
+            "Spiral", "Flanger", "Phaser", "Trans", "Tremolo", "Enigma Jet", "Roll", "Slip Roll",
+            "Roll Out", "Mobius Saw", "Mobius Tri"].indexOf(fx.effectType1) >= 0
         readonly property var beatDivisions: [
             { label: "1/16", value: 0.0625 }, { label: "1/8", value: 0.125 },
             { label: "1/4", value: 0.25 }, { label: "1/2", value: 0.5 },
@@ -584,7 +699,7 @@ Item {
         // to do nothing.
         readonly property bool effectOn: fx && fx.effectType1 !== "---" && fx.enabled1
 
-        color: "transparent"
+        color: UiTheme.inspectorSurface
         border.color: lineColor
         border.width: 1
         radius: 0
@@ -639,22 +754,28 @@ Item {
             objectName: "fxScroll"
             anchors.fill: parent
             anchors.margins: 1
-            contentHeight: fxContent.height
+            contentHeight: height
+            interactive: false
+            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
         }
         ColumnLayout {
             id: fxContent
             parent: fxScroll.contentItem
-            width: fxScroll.width
-            height: Math.max(fxScroll.height, implicitHeight)
-            spacing: 0
+            x: root.horizontalPadding
+            y: root.verticalPadding
+            transformOrigin: Item.TopLeft
+            scale: root.contentScale
+            width: Math.max(0, fxScroll.width - 2 * root.horizontalPadding) / scale
+            height: Math.max(1, fxScroll.height - 2 * root.verticalPadding) / scale
+            spacing: 2
 
             // ── Section header ──────────────────────────────────────────────────
             Rectangle {
                 Layout.fillWidth: true; Layout.preferredHeight: root.headerHeight
                 Layout.minimumHeight: root.headerHeight
-                color: Qt.rgba(1, 1, 1, 0.06)
+                color: "transparent"
                 PerformanceText {
-                    anchors.centerIn: parent; text: "BEAT FX"; color: root.panelText
+                    anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "BEAT FX"; color: root.panelText
                     font.pixelSize: 11; font.weight: Font.DemiBold; font.letterSpacing: 1.0
                 }
                 PerformanceText {
@@ -662,18 +783,57 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     text: "×"; color: root.mutedText; font.pixelSize: 16
                 }
-                MouseArea { anchors.fill: parent; onClicked: root.closeRequested() }
+                MouseArea {
+                    anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                    width: 24; height: 24
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.closeRequested()
+                }
             }
 
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.lineColor }
+            // ── Selected effect ─────────────────────────────────────────────────
+            Rectangle {
+                Layout.fillWidth: true; Layout.preferredHeight: 42
+                Layout.minimumHeight: 42
+                color: root.rowColor
+                radius: 4
+                PerformanceText {
+                    anchors.left: parent.left; anchors.leftMargin: 12
+                    anchors.top: parent.top; anchors.topMargin: 3
+                    text: "EFFECT"
+                    color: UiTheme.textLabel; font.pixelSize: 9; font.letterSpacing: 1
+                }
+                PerformanceText {
+                    anchors.left: parent.left; anchors.leftMargin: 12
+                    anchors.right: parent.right; anchors.rightMargin: 26
+                    anchors.bottom: parent.bottom; anchors.bottomMargin: 4
+                    text: root.fx && root.fx.effectType1 !== "---" ? root.fx.effectType1 : "Select effect"
+                    color: root.panelText
+                    font.pixelSize: 17; font.weight: Font.DemiBold
+                    elide: Text.ElideRight
+                }
+                PerformanceText {
+                    anchors.right: parent.right; anchors.rightMargin: 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "›"; color: root.mutedText; font.pixelSize: 22
+                }
+                MouseArea { anchors.fill: parent; onClicked: root.selectNextEffect() }
+            }
 
             // ── Tempo the effect is locked to ───────────────────────────────────
             Rectangle {
-                Layout.fillWidth: true; Layout.preferredHeight: 44
-                Layout.minimumHeight: 44
-                visible: !root.percentParameter
+                Layout.fillWidth: true; Layout.preferredHeight: 32
+                Layout.minimumHeight: 32
+                objectName: "fxTempoSyncRow"
+                opacity: root.timingRelevant ? 1.0 : 0.5
                 color: root.rowColor
 
+                PerformanceText {
+                    anchors.left: parent.left; anchors.leftMargin: 9
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "TEMPO"; color: UiTheme.textLabel
+                    font.pixelSize: 9; font.letterSpacing: 0.5
+                }
                 PerformanceText {
                     id: fxBpmDecimals
                     anchors.right: bpmBadge.left; anchors.rightMargin: 6
@@ -688,7 +848,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.fx && root.fx.displayBpm1 > 0
                           ? Math.floor(root.fx.displayBpm1).toString() : "---"
-                    color: root.panelText; font.pixelSize: 24; font.weight: Font.Medium
+                    color: root.panelText; font.pixelSize: 20; font.weight: Font.Medium
                 }
 
                 // AUTO/MAN over the BPM caption, the way a player labels the tempo
@@ -722,36 +882,16 @@ Item {
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.lineColor }
-
-            // ── Selected effect ─────────────────────────────────────────────────
-            Rectangle {
-                Layout.fillWidth: true; Layout.preferredHeight: 40
-                Layout.minimumHeight: 40
-                color: root.rowColor
-                PerformanceText {
-                    anchors.centerIn: parent
-                    width: parent.width - 12
-                    horizontalAlignment: Text.AlignHCenter
-                    text: root.fx ? root.fx.effectType1.toUpperCase() : "---"
-                    color: root.effectOn ? root.panelText : root.mutedText
-                    font.pixelSize: 20; font.letterSpacing: 0.5
-                    elide: Text.ElideRight
-                }
-                MouseArea { anchors.fill: parent; onClicked: root.selectNextEffect() }
-            }
-
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.lineColor }
-
             // ── Beat division: previous / current / next, all directly selectable ─
             RowLayout {
-                Layout.fillWidth: true; Layout.preferredHeight: 34
-                Layout.minimumHeight: 34
+                Layout.fillWidth: true; Layout.preferredHeight: 26
+                Layout.minimumHeight: 26
+                Layout.maximumHeight: 26
                 spacing: 4
-                Layout.leftMargin: 6
-                Layout.rightMargin: 6
-                Layout.topMargin: 4
-                Layout.bottomMargin: 4
+                Layout.leftMargin: 0
+                Layout.rightMargin: 0
+                Layout.topMargin: 0
+                Layout.bottomMargin: 0
                 Repeater {
                     model: 3
                     Rectangle {
@@ -779,12 +919,10 @@ Item {
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.lineColor }
-
             // ── Resulting effect time ───────────────────────────────────────────
             Rectangle {
-                Layout.fillWidth: true; Layout.preferredHeight: 32
-                Layout.minimumHeight: 32
+                Layout.fillWidth: true; Layout.preferredHeight: 26
+                Layout.minimumHeight: 26
                 color: root.rowColor
                 PerformanceText {
                     anchors.left: parent.left; anchors.leftMargin: 9
@@ -809,36 +947,44 @@ Item {
                 }
             }
 
-            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: root.lineColor }
-
-            // ── Mix amount ──────────────────────────────────────────────────────
-            Rectangle {
-                Layout.fillWidth: true; Layout.preferredHeight: root.headerHeight - 6
-                Layout.minimumHeight: root.headerHeight - 6
-                color: Qt.rgba(1, 1, 1, 0.06)
-                PerformanceText {
-                    anchors.centerIn: parent; text: "FX PARAMETER"; color: UiTheme.textLabel
-                    font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.8
+            Item {
+                objectName: "fxLevelDisplay"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: 0
+                Layout.preferredHeight: 0
+                PerformanceLevelDial {
+                    objectName: "fxLevelDial"
+                    anchors.centerIn: parent
+                    width: Math.max(0, Math.min(parent.width - 20, parent.height - 12, 168))
+                    height: width
+                    visible: root.expandedMixControl && width >= 56
+                    amount: root.fx ? root.fx.wetDry1 : 0
+                    accent: root.activeColor
+                    engaged: root.effectOn
+                    onEdited: (amount) => root.setMix(amount)
                 }
             }
 
-            Rectangle {
-                Layout.fillWidth: true; Layout.preferredHeight: 18
-                Layout.minimumHeight: 18
-                color: Qt.rgba(root.activeColor.r, root.activeColor.g, root.activeColor.b, 0.12)
-                PerformanceText {
-                    anchors.centerIn: parent; text: "LEVEL / DEPTH"; color: root.activeColor
-                    font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 0.6
-                }
+            PerformanceText {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 16
+                Layout.minimumHeight: 16
+                visible: !root.expandedMixControl
+                text: "LEVEL / DEPTH"
+                verticalAlignment: Text.AlignVCenter
+                color: UiTheme.textLabel
+                font.pixelSize: 9; font.weight: Font.DemiBold; font.letterSpacing: 0.8
             }
 
             Rectangle {
                 id: mixBar
                 objectName: "fxMixBar"
-                Layout.fillWidth: true; Layout.preferredHeight: 40
-                Layout.minimumHeight: 40
-                Layout.leftMargin: 6
-                Layout.rightMargin: 6
+                visible: !root.expandedMixControl
+                Layout.fillWidth: true; Layout.preferredHeight: 30
+                Layout.minimumHeight: 30
+                Layout.leftMargin: 0
+                Layout.rightMargin: 0
                 color: UiTheme.surfaceInset
                 border.color: root.lineColor
                 border.width: 1
@@ -862,24 +1008,23 @@ Item {
                 }
             }
 
-            Item { Layout.fillHeight: true; Layout.minimumHeight: 0 }
-
             // ── Routing and engage ──────────────────────────────────────────────
             RowLayout {
-                Layout.fillWidth: true; Layout.preferredHeight: 30
-                Layout.minimumHeight: 30
+                Layout.fillWidth: true; Layout.preferredHeight: 26
+                Layout.minimumHeight: 26
+                Layout.maximumHeight: 26
                 spacing: 4
-                Layout.leftMargin: 6
-                Layout.rightMargin: 6
-                Layout.topMargin: 4
-                Layout.bottomMargin: 4
+                Layout.leftMargin: 0
+                Layout.rightMargin: 0
+                Layout.topMargin: 0
+                Layout.bottomMargin: 0
                 Rectangle {
                     Layout.fillWidth: true; Layout.fillHeight: true
                     color: root.routedA ? Qt.rgba(UiTheme.deckA.r, UiTheme.deckA.g, UiTheme.deckA.b, 0.16) : root.rowColor
                     border.color: root.routedA ? UiTheme.deckA : root.lineColor
                     border.width: 1
                     PerformanceText {
-                        anchors.centerIn: parent; text: "CH A"
+                        anchors.centerIn: parent; text: "DECK A"
                         color: root.routedA ? UiTheme.deckA : root.mutedText
                         font.pixelSize: 11; font.weight: Font.DemiBold
                     }
@@ -891,7 +1036,7 @@ Item {
                     border.color: root.routedB ? UiTheme.deckB : root.lineColor
                     border.width: 1
                     PerformanceText {
-                        anchors.centerIn: parent; text: "CH B"
+                        anchors.centerIn: parent; text: "DECK B"
                         color: root.routedB ? UiTheme.deckB : root.mutedText
                         font.pixelSize: 11; font.weight: Font.DemiBold
                     }
@@ -901,10 +1046,11 @@ Item {
 
             PerformanceActionButton {
                 objectName: "fxQuantizeRow"
-                Layout.leftMargin: 6
-                Layout.rightMargin: 6
-                Layout.bottomMargin: 6
-                rowHeight: 34
+                opacity: root.timingRelevant ? 1.0 : 0.5
+                Layout.leftMargin: 0
+                Layout.rightMargin: 0
+                Layout.bottomMargin: 2
+                rowHeight: 28
                 label: "FX QUANTIZE  " + (active ? "ON" : "OFF")
                 accent: root.activeColor
                 active: root.fx ? root.fx.quantizeEnabled1 : false
@@ -920,17 +1066,17 @@ Item {
 
             Rectangle {
                 objectName: "fxEngageRow"
-                Layout.fillWidth: true; Layout.preferredHeight: 42
-                Layout.minimumHeight: 42
-                Layout.leftMargin: 6
-                Layout.rightMargin: 6
-                Layout.bottomMargin: 6
+                Layout.fillWidth: true; Layout.preferredHeight: 30
+                Layout.minimumHeight: 30
+                Layout.leftMargin: 0
+                Layout.rightMargin: 0
+                Layout.bottomMargin: 2
                 color: root.effectOn ? Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.16) : root.rowColor
                 border.color: root.effectOn ? root.accentColor : root.lineColor
                 border.width: 1
                 PerformanceText {
                     anchors.centerIn: parent
-                    text: "BEAT FX  " + (root.effectOn ? "ON" : "OFF")
+                    text: root.effectOn ? "EFFECT ON" : "ENABLE EFFECT"
                     color: root.effectOn ? root.accentColor : root.mutedText
                     font.pixelSize: 13; font.weight: Font.DemiBold; font.letterSpacing: 0.8
                 }
@@ -1079,8 +1225,9 @@ Item {
             requested: root.leftPanel !== "closed"
         }
         PerformanceBeatgridPanel {
+            id: gridPanel
             objectName: "beatgridPanelInstance"
-            anchors.fill: parent
+            width: parent.width; height: parent.height
             visible: root.leftPanel === "grid"
             engine: root.selectedEngine
             deckName: root.selectedDeck
@@ -1093,6 +1240,7 @@ Item {
             Item {
                 anchors.fill: parent
                 PerformanceDeckQuickPanel {
+                    id: quickPanelA
                     objectName: "deckQuickPanelA"
                     width: parent.width; height: root.deckAHeight
                     engine: root.deckAEngine; deckName: "A"; selected: root.selectedDeck === "A"
@@ -1104,8 +1252,10 @@ Item {
                     height: root.separatorHeight; color: UiTheme.borderSubtle
                 }
                 PerformanceDeckQuickPanel {
+                    id: quickPanelB
                     objectName: "deckQuickPanelB"
-                    width: parent.width; y: root.deckBY; height: Math.max(0, root.height - y)
+                    width: parent.width; y: root.deckBY
+                    height: Math.max(0, root.height - y)
                     engine: root.deckBEngine; deckName: "B"; selected: root.selectedDeck === "B"
                     onSelectedRequested: root.selectedDeck = "B"
                     onGridRequested: root.openGrid()
@@ -1116,9 +1266,10 @@ Item {
 
     Rectangle {
         id: leftHandle
-        width: root.handleWidth; height: 42
+        width: root.handleWidth; height: 32
         anchors.left: root.leftPanel === "closed" ? parent.left : leftHost.right
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.top: parent.top
+        anchors.topMargin: 4
         color: UiTheme.panelRaised; border.color: UiTheme.borderSubtle; border.width: 1; radius: 0; z: 32
         PerformanceText { anchors.centerIn: parent; text: root.leftPanel === "closed" ? "›" : "‹"; color: UiTheme.textSecondary; font.pixelSize: 15 }
         MouseArea { anchors.fill: parent; onClicked: root.toggleDeckPanel() }
@@ -1127,7 +1278,8 @@ Item {
     Item {
         id: rightHost
         width: root.panelWidth
-        anchors.top: parent.top; anchors.bottom: parent.bottom
+        anchors.top: parent.top
+        height: root.height
         x: root.width - width * root.rightPanelReveal
         visible: root.rightPanelReveal > 0.001
         z: 30
@@ -1140,6 +1292,7 @@ Item {
             requested: root.rightPanelOpen
         }
         PerformanceBeatFxPanel {
+            id: fxPanel
             objectName: "beatFxPanelInstance"
             anchors.fill: parent
             fx: root.fx
@@ -1149,9 +1302,10 @@ Item {
 
     Rectangle {
         id: rightHandle
-        width: root.handleWidth; height: 42
+        width: root.handleWidth; height: 32
         anchors.right: root.rightPanelOpen ? rightHost.left : parent.right
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.top: parent.top
+        anchors.topMargin: 4
         color: UiTheme.panelRaised; border.color: UiTheme.borderSubtle; border.width: 1; radius: 0; z: 32
         PerformanceText { anchors.centerIn: parent; text: root.rightPanelOpen ? "›" : "‹"; color: UiTheme.textSecondary; font.pixelSize: 15 }
         MouseArea { anchors.fill: parent; onClicked: root.rightPanelOpen = !root.rightPanelOpen }

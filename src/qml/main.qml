@@ -34,7 +34,6 @@ ApplicationWindow {
     property string startupAudioError: ""
     property real exitProgress: 0.0
     readonly property color unifiedGray: UiTheme.bg1
-
     property bool showWaveforms: true
     property bool showDeckA: true
     property bool showDeckB: true
@@ -48,6 +47,7 @@ ApplicationWindow {
     property bool fourDeckMode: false
     property bool allInOneMode: false
     property string activeMainTab: "performance"
+    property string sourceReturnTab: "performance"
     // Temporary quick-access overlay, controlled by the handle in TopHeader.
     // This intentionally is not persisted: it is a momentary touch affordance.
     property real topBarPullProgress: 0.0
@@ -59,7 +59,6 @@ ApplicationWindow {
     property bool _desktopShowMixer: true
     property bool _desktopShowFxBar: true
     property bool _uiStateRestoring: false
-
     readonly property bool allInOnePanelActive: window.allInOneMode && window.activeMainTab !== "performance"
     readonly property bool libraryPanelActive: window.allInOneMode && window.activeMainTab === "library"
     readonly property bool settingsPanelActive: window.allInOneMode && window.activeMainTab === "settings"
@@ -139,9 +138,17 @@ ApplicationWindow {
     }
 
     function openLibrarySourceView() {
+        if (!sourcePageActive) sourceReturnTab = activeMainTab
         activeMainTab = "source"
         libraryExpanded = false
         closeTopBarPullDown()
+    }
+
+    function toggleLibrarySourceView() {
+        if (sourcePageActive) {
+            activeMainTab = sourceReturnTab
+            closeTopBarPullDown()
+        } else openLibrarySourceView()
     }
 
     function toggleAllInOneSettings() {
@@ -153,7 +160,6 @@ ApplicationWindow {
         return true
     }
 
-    // ── Persist / restore layout mode across launches ────────────────────────
     function _persistUiState() {
         if (_uiStateRestoring)
             return
@@ -364,17 +370,14 @@ ApplicationWindow {
         mainLayout: mainLayout
     }
 
-    // ── Global font sizing ───────────────────────────────────────────────────
     readonly property real _refHeight: 800
-    // Gently scale text with window height so the UI stays legible on big screens
-    // and fits on small ~10" panels (e.g. 1280x800, 1024x600). 1.0 at the 800px
-    // reference height; clamped so layouts never break at the extremes.
+    // Height-based font sizing stays bounded around the 800 px reference.
     readonly property real responsiveFontScale: {
         var hs = Math.max(360, height) / _refHeight
         return Math.max(0.84, Math.min(1.18, hs))
     }
     // True on small panels — used to tighten fixed-height bars for 10" screens.
-    readonly property bool compactLayout: height < 720 || width < 1100
+    readonly property bool compactLayout: height < 720
     // AIO reference sizes for layout DoD (see docs/testing/regression-checklist.md).
     readonly property bool aioPrimaryProfile: width <= 1280 && height <= 800
     readonly property bool aioCompactProfile: width <= 1024 && height <= 600
@@ -437,7 +440,6 @@ ApplicationWindow {
         var snapped = Math.round(logicalPx * dpr) / dpr
         return Math.max(1, Math.round(snapped))
     }
-
     readonly property real waveformZoom: waveformZoomController ? waveformZoomController.zoom : 0.22
 
     component UiShortcutManager: Item {
@@ -554,12 +556,21 @@ ApplicationWindow {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // VIEWPORT SCALING
-    // -------------------------------------------------------------------------
+    // Keep the established reference size; only shrink when the window needs it.
+    // Above the reference height, additional desktop space belongs to the library.
+    readonly property bool desktopLibraryLayout: !allInOneMode && effectiveLibraryVisible && !sourcePageActive
+    readonly property real performanceSizingHeight: desktopLibraryLayout ? Math.min(height, Math.max(minimumHeight, _refHeight)) : height
     readonly property real baseUiWidth: 1600
-    readonly property real rawUiScale: (width / baseUiWidth)
-                                       * (uiScaleController ? uiScaleController.scale : 1.0)
+    // Width stretches the content columns; only height sizes the controls.
+    function performanceScaleForHeight(viewportHeight, userScale, deckRows) {
+        var available = Math.max(1, viewportHeight - topBarHeight - 6)
+        var rows = Math.max(1, deckRows)
+        var requested = available / (baseWaveformHeight + rows * baseDeckMixerHeight + 180)
+        var fitting = available / (rows * baseDeckMixerHeight + 180 + 160)
+        return Math.max(0.1, Math.min(1.15 * userScale, requested * userScale, fitting))
+    }
+    readonly property real rawUiScale: performanceScaleForHeight(
+        performanceSizingHeight, uiScaleController ? uiScaleController.scale : 1.0, fourDeckMode ? 2 : 1)
     readonly property real uiScale: _snapScaleToPhysicalPixels(rawUiScale)
     readonly property real scaledWaveformHeight:
         _snapLengthToPhysicalPixels(window.baseWaveformHeight * window.uiScale)
@@ -570,10 +581,9 @@ ApplicationWindow {
     readonly property int fxBarHeight: UiTheme.px(window.compactLayout ? 74 : 90)
     readonly property int crossfaderBarHeight: UiTheme.px(window.compactLayout ? 30 : 36)
     readonly property int mixerBaseWidth: UiTheme.mixerPreferredWidth
-
-    // Keep the full 375 px deck surface below the taller waveform viewport.
+    // Reserve 200 px for track information and 100 px for performance pads.
     // baseDeckMixerHeight is derived from these two values.
-    readonly property real baseUiHeight: baseWaveformHeight + 375 + 4
+    readonly property real baseUiHeight: baseWaveformHeight + 300 + 4
     // The primary display keeps mixer/FX separate; AIO has an optional compact transport bar.
     readonly property bool primaryDeckRowVisible: !window.libraryExpanded
                                                    && !window.allInOnePanelActive
@@ -592,30 +602,16 @@ ApplicationWindow {
         + (window.secondaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
         + (window.crossfaderVisible ? window.crossfaderBarHeight + 1 : 0)
         + (window.fxVisible ? window.fxBarHeight : 0)
-    readonly property int hiddenPerformanceHeight:
-        (!window.libraryExpanded && !window.allInOnePanelActive && !window.primaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
-        + (!window.libraryExpanded && !window.allInOnePanelActive && window.fourDeckMode && !window.secondaryDeckRowVisible ? window.scaledDeckMixerHeight : 0)
-        + (!window.libraryExpanded && !window.allInOnePanelActive && !window.crossfaderVisible ? window.crossfaderBarHeight + 1 : 0)
-        + (!window.libraryExpanded && !window.allInOnePanelActive && !window.fxVisible ? window.fxBarHeight : 0)
     readonly property real waveformAvailableHeight: _snapLengthToPhysicalPixels(Math.max(
         0,
-        height - window.topBarHeight - window.fixedPerformanceHeight
+        performanceSizingHeight - window.topBarHeight - window.fixedPerformanceHeight
         - window.aioDeckControlsHeight - window.libraryReserveHeight - 6
     ))
     readonly property real adaptiveWaveformHeight: !window.showWaveforms ? 0
-        : _snapLengthToPhysicalPixels(Math.max(
-            0,
-            !window.effectiveLibraryVisible
-                ? window.waveformAvailableHeight
-                : Math.min(
-                    window.waveformAvailableHeight,
-                    window.scaledWaveformHeight + Math.round(window.hiddenPerformanceHeight * 0.75)
-                )
-        ))
-
-    // ─────────────────────────────────────────────────────────────────────────
+        : _snapLengthToPhysicalPixels(Math.max(0, !window.effectiveLibraryVisible
+            ? window.waveformAvailableHeight
+            : Math.min(window.waveformAvailableHeight, window.scaledWaveformHeight)))
     // MAIN LAYOUT – direct child, no async Loader wrapping
-    // ─────────────────────────────────────────────────────────────────────────
     DevelopmentControlsWindow {
         id: developmentControlsWindow
         appWindow: window

@@ -660,14 +660,16 @@ Rectangle {
 
         Rectangle {
             id: sourceButton
+            objectName: "sourceSelectorButton"
+            readonly property bool selected: root.Window.window && root.Window.window.sourcePageActive === true
             Layout.preferredWidth: root.btnH
             Layout.preferredHeight: root.btnH
             Layout.fillHeight: true
-            color: sourceMouse.containsMouse ? root.barHover : "#202936"
+            color: sourceMouse.containsMouse || selected ? UiTheme.inspectorInset : root.barBg
             Rectangle {
-                anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                width: 2
-                color: root.selectedSourceType === "usb" ? UiTheme.blue : UiTheme.textDim
+                anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                height: 2
+                color: sourceButton.selected ? UiTheme.blue : UiTheme.borderSubtle
             }
             Column {
                 anchors.centerIn: parent
@@ -686,13 +688,14 @@ Rectangle {
                 }
             }
             ToolTip.visible: sourceMouse.containsMouse
+            ToolTip.delay: 600
             ToolTip.text: root.selectedSourceName
             MouseArea {
                 id: sourceMouse
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: if (root.Window.window) root.Window.window.openLibrarySourceView()
+                onClicked: if (root.Window.window) root.Window.window.toggleLibrarySourceView()
             }
         }
 
@@ -1398,9 +1401,8 @@ Rectangle {
                 }
                 MouseArea {
                     id: quickSourceMouse; anchors.fill: parent
-                    onClicked: if (root.Window.window && root.Window.window.openLibrarySourceView) {
-                                   root.Window.window.openLibrarySourceView()
-                                   root.Window.window.closeTopBarPullDown()
+                    onClicked: if (root.Window.window && root.Window.window.toggleLibrarySourceView) {
+                                   root.Window.window.toggleLibrarySourceView()
                                }
                 }
             }

@@ -8,6 +8,7 @@
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QPointer>
+#include <QSignalSpy>
 #include <QSGRendererInterface>
 #include <QUrl>
 #include <QtTest/qtest.h>
@@ -37,6 +38,7 @@ class ScrollingWaveformItemStub : public QQuickItem
     Q_PROPERTY(qreal playheadPosition READ playheadPosition WRITE setPlayheadPosition)
     Q_PROPERTY(bool rasterWorkEnabled READ rasterWorkEnabled WRITE setRasterWorkEnabled)
     Q_PROPERTY(bool slipPreview READ slipPreview WRITE setSlipPreview)
+    Q_PROPERTY(bool rectified READ rectified WRITE setRectified)
     Q_PROPERTY(bool contentReady READ contentReady CONSTANT)
     Q_PROPERTY(qreal effectivePixelsPerSecond READ effectivePixelsPerSecond CONSTANT)
 
@@ -55,6 +57,8 @@ public:
     void setRasterWorkEnabled(bool value) { m_rasterWorkEnabled = value; }
     bool slipPreview() const { return m_slipPreview; }
     void setSlipPreview(bool value) { m_slipPreview = value; }
+    bool rectified() const { return m_rectified; }
+    void setRectified(bool value) { m_rectified = value; }
     bool contentReady() const { return true; }
     qreal effectivePixelsPerSecond() const { return 100.0; }
 
@@ -73,6 +77,7 @@ private:
     qreal m_playheadPosition = 0.5;
     bool m_rasterWorkEnabled = true;
     bool m_slipPreview = false;
+    bool m_rectified = false;
 };
 
 namespace {
@@ -165,6 +170,218 @@ bool extractFunctions(const std::string& source,
         methods += '\n';
     }
     return true;
+}
+
+bool viewportHeightScalingTests(const std::string& main)
+{
+    QString methods;
+    if (!extractFunctions(main, {"performanceScaleForHeight"}, methods)) return false;
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData((QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property real topBarHeight: 48
+            property real baseWaveformHeight: 340
+            property real baseDeckMixerHeight: 304
+        )") + methods + QStringLiteral("\n}")).toUtf8(), QUrl());
+    std::unique_ptr<QObject> host(component.create());
+    if (!require(host != nullptr, "production viewport sizing helper instantiates")) return false;
+    bool ok = true;
+    for (const int height : {600, 720, 800, 900, 1080, 1440}) {
+        for (const int rows : {1, 2}) {
+            for (const double userScale : {0.8, 1.0, 1.4}) {
+                QVariant scale;
+                ok &= QMetaObject::invokeMethod(host.get(), "performanceScaleForHeight",
+                    Q_RETURN_ARG(QVariant, scale), Q_ARG(QVariant, QVariant(height)),
+                    Q_ARG(QVariant, QVariant(userScale)), Q_ARG(QVariant, QVariant(rows)));
+                const double usedHeight = 48 + 6 + scale.toDouble() * (rows * 304 + 180 + 160);
+                ok &= require(scale.toDouble() > 0 && usedHeight <= height + 0.01,
+                              "both aspect ratios retain room for decks, library and waveforms at every UI scale");
+            }
+        }
+    }
+    ok &= require(main.find("rawUiScale: performanceScaleForHeight(") != std::string::npos
+                      && main.find("rawUiScale: (width / baseUiWidth)") == std::string::npos,
+                  "production viewport sizing uses height instead of window width");
+    return ok;
+}
+
+bool desktopLibraryHeightTests(const std::string& main, const std::string& workspace)
+{
+    const auto sizingBegin = main.find("    readonly property bool desktopLibraryLayout:");
+    const auto sizingEnd = main.find("    // MAIN LAYOUT", sizingBegin);
+    QString helpers;
+    if (!require(sizingBegin != std::string::npos && sizingEnd != std::string::npos,
+                 "production workspace sizing bindings exist")
+        || !extractFunctions(main, {"_dpr", "_snapScaleToPhysicalPixels", "_snapLengthToPhysicalPixels"}, helpers))
+        return false;
+
+    // Keep the real layout constraints; leave out the audio/rendering children.
+    const auto viewport = [&](const char* beginMarker, const char* endMarker, const char* name) {
+        const auto begin = workspace.find(beginMarker);
+        const auto end = workspace.find(endMarker, begin);
+        if (begin == std::string::npos || end == std::string::npos)
+            return QString();
+        return QString::fromStdString(workspace.substr(begin, end - begin))
+            .replace("objectName: \"aioDeckControlBar\"", "")
+            + QStringLiteral("objectName: \"") + QString::fromUtf8(name) + QStringLiteral("\"\n}\n");
+    };
+    const QString wave = viewport("        Item {\n            id: waveformViewport", "            Item {\n                id: waveformCanvas", "wave");
+    const QString decks = viewport("        Item {\n            id: deckMixerViewport", "            readonly property real designWidth:", "decks");
+    const QString extraDecks = viewport("        Item {\n            id: deckMixerViewport2", "            readonly property real designWidth:", "extraDecks");
+    const QString transport = viewport("        Rectangle {\n            objectName: \"aioDeckControlBar\"", "            Rectangle {\n                anchors.top:", "transport");
+    const auto libraryBegin = workspace.find("        Library {\n            id: librarySection");
+    const auto libraryEnd = workspace.find("        Rectangle {\n            objectName: \"aioDeckControlBar\"", libraryBegin);
+    if (!require(!wave.isEmpty() && !decks.isEmpty() && !extraDecks.isEmpty() && !transport.isEmpty()
+                     && libraryBegin != std::string::npos && libraryEnd != std::string::npos,
+                 "production desktop layout containers can be isolated"))
+        return false;
+    QString library = QString::fromStdString(workspace.substr(libraryBegin, libraryEnd - libraryBegin));
+    library.replace("Library {", "Item { objectName: \"library\"");
+
+    QQmlEngine engine;
+    QQmlComponent scaleComponent(&engine);
+    scaleComponent.setData("import QtQml; QtObject { property real scale: 1 }", QUrl());
+    std::unique_ptr<QObject> userScale(scaleComponent.create());
+    engine.rootContext()->setContextProperty("uiScaleController", userScale.get());
+    QQmlComponent component(&engine);
+    component.setData((QStringLiteral(R"(
+        import QtQuick
+        import QtQuick.Layouts
+        import DJSoftware
+        Item {
+            id: window
+            width: 1280; height: 600
+            property real minimumHeight: 600
+            readonly property real _refHeight: 800
+            property bool allInOneMode: false
+            property bool fourDeckMode: false
+            property bool libraryExpanded: false
+            property bool showDeckA: true
+            property bool showDeckB: true
+            property bool showWaveforms: true
+            property bool showLibrary: true
+            property bool showAioDeckControls: true
+            property string activeMainTab: "performance"
+            readonly property bool compactLayout: height < 720
+            readonly property bool allInOnePanelActive: allInOneMode && activeMainTab !== "performance"
+            readonly property bool sourcePageActive: activeMainTab === "source"
+            readonly property bool effectiveLibraryVisible: allInOneMode ? activeMainTab === "library" : showLibrary
+            readonly property real baseWaveformHeight: 340
+            readonly property real baseDeckMixerHeight: baseUiHeight - baseWaveformHeight
+        )") + helpers + QString::fromStdString(main.substr(sizingBegin, sizingEnd - sizingBegin))
+        + QStringLiteral(R"(
+            ColumnLayout {
+                anchors.fill: parent; spacing: 0
+                Item { Layout.fillWidth: true; Layout.minimumHeight: window.topBarHeight
+                       Layout.preferredHeight: window.topBarHeight; Layout.maximumHeight: window.topBarHeight }
+        )") + wave + decks + extraDecks + library + transport + QStringLiteral("\n}\n}")).toUtf8(), QUrl());
+    std::unique_ptr<QObject> host(component.create());
+    if (!require(host != nullptr, "production desktop sizing and layout constraints instantiate")) {
+        std::cerr << component.errorString().toStdString();
+        return false;
+    }
+    auto* item = qobject_cast<QQuickItem*>(host.get());
+    auto* waveItem = host->findChild<QQuickItem*>("wave");
+    auto* deckItem = host->findChild<QQuickItem*>("decks");
+    auto* extraItem = host->findChild<QQuickItem*>("extraDecks");
+    auto* libraryItem = host->findChild<QQuickItem*>("library");
+    if (!require(item && waveItem && deckItem && extraItem && libraryItem,
+                 "desktop layout exposes its actual viewport geometry"))
+        return false;
+    QQuickWindow preview;
+    item->setParentItem(preview.contentItem());
+    preview.show();
+    bool ok = true;
+    for (const double scale : {0.8, 1.0, 1.4}) {
+        userScale->setProperty("scale", scale);
+        for (const bool fourDeck : {false, true}) {
+            host->setProperty("fourDeckMode", fourDeck);
+            qreal minimumWave = 0, minimumDeck = 0;
+            qreal referenceWave = 0, referenceDeck = 0, referenceLibrary = 0;
+            for (const int width : {1280, 1920}) {
+                for (const int height : {600, 720, 800, 900, 1080, 1440}) {
+                    preview.resize(width, height);
+                    item->setSize(QSizeF(width, height));
+                    QTest::qWait(20);
+                    if (width == 1280 && height == 600) {
+                        minimumWave = waveItem->height();
+                        minimumDeck = deckItem->height();
+                    }
+                    if (width == 1280 && height == 800) {
+                        referenceWave = waveItem->height();
+                        referenceDeck = deckItem->height();
+                        referenceLibrary = libraryItem->height();
+                        ok &= require(referenceWave > minimumWave && referenceDeck > minimumDeck,
+                                      "the desktop retains the established reference size instead of shrinking every window to the smallest layout");
+                    }
+                    ok &= require(waveItem->height() >= minimumWave - 0.5
+                                      && deckItem->height() >= minimumDeck - 0.5,
+                                  "the upper desktop area never shrinks below its minimum-window size");
+                    if (height >= 800 && referenceWave > 0) {
+                        ok &= require(std::abs(waveItem->height() - referenceWave) < 0.5
+                                          && std::abs(deckItem->height() - referenceDeck) < 0.5
+                                          && (!fourDeck || std::abs(extraItem->height() - referenceDeck) < 0.5),
+                                      "desktop waveforms and deck rows retain the reference height on wider and taller screens");
+                        ok &= require(referenceLibrary > 0
+                                          && std::abs(libraryItem->height() - referenceLibrary - (height - 800)) < 0.5,
+                                      "above the reference height all additional desktop space belongs to the library");
+                    }
+                    ok &= require(std::abs(libraryItem->y() + libraryItem->height() - height) < 0.5,
+                                  "the desktop library stays flush with the bottom of the window");
+                }
+            }
+        }
+    }
+    host->setProperty("allInOneMode", true);
+    QTest::qWait(20);
+    ok &= require(!host->property("desktopLibraryLayout").toBool()
+                      && host->property("performanceSizingHeight").toDouble() == item->height(),
+                  "AIO performance retains the full available window height");
+    host->setProperty("activeMainTab", "library");
+    QTest::qWait(20);
+    ok &= require(!waveItem->isVisible() && !deckItem->isVisible()
+                      && libraryItem->height() > item->height() - host->property("topBarHeight").toDouble() - 50,
+                  "the AIO library keeps its separate full-height view and compact transport");
+    host->setProperty("allInOneMode", false);
+    host->setProperty("showLibrary", false);
+    QTest::qWait(20);
+    ok &= require(!host->property("desktopLibraryLayout").toBool() && !libraryItem->isVisible()
+                      && host->property("performanceSizingHeight").toDouble() == item->height(),
+                  "hiding the desktop library returns the available height to performance");
+    return ok;
+}
+
+bool sourceViewToggleTests(const std::string& main)
+{
+    QString methods;
+    if (!extractFunctions(main, {"openLibrarySourceView", "toggleLibrarySourceView"}, methods)) return false;
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.setData((QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property string activeMainTab: "performance"
+            property string sourceReturnTab: "performance"
+            readonly property bool sourcePageActive: activeMainTab === "source"
+            property bool libraryExpanded: true
+            property int closes: 0
+            function closeTopBarPullDown() { ++closes }
+        )") + methods + QStringLiteral("\n}")).toUtf8(), QUrl());
+    std::unique_ptr<QObject> host(component.create());
+    if (!require(host != nullptr, "source-view toggle handlers instantiate")) return false;
+    bool ok = true;
+    for (const auto& previous : {"performance", "library", "settings"}) {
+        host->setProperty("activeMainTab", QString::fromUtf8(previous));
+        QMetaObject::invokeMethod(host.get(), "toggleLibrarySourceView");
+        ok &= require(host->property("sourcePageActive").toBool(), "source button opens the source selector");
+        QMetaObject::invokeMethod(host.get(), "openLibrarySourceView");
+        QMetaObject::invokeMethod(host.get(), "toggleLibrarySourceView");
+        ok &= require(host->property("activeMainTab").toString() == QString::fromUtf8(previous),
+                      "a second source-button click returns to the previous view, even after repeated open requests");
+    }
+    return ok;
 }
 
 bool libraryActionTests(const std::string& source)
@@ -2222,6 +2439,7 @@ bool qmlMergeRuntimeTests()
         + QStringLiteral("/src/qml/");
     qmlRegisterType<ScrollingWaveformItemStub>("DJSoftware", 1, 0,
                                                "ScrollingWaveformItem");
+    qmlRegisterType<ScrollingWaveformItemStub>("DJSoftware", 1, 0, "OverviewWaveformItem");
     qmlRegisterType(QUrl::fromLocalFile(qmlDirectory + QStringLiteral("components/Knob.qml")),
                     "DJSoftware", 1, 0, "Knob");
     qmlRegisterType(QUrl::fromLocalFile(qmlDirectory
@@ -2300,7 +2518,13 @@ bool qmlMergeRuntimeTests()
     )"), "QML merge zoom context instantiates");
     auto deviceLibrary = createQmlObject(engine, QStringLiteral(R"(
         import QtQml
-        QtObject { property var devices: [] }
+        QtObject {
+            property var devices: []
+            property string selectedDeviceId: ""
+            function chooseDevice(id) { selectedDeviceId = id }
+            function mountDevice(id) {}
+            function ejectDevice(id) {}
+        }
     )"), "QML merge device context instantiates");
     auto deckA = createQmlObject(engine, QStringLiteral(R"(
         import QtQml
@@ -2309,6 +2533,8 @@ bool qmlMergeRuntimeTests()
             property bool readOnlyExternalTrack: false
             property bool isPlaying: false
             property string externalSourceId: ""
+            property string trackTitle: "After Hours / Extended Mix"
+            property string trackArtist: "Northbound"
             property string trackKey: "Am"
             property real currentBpm: 128.4
             property real beatJumpBeats: 4
@@ -2344,6 +2570,8 @@ bool qmlMergeRuntimeTests()
             property bool readOnlyExternalTrack: false
             property bool isPlaying: false
             property string externalSourceId: ""
+            property string trackTitle: "Night Drive"
+            property string trackArtist: "Coastal Lines"
             property string trackKey: "C"
             property real currentBpm: 124
             property real beatJumpBeats: 8
@@ -2417,6 +2645,12 @@ bool qmlMergeRuntimeTests()
     QObject* quickB = performance->findChild<QObject*>(QStringLiteral("deckQuickPanelB"));
     ok &= require(quickA != nullptr && quickB != nullptr,
                   "the screen owns two separate quick-panel instances");
+    auto* songTitle = quickA ? quickA->findChild<QObject*>(QStringLiteral("deckTrackTitle")) : nullptr;
+    auto* songArtist = quickA ? quickA->findChild<QObject*>(QStringLiteral("deckTrackArtist")) : nullptr;
+    ok &= require(songTitle && songArtist
+                      && songTitle->property("text").toString() == deckA->property("trackTitle").toString()
+                      && songArtist->property("text").toString() == deckA->property("trackArtist").toString(),
+                  "song sidebar shows title and artist from its assigned deck");
     deckA->setProperty("currentBpm", 129.99);
     QCoreApplication::processEvents();
     QObject* bpmWhole = quickA ? quickA->findChild<QObject*>(QStringLiteral("bpmWhole")) : nullptr;
@@ -2483,6 +2717,19 @@ bool qmlMergeRuntimeTests()
                   "the right-side Beat FX panel remains host-controlled");
     if (beatFxPanel) {
         fxManager->setProperty("effectType1", QStringLiteral("Reverb"));
+        auto* tempoSync = beatFxPanel->findChild<QQuickItem*>("fxTempoSyncRow");
+        auto* effectQuantize = beatFxPanel->findChild<QQuickItem*>("fxQuantizeRow");
+        ok &= require(tempoSync && tempoSync->isVisible() && tempoSync->isEnabled()
+                          && tempoSync->opacity() < 1.0 && effectQuantize
+                          && effectQuantize->isVisible() && effectQuantize->isEnabled()
+                          && effectQuantize->opacity() < 1.0,
+                      "Reverb keeps tempo and quantize controls available but visually subdued");
+        QTest::qWait(220); // Finish the side-panel reveal before real pointer input.
+        const bool previousSync = fxManager->property("syncEnabled1").toBool();
+        ok &= clickItem(performanceWindow, tempoSync, "subdued tempo sync remains clickable for Reverb");
+        ok &= require(fxManager->property("syncEnabled1").toBool() != previousSync,
+                      "tempo sync can be changed before selecting a timing effect");
+        ok &= clickItem(performanceWindow, tempoSync, "subdued tempo sync can restore its state");
         const double beatDivision = fxManager->property("beatDiv1").toDouble();
         const QList<double> percentages {0.01, 0.10, 0.25, 0.50, 0.75, 0.90, 1.0};
         for (int index = 0; index < percentages.size(); ++index) {
@@ -2549,12 +2796,12 @@ bool qmlMergeRuntimeTests()
             const QByteArray type(item->metaObject()->className());
             if (type.contains("ColumnLayout") || type.contains("GridLayout")) {
                 for (auto* row : item->childItems()) {
-                    if (row->width() <= 0 || row->height() <= 0)
+                    if (!row->isVisible() || row->width() <= 0 || row->height() <= 0)
                         continue;
                     valid &= row->y() >= -0.5
                         && row->y() + row->height() <= item->height() + 0.5;
                     for (auto* other : item->childItems()) {
-                        if (other == row || other->width() <= 0 || other->height() <= 0)
+                        if (other == row || !other->isVisible() || other->width() <= 0 || other->height() <= 0)
                             continue;
                         const QRectF bounds(row->position(), row->size());
                         const QRectF otherBounds(other->position(), other->size());
@@ -2614,12 +2861,41 @@ bool qmlMergeRuntimeTests()
         }
         return require(reachable, "every sidebar action is reachable without horizontal scrolling");
     };
+    std::vector<std::pair<int, qreal>> widthsAtFixedHeight;
     for (int width : {800, 1280, 1920}) {
-        for (int height : {180, 240, 320, 420, 800, 2160, 240, 600}) {
+        for (int height : {180, 240, 320, 399, 400, 420, 800, 2160, 240, 600}) {
             performanceWindow.resize(width, height);
             performanceItem->setSize(QSizeF(width, height));
             performance->setProperty("leftPanel", "deck");
             QTest::qWait(220);
+            const qreal sidebarWidth = performance->property("panelWidth").toDouble();
+            if (width == 800) widthsAtFixedHeight.emplace_back(height, sidebarWidth);
+            else {
+                const auto previous = std::find_if(widthsAtFixedHeight.begin(), widthsAtFixedHeight.end(),
+                    [height](const auto& sample) { return sample.first == height; });
+                ok &= require(previous != widthsAtFixedHeight.end()
+                                  && std::abs(sidebarWidth - previous->second) < 0.01,
+                              "widening the viewport does not enlarge the song-info or FX sidebars");
+            }
+            for (auto* fittedPanel : {quickA, quickB, beatFxPanel}) {
+                auto* viewport = fittedPanel->findChild<QObject*>(
+                    fittedPanel == beatFxPanel ? "fxScroll" : "deckScroll");
+                ok &= require(viewport && !viewport->property("interactive").toBool()
+                                  && std::abs(viewport->property("contentHeight").toDouble()
+                                              - viewport->property("height").toDouble()) < 0.5
+                                  && std::abs(viewport->property("contentY").toDouble()) < 0.5,
+                              "song info and FX fit their viewport without scrolling after resizing");
+            }
+            auto* levelDial = beatFxPanel->findChild<QQuickItem*>("fxLevelDial");
+            auto* levelBar = beatFxPanel->findChild<QQuickItem*>("fxMixBar");
+            ok &= require(levelDial && levelBar
+                              && levelDial->isVisible() == (height >= 400)
+                              && levelBar->isVisible() == (height < 400),
+                          "FX shows one level control and switches cleanly between compact and expanded layouts");
+            auto* railBackground = performance->findChild<QQuickItem*>("leftBackdrop");
+            ok &= require(railBackground && std::abs(railBackground->height() - height) < 0.5
+                              && std::abs(beatFxPanel->property("height").toDouble() - height) < 0.5,
+                          "both sidebars retain the full waveform viewport height");
             ok &= checkPanelGeometry(quickA, "deck A rows stay inside their content");
             ok &= checkPanelGeometry(quickB, "deck B rows stay inside their content");
             ok &= checkPanelGeometry(beatFxPanel, "FX rows do not squeeze below their text");
@@ -2632,6 +2908,9 @@ bool qmlMergeRuntimeTests()
                                       - performance->property("deckBY").toDouble()) < 0.5,
                           "quick panels remain aligned with both waveform boundaries");
             auto* quantize = quickB->findChild<QQuickItem*>(QStringLiteral("quantizeRow"));
+            const QRectF quantizeBounds = quantize->mapRectToItem(qobject_cast<QQuickItem*>(quickB), quantize->boundingRect());
+            ok &= require(quantizeBounds.bottom() >= quickB->property("height").toDouble() - 12,
+                          "deck controls stay anchored to the bottom of each full-height deck area");
             const bool previousQuantize = deckB->property("quantizeEnabled").toBool();
             ok &= revealAction(quickB, quantize)
                 && clickItem(performanceWindow, quantize, "scrolled deck B quantize is clickable");
@@ -2651,11 +2930,39 @@ bool qmlMergeRuntimeTests()
             ok &= require(fxManager->property("quantizeEnabled1").toBool() == previousFxQuantize,
                           "right-side FX Quantize can restore its previous state");
             auto* engage = beatFxPanel->findChild<QQuickItem*>(QStringLiteral("fxEngageRow"));
+            const QRectF engageBounds = engage->mapRectToItem(qobject_cast<QQuickItem*>(beatFxPanel), engage->boundingRect());
+            ok &= require(engageBounds.bottom() >= height - 12,
+                          "FX engage stays at the bottom while the central level display absorbs extra height");
             const bool previousEnabled = fxManager->property("enabled1").toBool();
             ok &= revealAction(beatFxPanel, engage)
                 && clickItem(performanceWindow, engage, "scrolled FX engage is clickable");
             ok &= require(fxManager->property("enabled1").toBool() != previousEnabled,
                           "FX bottom action stays functional after resizing");
+            if (width == 1280 && height == 800) {
+                auto* dial = beatFxPanel->findChild<QQuickItem*>("fxLevelDial");
+                auto* input = dial ? dial->findChild<QQuickItem*>("fxLevelDialInput") : nullptr;
+                const bool savedEnabled = fxManager->property("enabled1").toBool();
+                const double savedMix = fxManager->property("wetDry1").toDouble();
+                fxManager->setProperty("enabled1", false);
+                fxManager->setProperty("wetDry1", 0.3);
+                QCoreApplication::processEvents();
+                ok &= require(dial && dial->isVisible() && input
+                                  && std::abs(dial->property("amount").toDouble() - 0.3) < 1e-6
+                                  && !fxManager->property("enabled1").toBool(),
+                              "the large level dial follows hardware state without engaging an effect");
+                if (input) {
+                    const QPoint center = input->mapToScene(input->boundingRect().center()).toPoint();
+                    QTest::mousePress(&performanceWindow, Qt::LeftButton, Qt::NoModifier, center);
+                    QTest::mouseMove(&performanceWindow, center - QPoint(0, 30));
+                    QTest::mouseRelease(&performanceWindow, Qt::LeftButton, Qt::NoModifier, center - QPoint(0, 30));
+                    QCoreApplication::processEvents();
+                    ok &= require(fxManager->property("wetDry1").toDouble() > 0.4
+                                      && fxManager->property("enabled1").toBool(),
+                                  "dragging the large FX dial changes and engages the same effect unit");
+                }
+                fxManager->setProperty("wetDry1", savedMix);
+                fxManager->setProperty("enabled1", savedEnabled);
+            }
             performance->setProperty("leftPanel", "grid");
             QCoreApplication::processEvents();
             ok &= checkPanelGeometry(gridPanel, "beatgrid rows stay inside their content");
@@ -2681,6 +2988,8 @@ bool qmlMergeRuntimeTests()
             }
         }
     }
+
+    performance->setProperty("leftPanel", "deck");
     performanceItem->setSize(QSizeF(900, 600));
     performanceWindow.resize(900, 600);
 
@@ -2727,7 +3036,7 @@ bool qmlMergeRuntimeTests()
                           && intermediate->property("textureSize").toSize() == texture
                           && !capture->property("recursive").toBool()
                           && capture->property("sourceItem").value<QQuickItem*>() == backing
-                          && crop.width() <= 230 && crop.height() <= backing->height()
+                          && crop.width() <= performance->property("panelWidth").toDouble() + 0.01 && crop.height() <= backing->height()
                           && QRectF(QPointF(), backing->size()).contains(crop),
                       "live nonrecursive capture stays cropped and both blur textures are capped");
         performanceItem->setSize(QSizeF(1920, 2160));
@@ -2739,7 +3048,7 @@ bool qmlMergeRuntimeTests()
             return capture && intermediate && target.height() == 256
                 && capture->property("textureSize").toSize() == target
                 && intermediate->property("textureSize").toSize() == target;
-        }), "resized GPU capture bindings settle to the bounded target size");
+        }), "full-height sidebar captures settle to the bounded target size");
         const QSize tallTexture = backdrop->property("captureSize").toSize();
         if (!capture || !intermediate) {
             ok &= require(false, "visible backdrop restores bounded capture objects after resizing");
@@ -2749,7 +3058,7 @@ bool qmlMergeRuntimeTests()
         ok &= require(tallTexture.width() <= 128 && tallTexture.height() == 256
                           && capture->property("textureSize").toSize() == tallTexture
                           && intermediate->property("textureSize").toSize() == tallTexture,
-                      "a tall resized pane keeps both render targets at the hard height cap");
+                      "full-height sidebar render targets never exceed their hard GPU cap");
         performanceItem->setSize(QSizeF(900, 600));
         QCoreApplication::processEvents();
         for (const char* tier : {"elevated", "critical", "suspended"}) {
@@ -2889,6 +3198,118 @@ bool qmlMergeRuntimeTests()
     ok &= require(editor && editor->property("occupiedWidth").toDouble() > 30.0,
                   "the inline waveform editor expands its occupied width at runtime");
 
+    {
+        QQuickWindow infoWindow;
+        infoWindow.resize(1280, 200);
+        infoWindow.setColor(QColor("#10151d"));
+        auto infoEngine = createQmlObject(engine, QStringLiteral(R"(
+            import QtQml
+            QtObject {
+                property bool hasTrack: true
+                property bool isPlaying: false
+                property string trackTitle: "After Hours / Extended Mix"
+                property string trackArtist: "Northbound"
+                property string trackKey: "Am"
+                property string trackNumber: "07"
+                property real trackDurationSec: 248
+                property real tempoRatio: 1.04
+                property real tempoPercent: 4
+                property real tempoRangePercent: 8
+                property real currentBpm: 128.4
+                property real progress: 0.2
+                property bool syncMaster: true
+                property bool quantizeEnabled: true
+                property bool readOnlyExternalTrack: false
+                property real externalCacheProgress: 0
+                property bool externalCacheReady: false
+                property bool seekPreviewActive: false
+                property real seekPreviewPosition: 0
+                property real mainCueSec: 0
+                function getVisualPositionQml() { return 49.123 }
+                function getPlayheadPositionAtomic() { return 49.123 }
+                function beginSeekPreview(value) {}
+                function updateSeekPreview(value) {}
+                function commitSeekPreview() {}
+                function cancelSeekPreview() {}
+            }
+        )"), "lower deck display fixture instantiates");
+        QQmlComponent infoComponent(&engine, QUrl::fromLocalFile(
+            qmlDirectory + QStringLiteral("deck/DeckTrackInfoPanel.qml")));
+        std::unique_ptr<QObject> infoA(infoComponent.create(&context));
+        std::unique_ptr<QObject> infoB(infoComponent.create(&context));
+        if (!require(infoA && infoB, "both lower deck information panels instantiate")) {
+            std::cerr << infoComponent.errorString().toStdString();
+            return false;
+        }
+        infoA->setProperty("engine", QVariant::fromValue(infoEngine.get()));
+        infoB->setProperty("engine", QVariant::fromValue(infoEngine.get()));
+        infoB->setProperty("deckName", QStringLiteral("B"));
+        const auto fit = [&](int viewportWidth) {
+            infoWindow.resize(viewportWidth, 200);
+            for (auto* object : {infoA.get(), infoB.get()}) {
+                auto* item = qobject_cast<QQuickItem*>(object);
+                item->setParentItem(infoWindow.contentItem());
+                item->setSize(QSizeF(viewportWidth / 2, 200));
+                item->setX(object == infoA.get() ? 0 : viewportWidth / 2);
+            }
+            QCoreApplication::processEvents();
+        };
+        fit(1024);
+        const double initialMetric = infoA->property("metricScale").toDouble();
+        auto* clockDigits = infoA->findChild<QQuickItem*>("deckClockDigits");
+        const qreal clockWidth = clockDigits ? clockDigits->width() : 0;
+        for (const int viewportWidth : {1024, 1280, 1440, 1920, 2560}) {
+            fit(viewportWidth);
+            ok &= require(std::abs(infoA->property("metricScale").toDouble() - initialMetric) < 1e-6
+                              && infoA->property("titleHeight") == infoB->property("titleHeight")
+                              && qobject_cast<QQuickItem*>(infoA.get())->scale() == 1.0
+                              && clockDigits && std::abs(clockDigits->width() - clockWidth) < 0.01,
+                          "widening the lower deck row preserves control metrics and native item scale");
+        }
+
+    }
+
+    {
+        QQuickWindow sourceWindow;
+        sourceWindow.resize(1280, 600);
+        sourceWindow.setColor(QColor("#10151d"));
+        QQmlComponent sourceComponent(&engine, QUrl::fromLocalFile(
+            qmlDirectory + QStringLiteral("library/SourcePage.qml")));
+        std::unique_ptr<QObject> source(sourceComponent.createWithInitialProperties(
+            {{QStringLiteral("appWindow"), QVariant::fromValue(windowContext.get())}}, &context));
+        if (!require(source != nullptr, "source selector with shared panel styling instantiates")) {
+            std::cerr << sourceComponent.errorString().toStdString();
+            return false;
+        }
+        auto* sourceItem = qobject_cast<QQuickItem*>(source.get());
+        sourceItem->setParentItem(sourceWindow.contentItem());
+        sourceItem->setSize(QSizeF(1280, 600));
+        sourceWindow.show();
+        QTest::qWait(40);
+        QSignalSpy libraryOpens(source.get(), SIGNAL(libraryRequested()));
+        ok &= clickItem(sourceWindow, source->findChild<QQuickItem*>("localSourceRow"),
+                        "local source can be selected with the pointer");
+        ok &= clickItem(sourceWindow, source->findChild<QQuickItem*>("sourceLibraryRow"),
+                        "selected source library is directly reachable");
+        ok &= require(libraryOpens.count() == 1, "the source selector opens the requested local library");
+        QQmlExpression devices(&context, deviceLibrary.get(), QStringLiteral(
+            "devices = [{id:'usb-test', name:'DJ USB', ready:true, trackCount:1248, "
+            "canMount:false, canEject:true, operationPending:false, scanning:false, actionLabel:'Eject'}]"));
+        devices.evaluate();
+        QCoreApplication::processEvents();
+        QSignalSpy usbOpens(source.get(), SIGNAL(usbLibraryRequested()));
+        // BACK restores the media pane before moving from Local to USB.
+        QMetaObject::invokeMethod(source.get(), "goBack");
+        QMetaObject::invokeMethod(source.get(), "moveCursor", Q_ARG(QVariant, QVariant(1)));
+        QMetaObject::invokeMethod(source.get(), "activateCursor");
+        QMetaObject::invokeMethod(source.get(), "activateCursor");
+        ok &= require(usbOpens.count() == 1
+                          && deviceLibrary->property("selectedDeviceId").toString() == "usb-test",
+                      "controller source navigation still opens the selected USB library");
+
+        deviceLibrary->setProperty("devices", QVariantList{});
+    }
+
     QQuickWindow fxWindow;
     fxWindow.resize(1000, 96);
     QQmlComponent fxBarComponent(&engine, QUrl::fromLocalFile(
@@ -2957,8 +3378,19 @@ bool qmlMergeRuntimeTests()
                   "disabling quantize retains tempo sync");
     if (effectSelector) effectSelector->setProperty("currentIndex", 0);
     QCoreApplication::processEvents();
-    ok &= require(quantize1 && !quantize1->isVisible() && quantize2 && !quantize2->isVisible(),
-                  "FX Quantize stays hidden for effects without beat timing");
+    ok &= require(quantize1 && quantize1->isVisible() && quantize1->isEnabled()
+                      && quantize2 && quantize2->isVisible()
+                      && quantize1->opacity() < 1.0,
+                  "FX Quantize stays visible and interactive with reduced emphasis when irrelevant");
+    ok &= clickItem(fxWindow, quantize1, "irrelevant FX Quantize remains switchable");
+    ok &= require(fxManager->property("quantizeEnabled1").toBool(),
+                  "FX Quantize can be armed before choosing a timing effect");
+    fxManager->setProperty("effectType1", QStringLiteral("Echo"));
+    QCoreApplication::processEvents();
+    ok &= require(quantize1 && quantize1->opacity() == 1.0,
+                  "controller-driven effect changes update timing relevance in the FX strip");
+    fxManager->setProperty("effectType1", QStringLiteral("---"));
+
     ok &= require(unit1 && unit2
                       && unit1->metaObject()->indexOfProperty("wetDry") >= 0
                       && unit1->metaObject()->indexOfSignal("deck1Toggled(bool)") >= 0,
@@ -3015,6 +3447,8 @@ int main(int argc, char** argv)
     QGuiApplication app(argc, argv);
     bool ok = sliderCleanupTests();
     const auto main = read("src/qml/main.qml");
+    ok &= viewportHeightScalingTests(main);
+    ok &= sourceViewToggleTests(main);
     ok &= require(main.find("Math.min(window.scaledWaveformHeight, window.adaptiveWaveformHeight)")
                       != std::string::npos,
                   "the workspace waveform minimum follows its adaptive preferred height");
@@ -3028,6 +3462,7 @@ int main(int argc, char** argv)
     const auto slider = read("src/qml/components/Slider.qml");
     const auto mixerSection = read("src/qml/mixer/MixerSection.qml");
     const auto workspace = read("src/qml/performance/PerformanceWorkspace.qml");
+    ok &= desktopLibraryHeightTests(main, workspace);
     const auto developmentControls = read("src/qml/development/DevelopmentControlsWindow.qml");
     const auto performancePads = read("src/qml/performance/PerformancePads.qml");
     ok &= appOverlaysRuntimeTests(appOverlays);
@@ -3131,10 +3566,10 @@ int main(int argc, char** argv)
     const auto deckTrackInfoPanel = read("src/qml/deck/DeckTrackInfoPanel.qml");
     ok &= require(main.find("gradient:") == std::string::npos
                       && deckTrackInfoPanel.find("gradient:") == std::string::npos
-                      && deckTrackInfoPanel.find("panelColor: UiTheme.panel") != std::string::npos
+                      && deckTrackInfoPanel.find("panelColor: UiTheme.inspectorSurface") != std::string::npos
                       && deckTrackInfoPanel.find("root.engine.trackArtist") != std::string::npos
-                      && deckTrackInfoPanel.find("infoHeight: Math.round(98 * scale)") != std::string::npos
-                      && deckTrackInfoPanel.find("width: Math.round(parent.width * 0.21)") != std::string::npos
+                      && deckTrackInfoPanel.find("infoHeight: Math.round(84 * metricScale)") != std::string::npos
+                      && deckTrackInfoPanel.find("width: Math.round(parent.width * 0.22)") != std::string::npos
                       && deckTrackInfoPanel.find("anchors.margins: 1") != std::string::npos,
                   "deck information uses flat shared surfaces, artist hierarchy and integer-aligned BPM geometry");
     const auto flx10Mapping = read("src/controllers/mappings/DDJ-FLX10.brockdj.xml");
@@ -3653,7 +4088,7 @@ int main(int argc, char** argv)
                   "FLX10 Beat FX channel selector follows CH1, CH2 and Master notes");
     ok &= require(waveformScreen.find("property string leftPanel: \"deck\"")
                       != std::string::npos
-                  && waveformScreen.find("Math.min(230, Math.max(176, width * 0.155))")
+                  && waveformScreen.find("readonly property real panelWidth: 208")
                       != std::string::npos
                   && waveformScreen.find("readonly property real handleWidth: 22")
                       != std::string::npos,
@@ -3670,7 +4105,7 @@ int main(int argc, char** argv)
     ok &= require(deckQuickPanel.find("function loadedSourceLabel()") != std::string::npos
                   && deckQuickPanel.find("engine.externalSourceId") != std::string::npos
                   && deckQuickPanel.find("deviceLibraryManager.devices") != std::string::npos
-                  && deckQuickPanel.find("text: \"SOURCE\"") != std::string::npos,
+                  && deckQuickPanel.find("text: root.loadedSourceLabel()") != std::string::npos,
                   "compact deck side panel shows the loaded Local or USB source");
     // The neighbouring beat lengths are shown either side of the current one and
     // are selectable directly, the way a player prints them.

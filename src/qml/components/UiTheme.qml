@@ -53,6 +53,9 @@ QtObject {
     readonly property color surfaceRaised:     "#e62c3440"
     readonly property color surfaceInset:      "#151b24"
     readonly property color displayBackground: "#10151d"
+    readonly property color inspectorSurface:   "#f2151b24"
+    readonly property color inspectorInset:     "#1b222c"
+
     readonly property color borderSubtle:      "#28313e"
     readonly property color borderStrong:      "#465366"
     readonly property color warning:           "#e6a019"

@@ -539,9 +539,9 @@ Item {
             DeckTrackInfoPanel {
                 visible: !deck.controlsOnly
                 Layout.fillWidth: true
-                Layout.preferredHeight: deck.controlsOnly ? 0 : 275
-                Layout.minimumHeight: deck.controlsOnly ? 0 : 275
-                Layout.maximumHeight: deck.controlsOnly ? 0 : 275
+                Layout.preferredHeight: deck.controlsOnly ? 0 : 200
+                Layout.minimumHeight: deck.controlsOnly ? 0 : 200
+                Layout.maximumHeight: deck.controlsOnly ? 0 : 200
                 deckName: deck.deckName
                 engine: deck.engine
                 onAir: deck.engine ? deck.engine.onAir : false

@@ -16,7 +16,7 @@ Rectangle {
     readonly property color selectionAccent: UiTheme.browserSelectionAccent
     property string cursorDeviceId: ""
     property bool navigationReady: false
-    color: "#11171f"
+    color: UiTheme.displayBackground
     focus: visible
     property string sourcePane: "sources"
     property int sourceCursorIndex: 0
@@ -212,367 +212,282 @@ Rectangle {
         }
     }
 
+    component MediaIcon: Canvas {
+        property string kind: "local"
+        property color ink: UiTheme.textSecondary
+        onKindChanged: requestPaint()
+        onInkChanged: requestPaint()
+        onPaint: {
+            const ctx = getContext("2d")
+            ctx.reset()
+            ctx.scale(width / 24, height / 24)
+            ctx.strokeStyle = ink; ctx.fillStyle = ink
+            ctx.lineWidth = 1.5; ctx.lineCap = "round"; ctx.lineJoin = "round"
+            if (kind === "local") {
+                ctx.strokeRect(3, 4, 18, 12)
+                ctx.beginPath(); ctx.moveTo(12, 16); ctx.lineTo(12, 20)
+                ctx.moveTo(7, 20); ctx.lineTo(17, 20); ctx.stroke()
+            } else if (kind === "library") {
+                ctx.strokeRect(3, 5, 4, 15); ctx.strokeRect(9, 3, 4, 17)
+                ctx.beginPath(); ctx.moveTo(16, 5); ctx.lineTo(21, 19)
+                ctx.lineTo(17, 20); ctx.lineTo(13, 6); ctx.closePath(); ctx.stroke()
+            } else {
+                ctx.beginPath(); ctx.moveTo(12, 19); ctx.lineTo(12, 3)
+                ctx.moveTo(9, 6); ctx.lineTo(12, 3); ctx.lineTo(15, 6)
+                ctx.moveTo(12, 14); ctx.lineTo(6, 10); ctx.lineTo(6, 7)
+                ctx.moveTo(12, 12); ctx.lineTo(18, 8); ctx.lineTo(18, 5); ctx.stroke()
+                ctx.fillRect(16.5, 3, 3, 3)
+                ctx.beginPath(); ctx.arc(6, 6, 1.5, 0, Math.PI * 2); ctx.fill()
+                ctx.beginPath(); ctx.arc(12, 20, 2, 0, Math.PI * 2); ctx.stroke()
+            }
+        }
+    }
+
     Item {
-        anchors.fill: parent
-        readonly property int dividerWidth: UiTheme.dividerWidth
+        id: browser
+        width: Math.min(parent.width - 40, 1040)
+        anchors.top: parent.top; anchors.bottom: parent.bottom
+        anchors.topMargin: 20; anchors.bottomMargin: 20
+        anchors.horizontalCenter: parent.horizontalCenter
 
-        Rectangle {
-            id: sourcePanel
-            anchors.left: parent.left
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            width: (parent.width - parent.dividerWidth) / 2
-            color: "#151c25"
-
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 0
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 52
-                    color: "#171f29"
-                    Text {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 22
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "MEDIA"
-                        color: UiTheme.textLabel
-                        font.pixelSize: 11
-                        font.bold: true
-                        font.letterSpacing: 1.4
-                    }
+        Item {
+            id: heading
+            width: parent.width; height: 56
+            Column {
+                spacing: 5
+                Text {
+                    text: "Sources"; color: UiTheme.textPrimary
+                    font.pixelSize: 24; font.weight: Font.DemiBold
                 }
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 62
-                    readonly property bool focused: root.sourcePane === "sources"
-                                                    && root.sourceCursorIndex === 0
-                    readonly property bool active: root.activeSourceType === "local"
-                    color: focused ? root.selectionSurface : "#151c25"
-
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.top: parent.top
-                        anchors.bottom: parent.bottom
-                        width: 80
-                        color: "#151c25"
-                        Rectangle {
-                            anchors.left: parent.left
-                            anchors.top: parent.top
-                            anchors.bottom: parent.bottom
-                            width: 3
-                            color: root.selectionAccent
-                            visible: root.sourcePane === "sources" && root.sourceCursorIndex === 0
-                        }
-                        Text {
-                            anchors.centerIn: parent
-                            text: "▣\nLOCAL"
-                            horizontalAlignment: Text.AlignHCenter
-                            color: UiTheme.textPrimary
-                            font.pixelSize: 10
-                            font.bold: true
-                            lineHeight: 0.9
-                        }
-                    }
-                    Text {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 102
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "Internal Collection"
-                        color: UiTheme.textPrimary
-                        font.pixelSize: 18
-                        font.weight: Font.DemiBold
-                    }
-                    MouseArea {
-                        id: localMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            root.selectSourceItem(0)
-                        }
-                    }
+                Text {
+                    text: "Choose where to browse your music."
+                    color: UiTheme.textSecondary; font.pixelSize: 12
                 }
-
-                ListView {
-                    id: deviceList
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    model: root.devices
-                    spacing: 1
-
-                    delegate: Item {
-                        required property var modelData
-                        required property int index
-                        readonly property bool focused: root.sourcePane === "sources"
-                                                    && root.sourceCursorIndex === index + 1
-                        readonly property bool active: root.activeSourceType === "usb"
-                                                       && String(root.activeDeviceId) === String(modelData.id)
-                        readonly property color deviceAccent: modelData.color
-                                                             ? modelData.color : UiTheme.blue
-                        width: ListView.view.width
-                        height: 63
-
-                        Row {
-                            anchors.fill: parent
-                            spacing: 0
-
-                            Rectangle {
-                                width: 80
-                                height: parent.height
-                                color: "#151c25"
-                                Rectangle {
-                                    anchors.left: parent.left
-                                    anchors.top: parent.top
-                                    anchors.bottom: parent.bottom
-                                    width: 3
-                                    color: root.selectionAccent
-                                    visible: focused
-                                }
-                                Column {
-                                    anchors.centerIn: parent
-                                    spacing: 3
-                                    Text {
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        text: "▣"
-                                        color: UiTheme.textPrimary
-                                        font.pixelSize: 18
-                                    }
-                                    Text {
-                                        anchors.horizontalCenter: parent.horizontalCenter
-                                        text: "USB " + (index + 1)
-                                        color: UiTheme.textPrimary
-                                        font.pixelSize: 10
-                                        font.bold: true
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                width: parent.width - 80
-                                height: parent.height
-                                color: focused ? root.selectionSurface : "#151c25"
-                                Text {
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: 20
-                                    anchors.top: parent.top
-                                    anchors.topMargin: 10
-                                    anchors.right: deviceAction.left
-                                    anchors.rightMargin: 12
-                                    text: modelData.name || ("USB " + (index + 1))
-                                    color: UiTheme.textPrimary
-                                    font.pixelSize: 17
-                                    font.weight: Font.DemiBold
-                                    elide: Text.ElideRight
-                                }
-                                Text {
-                                    anchors.left: parent.left
-                                    anchors.leftMargin: 20
-                                    anchors.bottom: parent.bottom
-                                    anchors.bottomMargin: 9
-                                    anchors.right: deviceAction.left
-                                    anchors.rightMargin: 12
-                                    text: modelData.operationPending ? "Mounting device…"
-                                          : modelData.scanning ? "Scanning Rekordbox library…"
-                                          : modelData.ready
-                                            ? modelData.badge + "  ·  " + modelData.trackCount + " tracks"
-                                            : (modelData.status || "Not mounted")
-                                    color: focused ? UiTheme.textPrimary : UiTheme.textSecondary
-                                    font.pixelSize: 10
-                                    elide: Text.ElideRight
-                                }
-                                Rectangle {
-                                    id: deviceAction
-                                    anchors.right: parent.right
-                                    anchors.rightMargin: 10
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    width: 64
-                                    height: 27
-                                    visible: modelData.canMount || modelData.canEject
-                                             || modelData.operationPending
-                                    color: deviceActionMouse.containsMouse
-                                           && !modelData.operationPending ? UiTheme.panelRaised : UiTheme.panelInset
-                                    border.width: UiTheme.dividerWidth
-                                    border.color: deviceActionMouse.containsMouse
-                                                  ? UiTheme.borderHover : UiTheme.border
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: modelData.operationPending ? "…" : modelData.actionLabel
-                                        color: modelData.operationPending ? UiTheme.textDim : UiTheme.textPrimary
-                                        font.pixelSize: 10
-                                        font.bold: true
-                                    }
-                                    MouseArea {
-                                        id: deviceActionMouse
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        enabled: !modelData.operationPending
-                                                 && (modelData.canMount || modelData.canEject)
-                                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                        onClicked: {
-                                            root.sourcePane = "sources"
-                                            root.sourceCursorIndex = index + 1
-                                            if (modelData.canMount)
-                                                deviceLibraryManager.mountDevice(modelData.id)
-                                            else if (modelData.canEject)
-                                                deviceLibraryManager.ejectDevice(modelData.id)
-                                        }
-                                    }
-                                }
-                                MouseArea {
-                                    id: deviceMouse
-                                    anchors.left: parent.left
-                                    anchors.top: parent.top
-                                    anchors.bottom: parent.bottom
-                                    anchors.right: deviceAction.left
-                                    hoverEnabled: true
-                                    cursorShape: modelData.ready ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    onClicked: {
-                                        root.selectSourceItem(index + 1)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Text {
-                        anchors.centerIn: parent
-                        visible: deviceList.count === 0
-                        text: "No USB devices connected"
-                        color: UiTheme.textDim
-                        font.pixelSize: 13
-                    }
+            }
+            Rectangle {
+                anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                width: 32; height: 32; radius: 4
+                color: closeMouse.containsMouse ? UiTheme.inspectorInset : "transparent"
+                border.color: UiTheme.borderSubtle
+                Text { anchors.centerIn: parent; text: "×"; color: UiTheme.textSecondary; font.pixelSize: 20 }
+                MouseArea {
+                    id: closeMouse; anchors.fill: parent; hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.sourceBackRequested()
                 }
             }
         }
 
-        Rectangle {
-            id: middleDivider
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            width: parent.dividerWidth
-            color: UiTheme.borderSubtle
-        }
+        RowLayout {
+            anchors.top: heading.bottom; anchors.topMargin: 16
+            anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+            spacing: 16
 
-        Rectangle {
-            id: servicePanel
-            anchors.left: middleDivider.right
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            color: "#151c25"
+            Rectangle {
+                id: sourcePanel
+                Layout.preferredWidth: Math.min(400, browser.width * 0.43)
+                Layout.preferredHeight: Math.min(parent.height, Math.max(196, 48 + root.sourceCount * 68 + (root.devices.length === 0 ? 64 : 0)))
+                Layout.alignment: Qt.AlignTop
+                color: UiTheme.inspectorSurface; radius: 4
+                border.color: UiTheme.borderSubtle
 
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 0
-
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 52
-                    color: "#171f29"
-                    Text {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 30
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "SOURCE"
-                        color: UiTheme.textSecondary
-                        font.pixelSize: 14
-                    }
-                    Text {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 108
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.right: parent.right
-                        anchors.rightMargin: 24
-                        elide: Text.ElideRight
-                        text: root.selectedSourceLabel()
-                        color: UiTheme.textPrimary
-                        font.pixelSize: 17
-                        font.weight: Font.Medium
-                    }
-
-                }
-
-                Repeater {
-                    model: [
-                        { key: "library", icon: "▣",
-                          label: root.sourceCursorIndex === 0 ? "Local Library" : "USB Library",
-                          enabled: true }
-                    ]
-
-                    delegate: Rectangle {
-                        required property var modelData
-                        required property int index
-                        readonly property bool focused: root.sourcePane === "services"
-                                                     && root.serviceCursorIndex === index
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 94
-                        color: focused ? root.selectionSurface : "#151c25"
-
-                        Rectangle {
-                            anchors.bottom: parent.bottom
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            height: 1
-                            color: UiTheme.borderSubtle
-                        }
-
+                ColumnLayout {
+                    anchors.fill: parent; anchors.margins: 8
+                    spacing: 4
+                    Item {
+                        Layout.fillWidth: true; Layout.preferredHeight: 32
                         Text {
-                            anchors.left: parent.left
-                            anchors.leftMargin: 31
+                            anchors.left: parent.left; anchors.leftMargin: 8
                             anchors.verticalCenter: parent.verticalCenter
-                            text: parent.focused ? "›" : ""
-                            color: root.selectionAccent
-                            font.pixelSize: 20
+                            text: "MEDIA"; color: UiTheme.textLabel
+                            font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 1
                         }
-
+                        Text {
+                            anchors.right: parent.right; anchors.rightMargin: 8
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: root.devices.length + " USB"
+                            color: UiTheme.textLabel; font.pixelSize: 10
+                        }
+                    }
+                    Rectangle {
+                        objectName: "localSourceRow"
+                        Layout.fillWidth: true; Layout.preferredHeight: 60; Layout.minimumHeight: 60
+                        readonly property bool focused: root.sourcePane === "sources" && root.sourceCursorIndex === 0
+                        color: focused ? root.selectionSurface : UiTheme.inspectorInset
+                        border.color: focused ? root.selectionAccent : "transparent"
+                        radius: 3
+                        MediaIcon {
+                            anchors.left: parent.left; anchors.leftMargin: 13
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 24; height: 24
+                            ink: parent.focused ? root.selectionAccent : UiTheme.textSecondary
+                        }
                         Column {
-                            anchors.left: parent.left
-                            anchors.leftMargin: 67
+                            anchors.left: parent.left; anchors.leftMargin: 52
+                            anchors.right: parent.right; anchors.rightMargin: 12
                             anchors.verticalCenter: parent.verticalCenter
-                            spacing: 3
+                            spacing: 4
                             Text {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                text: modelData.icon
-                                color: modelData.enabled ? UiTheme.textPrimary : UiTheme.textDim
-                                font.pixelSize: 22
+                                width: parent.width; text: "Local collection"
+                                color: UiTheme.textPrimary; font.pixelSize: 14; font.weight: Font.DemiBold
+                                elide: Text.ElideRight
                             }
-                            Text {
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                text: modelData.label
-                                horizontalAlignment: Text.AlignHCenter
-                                color: modelData.enabled ? UiTheme.textPrimary : UiTheme.textDim
-                                font.pixelSize: 15
-                                font.weight: Font.DemiBold
-                                lineHeight: 0.9
-                            }
+                            Text { text: "Internal library"; color: UiTheme.textSecondary; font.pixelSize: 11 }
                         }
-
-                        Text {
-                            anchors.left: parent.left
-                            anchors.leftMargin: 168
-                            anchors.verticalCenter: parent.verticalCenter
-                            visible: !modelData.enabled
-                            text: "SERVICE NOT CONFIGURED"
-                            color: parent.focused ? UiTheme.textPrimary : UiTheme.textDim
-                            font.pixelSize: 13
-                            font.weight: Font.DemiBold
-                        }
-
                         MouseArea {
-                            anchors.fill: parent
-                            enabled: modelData.enabled
-                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                            onClicked: root.selectServiceItem(index)
+                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                            onClicked: root.selectSourceItem(0)
+                        }
+                    }
+                    ListView {
+                        id: deviceList
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        clip: true; model: root.devices; spacing: 4
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                        delegate: Rectangle {
+                            required property var modelData
+                            required property int index
+                            readonly property bool focused: root.sourcePane === "sources" && root.sourceCursorIndex === index + 1
+                            width: ListView.view.width; height: 64; radius: 3
+                            color: focused ? root.selectionSurface : UiTheme.inspectorInset
+                            border.color: focused ? root.selectionAccent : "transparent"
+                            MediaIcon {
+                                kind: "usb"; width: 24; height: 24
+                                anchors.left: parent.left; anchors.leftMargin: 13
+                                anchors.verticalCenter: parent.verticalCenter
+                                ink: parent.focused ? root.selectionAccent : UiTheme.textSecondary
+                            }
+                            Column {
+                                anchors.left: parent.left; anchors.leftMargin: 52
+                                anchors.right: deviceAction.left; anchors.rightMargin: 8
+                                anchors.verticalCenter: parent.verticalCenter; spacing: 4
+                                Text {
+                                    width: parent.width
+                                    text: modelData.name || ("USB " + (index + 1))
+                                    color: UiTheme.textPrimary; font.pixelSize: 14; font.weight: Font.DemiBold
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    width: parent.width
+                                    text: modelData.operationPending ? "Mounting…"
+                                          : modelData.scanning ? "Scanning library…"
+                                          : modelData.ready ? ((modelData.trackCount || 0) + " tracks · USB " + (index + 1))
+                                          : (modelData.status || "Not mounted")
+                                    color: UiTheme.textSecondary; font.pixelSize: 10
+                                    elide: Text.ElideRight
+                                }
+                            }
+                            Rectangle {
+                                id: deviceAction
+                                anchors.right: parent.right; anchors.rightMargin: 8
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: visible ? 56 : 0; height: 28; radius: 3
+                                visible: modelData.canMount || modelData.canEject || modelData.operationPending
+                                color: actionMouse.containsMouse ? UiTheme.panelRaised : UiTheme.inspectorSurface
+                                border.color: UiTheme.borderSubtle
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: modelData.operationPending ? "…" : (modelData.actionLabel || (modelData.canMount ? "Mount" : "Eject"))
+                                    color: UiTheme.textSecondary; font.pixelSize: 10
+                                }
+                                MouseArea {
+                                    id: actionMouse; anchors.fill: parent; hoverEnabled: true
+                                    enabled: !modelData.operationPending && (modelData.canMount || modelData.canEject)
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: {
+                                        root.sourcePane = "sources"
+                                        root.sourceCursorIndex = index + 1
+                                        if (modelData.canMount) deviceLibraryManager.mountDevice(modelData.id)
+                                        else if (modelData.canEject) deviceLibraryManager.ejectDevice(modelData.id)
+                                    }
+                                }
+                            }
+                            MouseArea {
+                                anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                                anchors.right: deviceAction.left
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.selectSourceItem(index + 1)
+                            }
+                        }
+                        Text {
+                            anchors.centerIn: parent; visible: deviceList.count === 0
+                            text: "No USB devices connected"
+                            color: UiTheme.textLabel; font.pixelSize: 11
                         }
                     }
                 }
+            }
 
-                Item { Layout.fillWidth: true; Layout.fillHeight: true }
+            Rectangle {
+                id: servicePanel
+                Layout.fillWidth: true; Layout.preferredHeight: 236
+                Layout.alignment: Qt.AlignTop
+                readonly property var device: root.sourceCursorIndex > 0 ? root.devices[root.sourceCursorIndex - 1] : null
+                readonly property bool ready: root.sourceCursorIndex === 0 || (device && device.ready)
+                color: UiTheme.inspectorSurface; radius: 4
+                border.color: UiTheme.borderSubtle
+                Column {
+                    anchors.left: parent.left; anchors.right: parent.right
+                    anchors.top: parent.top; anchors.margins: 20
+                    spacing: 10
+                    Text {
+                        text: "BROWSE"; color: UiTheme.textLabel
+                        font.pixelSize: 10; font.weight: Font.DemiBold; font.letterSpacing: 1
+                    }
+                    Text {
+                        width: parent.width
+                        text: root.sourceCursorIndex === 0 ? "Local collection" : root.selectedSourceLabel()
+                        color: UiTheme.textPrimary; font.pixelSize: 22; font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                    }
+                    Text {
+                        width: parent.width
+                        text: servicePanel.ready ? "Tracks and playlists, ready to browse."
+                                                 : "Mount this device to browse its library."
+                        color: UiTheme.textSecondary; font.pixelSize: 12
+                        wrapMode: Text.WordWrap
+                    }
+                }
+                Rectangle {
+                    objectName: "sourceLibraryRow"
+                    readonly property bool focused: root.sourcePane === "services" && root.serviceCursorIndex === 0
+                    anchors.left: parent.left; anchors.right: parent.right
+                    anchors.bottom: parent.bottom; anchors.margins: 12
+                    height: 66; radius: 3
+                    color: focused ? root.selectionSurface : UiTheme.inspectorInset
+                    border.color: focused ? root.selectionAccent : UiTheme.borderSubtle
+                    opacity: servicePanel.ready ? 1 : 0.5
+                    MediaIcon {
+                        kind: "library"; width: 26; height: 26
+                        anchors.left: parent.left; anchors.leftMargin: 14
+                        anchors.verticalCenter: parent.verticalCenter
+                        ink: parent.focused ? root.selectionAccent : UiTheme.textSecondary
+                    }
+                    Column {
+                        anchors.left: parent.left; anchors.leftMargin: 54
+                        anchors.right: parent.right; anchors.rightMargin: 26
+                        anchors.verticalCenter: parent.verticalCenter; spacing: 4
+                        Text {
+                            text: "Open library"; color: UiTheme.textPrimary
+                            font.pixelSize: 14; font.weight: Font.DemiBold
+                        }
+                        Text {
+                            width: parent.width; text: "Browse tracks and playlists"
+                            color: UiTheme.textSecondary; font.pixelSize: 11; elide: Text.ElideRight
+                        }
+                    }
+                    Text {
+                        anchors.right: parent.right; anchors.rightMargin: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "›"; color: UiTheme.textSecondary; font.pixelSize: 22
+                    }
+                    MouseArea {
+                        anchors.fill: parent; enabled: servicePanel.ready
+                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: root.selectServiceItem(0)
+                    }
+                }
             }
         }
     }

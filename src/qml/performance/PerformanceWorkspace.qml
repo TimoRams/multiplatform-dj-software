@@ -237,15 +237,12 @@ Item {
 
             readonly property real designWidth: window.baseUiWidth
             readonly property real designHeight: window.baseDeckMixerHeight
-            readonly property real uniformScaleRaw: Math.min(
-                width / Math.max(1, designWidth),
-                height / Math.max(1, designHeight)
-            )
+            readonly property real uniformScaleRaw: height / Math.max(1, designHeight)
             readonly property real uniformScale: window._snapScaleToPhysicalPixels(Math.max(0.1, uniformScaleRaw))
 
             Item {
                 id: deckMixerCanvas
-                width: deckMixerViewport.designWidth
+                width: deckMixerViewport.width / deckMixerViewport.uniformScale
                 height: deckMixerViewport.designHeight
                 anchors.centerIn: parent
                 scale: deckMixerViewport.uniformScale
@@ -296,15 +293,12 @@ Item {
 
             readonly property real designWidth: window.baseUiWidth
             readonly property real designHeight: window.baseDeckMixerHeight
-            readonly property real uniformScaleRaw: Math.min(
-                width  / Math.max(1, designWidth),
-                height / Math.max(1, designHeight)
-            )
+            readonly property real uniformScaleRaw: height / Math.max(1, designHeight)
             readonly property real uniformScale: window._snapScaleToPhysicalPixels(Math.max(0.1, uniformScaleRaw))
 
             Loader {
                 active: window.fourDeckMode
-                width: deckMixerViewport2.designWidth
+                width: deckMixerViewport2.width / deckMixerViewport2.uniformScale
                 height: deckMixerViewport2.designHeight
                 anchors.centerIn: parent
                 scale: deckMixerViewport2.uniformScale
@@ -392,9 +386,7 @@ Item {
                         window.activeMainTab = "library"
                         window.showLibrary = true
                     }
-                    onSourceBackRequested: {
-                        window.activeMainTab = "performance"
-                    }
+                    onSourceBackRequested: window.toggleLibrarySourceView()
                 }
             }
         }

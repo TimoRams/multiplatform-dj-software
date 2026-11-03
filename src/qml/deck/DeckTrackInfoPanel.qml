@@ -5,13 +5,14 @@ import DJSoftware
 Item {
     id: root
 
+    clip: true
     property string deckName: "A"
     property var engine: null
     property bool onAir: false
     property bool showRemainingTime: true
 
-    readonly property color panelColor: UiTheme.panel
-    readonly property color panelRaised: UiTheme.panelRaised
+    readonly property color panelColor: UiTheme.inspectorSurface
+    readonly property color panelRaised: UiTheme.inspectorInset
     readonly property color outline: UiTheme.borderSubtle
     readonly property color primaryText: UiTheme.textPrimary
     readonly property color secondaryText: UiTheme.textSecondary
@@ -20,11 +21,11 @@ Item {
     readonly property color functionOrange: UiTheme.cue
     readonly property color playingColor: UiTheme.play
     readonly property color rulerText: UiTheme.textLabel
-    readonly property real scale: Math.max(0.60, Math.min(width / 720, height / 280))
-    readonly property int titleHeight: Math.round(60 * scale)
-    readonly property int infoHeight: Math.round(98 * scale)
-    readonly property int overviewHeight: Math.round(60 * scale)
-    readonly property int rulerHeight: Math.round(25 * scale)
+    readonly property real metricScale: Math.max(0.35, Math.min(1.0, height / 240, width / 480))
+    readonly property int titleHeight: Math.round(60 * metricScale)
+    readonly property int infoHeight: Math.round(84 * metricScale)
+    readonly property int overviewHeight: Math.round(52 * metricScale)
+    readonly property int rulerHeight: Math.round(22 * metricScale)
     readonly property real duration: engine && engine.trackDurationSec > 0 ? engine.trackDurationSec : 0
     readonly property bool hasTrack: engine && engine.hasTrack
     // This is deliberately a concrete UI value, refreshed from the visual
@@ -57,7 +58,7 @@ Item {
                                                 : "." + Math.min(999, displayedMilliseconds).toString().padStart(3, "0")
 
     function valuePx(reference, minimum) {
-        return Math.max(minimum, Math.round(reference * scale))
+        return Math.max(minimum, Math.round(reference * metricScale))
     }
 
     function playbackSeconds() {
@@ -109,7 +110,7 @@ Item {
             return "0.00%"
         var tempo = Number(engine.tempoPercent)
         if (!isFinite(tempo)) tempo = 0
-        return tempo.toFixed(2) + "%"
+        return (tempo > 0 ? "+" : "") + tempo.toFixed(2) + "%"
     }
 
     function bpmText() {
@@ -185,8 +186,8 @@ Item {
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                width: root.valuePx(68, 42)
-                color: root.panelRaised
+                width: root.valuePx(52, 36)
+                color: "transparent"
                 Rectangle {
                     anchors.left: parent.left
                     anchors.top: parent.top
@@ -200,8 +201,8 @@ Item {
                     anchors.topMargin: root.valuePx(7, 4)
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: "DECK"
-                    color: root.primaryText
-                    font.pixelSize: root.valuePx(16, 10)
+                    color: root.secondaryText
+                    font.pixelSize: root.valuePx(11, 9)
                     font.weight: Font.Medium
                     font.letterSpacing: 0.5
                 }
@@ -211,7 +212,7 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter
                     text: root.deckName
                     color: root.primaryText
-                    font.pixelSize: root.valuePx(33, 19)
+                    font.pixelSize: root.valuePx(27, 18)
                     font.weight: Font.Medium
                     font.family: "monospace"
                 }
@@ -220,14 +221,14 @@ Item {
             Text {
                 id: titleText
                 anchors.left: parent.left
-                anchors.leftMargin: root.valuePx(88, 55)
+                anchors.leftMargin: root.valuePx(68, 46)
                 anchors.right: onAirBadge.visible ? onAirBadge.left : parent.right
                 anchors.rightMargin: root.valuePx(16, 9)
                 anchors.top: parent.top
                 anchors.topMargin: root.valuePx(9, 5)
                 text: root.hasTrack ? root.engine.trackTitle : "No Track Loaded"
                 color: root.hasTrack ? root.primaryText : UiTheme.textMuted
-                font.pixelSize: root.valuePx(24, 14)
+                font.pixelSize: root.valuePx(22, 14)
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
                 maximumLineCount: 1
@@ -241,7 +242,7 @@ Item {
                 anchors.topMargin: root.valuePx(3, 2)
                 text: root.hasTrack ? root.engine.trackArtist : "Load a track to begin"
                 color: root.secondaryText
-                font.pixelSize: root.valuePx(15, 10)
+                font.pixelSize: root.valuePx(14, 10)
                 elide: Text.ElideRight
                 maximumLineCount: 1
             }
@@ -278,7 +279,7 @@ Item {
                 anchors.left: parent.left
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                width: Math.round(parent.width * 0.15) - root.valuePx(12, 7)
+                width: Math.round(parent.width * 0.12) - root.valuePx(12, 7)
                 anchors.leftMargin: root.valuePx(12, 7)
 
                 Text {
@@ -286,7 +287,7 @@ Item {
                     anchors.topMargin: root.valuePx(9, 5)
                     text: "TRACK"
                     color: root.secondaryText
-                    font.pixelSize: root.valuePx(16, 10)
+                    font.pixelSize: root.valuePx(13, 10)
                     font.weight: Font.DemiBold
                     font.letterSpacing: 0.6
                 }
@@ -295,18 +296,19 @@ Item {
                     anchors.topMargin: root.valuePx(29, 18)
                     text: root.formattedTrackNumber()
                     color: root.hasTrack ? root.primaryText : UiTheme.textMuted
-                    font.pixelSize: root.valuePx(42, 24)
+                    font.pixelSize: root.valuePx(28, 20)
                     font.family: "monospace"
                     font.weight: Font.Medium
                 }
                 Text {
-                    visible: root.engine && root.engine.quantizeEnabled
+                    visible: root.hasTrack
                     anchors.left: parent.left
                     anchors.bottom: parent.bottom
-                    anchors.bottomMargin: root.valuePx(7, 4)
-                    text: "QUANTIZE"
-                    color: root.functionOrange
-                    font.pixelSize: root.valuePx(15, 9)
+                    anchors.bottomMargin: root.valuePx(4, 3)
+                    text: (root.engine && root.engine.trackKey ? root.engine.trackKey : "—")
+                          + (root.engine && root.engine.quantizeEnabled ? " · QNT" : "")
+                    color: root.engine && root.engine.quantizeEnabled ? root.functionOrange : root.secondaryText
+                    font.pixelSize: root.valuePx(11, 9)
                     font.weight: Font.DemiBold
                     font.letterSpacing: 0.5
                 }
@@ -317,7 +319,7 @@ Item {
                 anchors.left: trackSection.right
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                width: Math.round(parent.width * 0.36)
+                width: Math.round(parent.width * 0.40)
                 clip: true
 
                 Text {
@@ -325,7 +327,7 @@ Item {
                     anchors.topMargin: root.valuePx(9, 5)
                     text: root.showRemainingTime ? "REMAIN" : "TIME"
                     color: root.secondaryText
-                    font.pixelSize: root.valuePx(16, 10)
+                    font.pixelSize: root.valuePx(13, 10)
                     font.weight: Font.DemiBold
                     font.letterSpacing: 0.6
                 }
@@ -337,11 +339,13 @@ Item {
                     height: root.valuePx(70, 42)
                     Text {
                         id: timeSign
+                        objectName: "deckTimeSign"
                         anchors.left: parent.left
-                        anchors.baseline: timeMillis.baseline
+                        anchors.bottom: parent.bottom
+                        width: root.valuePx(20, 12)
                         text: root.displayedTimeSign
                         color: root.primaryText
-                        font.pixelSize: Math.max(root.valuePx(24, 14), Math.min(root.valuePx(72, 40), parent.width / 14))
+                        font.pixelSize: root.valuePx(44, 24)
                         font.family: UiTheme.numericFontFamily
                         font.weight: Font.Medium
                         Component.onCompleted: UiTheme.applyNumericFontMetrics(this)
@@ -349,10 +353,10 @@ Item {
                     }
                     Item {
                         id: timeMain
+                        objectName: "deckClockDigits"
                         anchors.left: timeSign.right
                         anchors.leftMargin: root.valuePx(4, 2)
-                        anchors.right: timeMillis.left
-                        anchors.rightMargin: root.valuePx(2, 1)
+                        width: root.valuePx(26, 14) * root.displayedTimeClock.length
                         anchors.bottom: parent.bottom
                         height: parent.height
 
@@ -368,7 +372,7 @@ Item {
                                 x: index * width
                                 text: root.displayedTimeClock.charAt(index)
                                 color: root.primaryText
-                                font.pixelSize: Math.max(root.valuePx(24, 14), Math.min(root.valuePx(72, 40), timeMain.width / 3.7))
+                                font.pixelSize: root.valuePx(44, 24)
                                 font.family: UiTheme.numericFontFamily
                                 font.weight: Font.Medium
                                 Component.onCompleted: UiTheme.applyNumericFontMetrics(this)
@@ -379,10 +383,11 @@ Item {
                     }
                     Item {
                         id: timeMillis
-                        anchors.right: parent.right
+                        objectName: "deckTimeMillis"
+                        anchors.left: timeMain.right
+                        anchors.leftMargin: root.valuePx(2, 1)
                         anchors.bottom: parent.bottom
-                        readonly property real digitPx: Math.max(root.valuePx(16, 10),
-                                                                 Math.min(root.valuePx(31, 18), parent.width / 7))
+                        readonly property real digitPx: root.valuePx(24, 14)
                         // Reserve four fixed character cells for ".mmm"; its width
                         // must never depend on the currently displayed digits.
                         width: digitPx * 2.5
@@ -419,7 +424,7 @@ Item {
                 anchors.left: timeSection.right
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                width: Math.round(parent.width * 0.21)
+                width: Math.round(parent.width * 0.22)
                 clip: true
 
                 Text {
@@ -427,7 +432,7 @@ Item {
                     anchors.topMargin: root.valuePx(9, 5)
                     text: "TEMPO"
                     color: root.secondaryText
-                    font.pixelSize: root.valuePx(16, 10)
+                    font.pixelSize: root.valuePx(13, 10)
                     font.weight: Font.DemiBold
                     font.letterSpacing: 0.6
                 }
@@ -444,7 +449,7 @@ Item {
                         anchors.centerIn: parent
                         text: root.tempoRangeLabel()
                         color: root.secondaryText
-                        font.pixelSize: root.valuePx(16, 10)
+                        font.pixelSize: root.valuePx(13, 10)
                         font.weight: Font.DemiBold
                     }
                 }
@@ -454,7 +459,7 @@ Item {
                     anchors.bottomMargin: root.valuePx(8, 4)
                     text: root.tempoText()
                     color: root.primaryText
-                    font.pixelSize: Math.max(root.valuePx(20, 12), Math.min(root.valuePx(49, 28), parent.width / 3.8))
+                    font.pixelSize: root.valuePx(34, 20)
                     font.family: UiTheme.numericFontFamily
                     font.weight: Font.Medium
                     Component.onCompleted: UiTheme.applyNumericFontMetrics(this)
@@ -473,9 +478,9 @@ Item {
                 anchors.topMargin: root.valuePx(4, 2)
                 anchors.bottom: parent.bottom
                 anchors.bottomMargin: root.valuePx(5, 3)
-                color: UiTheme.panelInset
+                color: root.panelRaised
                 border.width: 1
-                border.color: root.engine && root.engine.syncMaster ? root.functionOrange : root.outline
+                border.color: root.outline
                 radius: 0
                 clip: true
                 Text {
@@ -485,7 +490,7 @@ Item {
                     anchors.topMargin: root.valuePx(5, 3)
                     text: "BPM"
                     color: root.secondaryText
-                    font.pixelSize: root.valuePx(16, 10)
+                    font.pixelSize: root.valuePx(13, 10)
                     font.weight: Font.DemiBold
                 }
                 Rectangle {
@@ -496,11 +501,11 @@ Item {
                     anchors.topMargin: 1
                     width: root.valuePx(72, 43)
                     height: root.valuePx(28, 18)
-                    color: root.functionOrange
+                    color: "transparent"
                     Text {
                         anchors.centerIn: parent
                         text: "MASTER"
-                        color: UiTheme.displayBackground
+                        color: root.functionOrange
                         font.pixelSize: root.valuePx(12, 8)
                         font.weight: Font.DemiBold
                     }
@@ -514,7 +519,7 @@ Item {
                     anchors.bottomMargin: root.valuePx(4, 2)
                     text: root.bpmText()
                     color: root.engine && root.engine.syncMaster ? root.functionOrange : root.primaryText
-                    font.pixelSize: Math.max(root.valuePx(20, 12), Math.min(root.valuePx(57, 32), width / 3.4))
+                    font.pixelSize: root.valuePx(42, 24)
                     font.family: UiTheme.numericFontFamily
                     font.weight: Font.Medium
                     Component.onCompleted: UiTheme.applyNumericFontMetrics(this)
@@ -523,14 +528,12 @@ Item {
             }
         }
 
-        Item { Layout.fillWidth: true; Layout.fillHeight: true }
-
         Item {
             id: overviewArea
             Layout.fillWidth: true
+            Layout.fillHeight: true
             Layout.preferredHeight: root.overviewHeight
             Layout.minimumHeight: root.overviewHeight
-            Layout.maximumHeight: root.overviewHeight
             Layout.leftMargin: root.valuePx(18, 9)
             Layout.rightMargin: root.valuePx(18, 9)
             clip: true
