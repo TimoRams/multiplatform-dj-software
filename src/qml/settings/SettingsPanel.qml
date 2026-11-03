@@ -90,6 +90,7 @@ Item {
             Layout.preferredWidth: 76
             text: audioRoleRow.roleDefinition.label
             color: UiTheme.textSecondary
+            font.family: UiTheme.uiFontFamily
             font.pixelSize: 12
         }
 
@@ -190,12 +191,12 @@ Item {
     }
 
     readonly property var categories: [
-        { label: "Audio Setup",     icon: "♪" },
-        { label: "MIDI Controller", icon: "⎘" },
-        { label: "Library",         icon: "☰" },
-        { label: "Analyse",         icon: "♫" },
-        { label: "DJ / Sync",       icon: "⟳" },
-        { label: "Legal",           icon: "§" },
+        { label: "Audio Setup",     icon: "audio" },
+        { label: "MIDI Controller", icon: "controller" },
+        { label: "Library",         icon: "library" },
+        { label: "Analyse",         icon: "analysis" },
+        { label: "DJ / Sync",       icon: "sync" },
+        { label: "Legal",           icon: "legal" },
     ]
 
     readonly property bool isJackDeviceSelected: String(pendingAudioDeviceType).toLowerCase().indexOf("jack") >= 0
@@ -653,7 +654,7 @@ Item {
 
         // ── LEFT SIDEBAR ────────────────────────────────────────────────────
         Rectangle {
-            Layout.preferredWidth: 200
+            Layout.preferredWidth: settingsWindow.width < 900 ? 168 : 208
             Layout.fillHeight: true
             color: UiTheme.panel
 
@@ -670,6 +671,7 @@ Item {
                     anchors.centerIn: parent
                     text: "SETTINGS"
                     color: UiTheme.textPrimary
+                    font.family: UiTheme.uiFontFamily
                     font.pixelSize: 13
                     font.bold: true
                     font.letterSpacing: 2
@@ -701,7 +703,7 @@ Item {
                         required property int index
 
                         width: parent.width
-                        height: 40
+                        height: UiTheme.touchTarget
                         color: settingsWindow.selectedCategory === index
                                ? UiTheme.surfaceRaised
                                : containsMouse ? UiTheme.panelRaised : "transparent"
@@ -724,11 +726,10 @@ Item {
                             anchors.leftMargin: 18
                             spacing: 10
 
-                            Text {
-                                text: modelData.icon
-                                color: settingsWindow.selectedCategory === index
-                                       ? UiTheme.blue : UiTheme.textLabel
-                                font.pixelSize: 14
+                            UiIcon {
+                                kind: modelData.icon
+                                ink: settingsWindow.selectedCategory === index ? UiTheme.blue : UiTheme.textLabel
+                                width: 18; height: 18
                                 anchors.verticalCenter: parent.verticalCenter
                             }
 
@@ -736,6 +737,7 @@ Item {
                                 text: modelData.label
                                 color: settingsWindow.selectedCategory === index
                                        ? UiTheme.textPrimary : UiTheme.textSecondary
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 12
                                 font.bold: settingsWindow.selectedCategory === index
                                 anchors.verticalCenter: parent.verticalCenter
@@ -775,6 +777,7 @@ Item {
                 contentItem: Text {
                     text: parent.text
                     color: UiTheme.textPrimary
+                    font.family: UiTheme.uiFontFamily
                     font.pixelSize: 12
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
@@ -837,6 +840,7 @@ Item {
                             Text {
                                 text: "Audio Setup"
                                 color: UiTheme.textPrimary
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 18
                                 font.bold: true
                                 Layout.fillWidth: true
@@ -857,6 +861,7 @@ Item {
                                 : "The selected API (" + settingsWindow.pendingAudioDeviceType
                                     + ") has no outputs. Available outputs are listed below; choose an API with devices."
                             color: UiTheme.textDim
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 12
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
@@ -865,6 +870,7 @@ Item {
                             visible: settingsWindow.audioBackendOutputSummary.length > 0
                             text: "API outputs: " + settingsWindow.audioBackendOutputSummary.join("  |  ")
                             color: UiTheme.textDim
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 11
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
@@ -884,6 +890,7 @@ Item {
                               Text {
                                   text: "Sound API"
                                   color: UiTheme.textLabel
+                                  font.family: UiTheme.uiFontFamily
                                   font.pixelSize: 12
                                   Layout.preferredWidth: 130
                               }
@@ -915,9 +922,12 @@ Item {
                               columnSpacing: 12
                               rowSpacing: 10
 
-                              Text { text: "Role"; color: UiTheme.textDim; font.pixelSize: 11 }
-                              Text { text: "Device"; color: UiTheme.textDim; font.pixelSize: 11 }
-                              Text { text: "Channels"; color: UiTheme.textDim; font.pixelSize: 11 }
+                              Text { text: "Role"; color: UiTheme.textDim; font.family: UiTheme.uiFontFamily
+                    font.pixelSize: 11 }
+                              Text { text: "Device"; color: UiTheme.textDim; font.family: UiTheme.uiFontFamily
+                    font.pixelSize: 11 }
+                              Text { text: "Channels"; color: UiTheme.textDim; font.family: UiTheme.uiFontFamily
+                    font.pixelSize: 11 }
 
                               Repeater {
                                   id: audioRoleRepeater
@@ -934,6 +944,7 @@ Item {
                             Text {
                                 text: settingsWindow.isJackDeviceSelected ? "Sample Rate (JACK)" : "Sample Rate"
                                 color: UiTheme.textLabel
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 12
                                 Layout.preferredWidth: 130
                             }
@@ -954,6 +965,7 @@ Item {
                                              : "JACK server")
                                           : (sampleRateCombo.currentIndex >= 0 ? sampleRateCombo.displayText : "44.1 kHz")
                                     color: UiTheme.textSecondary
+                                    font.family: UiTheme.uiFontFamily
                                     font.pixelSize: 12
                                     verticalAlignment: Text.AlignVCenter
                                     leftPadding: 12
@@ -965,6 +977,7 @@ Item {
                                     contentItem: Text {
                                         text: modelData.label
                                         color: UiTheme.textSecondary
+                                        font.family: UiTheme.uiFontFamily
                                         font.pixelSize: 12
                                         elide: Text.ElideRight
                                         verticalAlignment: Text.AlignVCenter
@@ -990,6 +1003,7 @@ Item {
                             Text {
                                 text: settingsWindow.isJackDeviceSelected ? "Server Frames / Period" : "Buffer Size"
                                 color: UiTheme.textLabel
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 12
                                 Layout.preferredWidth: 130
                             }
@@ -1006,6 +1020,7 @@ Item {
                                 contentItem: Text {
                                     text: bufferSizeCombo.currentIndex >= 0 ? bufferSizeCombo.displayText : "512 samples"
                                     color: UiTheme.textSecondary
+                                    font.family: UiTheme.uiFontFamily
                                     font.pixelSize: 12
                                     verticalAlignment: Text.AlignVCenter
                                     leftPadding: 12
@@ -1017,6 +1032,7 @@ Item {
                                     contentItem: Text {
                                         text: modelData.label
                                         color: UiTheme.textSecondary
+                                        font.family: UiTheme.uiFontFamily
                                         font.pixelSize: 12
                                         elide: Text.ElideRight
                                         verticalAlignment: Text.AlignVCenter
@@ -1041,6 +1057,7 @@ Item {
                             Text {
                                 text: "Keylock Engine"
                                 color: UiTheme.textLabel
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 12
                                 Layout.preferredWidth: 130
                             }
@@ -1061,6 +1078,7 @@ Item {
                         Text {
                             text: "Signalsmith is the default keylock engine. The selection applies to all decks immediately; Rubber Band remains available for compatibility."
                             color: UiTheme.textDim
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
@@ -1071,6 +1089,7 @@ Item {
                                 ? "JACK sample rate and frames/period follow the server. Configure latency in JACK/PipeWire; the active value is shown after Apply."
                                 : "Use the lowest stable buffer your device supports. On Windows, ASIO will appear here when available; on macOS and Linux this lists the active system audio backends and outputs."
                             color: settingsWindow.isJackDeviceSelected ? UiTheme.warning : UiTheme.textDim
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
@@ -1097,6 +1116,7 @@ Item {
                                 contentItem: Text {
                                     text: parent.text
                                     color: UiTheme.textPrimary
+                                    font.family: UiTheme.uiFontFamily
                                     font.pixelSize: 12
                                     font.bold: true
                                     horizontalAlignment: Text.AlignHCenter
@@ -1111,6 +1131,7 @@ Item {
                             id: audioApplyStatus
                             text: ""
                             color: UiTheme.green
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 11
                             wrapMode: Text.WordWrap
                             Layout.fillWidth: true
@@ -1239,6 +1260,7 @@ Item {
                     Text {
                         text: "MIDI Controller"
                         color: UiTheme.textPrimary
+                        font.family: UiTheme.uiFontFamily
                         font.pixelSize: 18
                         font.bold: true
                     }
@@ -1256,6 +1278,7 @@ Item {
                         Text {
                             text: "MIDI Output"
                             color: UiTheme.textLabel
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
                         }
@@ -1270,6 +1293,7 @@ Item {
                             contentItem: Text {
                                 text: midiOutputDeviceCombo.currentIndex >= 0 ? midiOutputDeviceCombo.displayText : "No MIDI output"
                                 color: UiTheme.textSecondary
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 12
                                 verticalAlignment: Text.AlignVCenter
                                 leftPadding: 12
@@ -1281,6 +1305,7 @@ Item {
                                 contentItem: Text {
                                     text: model.text
                                     color: UiTheme.textSecondary
+                                    font.family: UiTheme.uiFontFamily
                                     font.pixelSize: 12
                                     elide: Text.ElideRight
                                     verticalAlignment: Text.AlignVCenter
@@ -1315,6 +1340,7 @@ Item {
                         Text {
                             text: "Integrated Controller"
                             color: UiTheme.textLabel
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
                         }
@@ -1348,6 +1374,7 @@ Item {
                                 Text {
                                     text: "This computer is on"
                                     color: UiTheme.textLabel
+                                    font.family: UiTheme.uiFontFamily
                                     font.pixelSize: 11
                                 }
 
@@ -1368,6 +1395,7 @@ Item {
                                       + "Set it so channels switched to the other USB port or LINE "
                                       + "are paused and silenced here; while Unknown, no channel is touched."
                                 color: UiTheme.textLabel
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 11
                                 wrapMode: Text.WordWrap
                                 Layout.fillWidth: true
@@ -1376,6 +1404,7 @@ Item {
                             Text {
                                 text: controllerManager ? controllerManager.flx10Status : ""
                                 color: controllerManager && controllerManager.flx10Connected ? UiTheme.green : UiTheme.textLabel
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 11
                                 wrapMode: Text.WordWrap
                                 Layout.fillWidth: true
@@ -1395,6 +1424,7 @@ Item {
                         Text {
                             text: "Controller Device"
                             color: UiTheme.textLabel
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
                         }
@@ -1409,6 +1439,7 @@ Item {
                             contentItem: Text {
                                 text: midiDeviceCombo.currentIndex >= 0 ? midiDeviceCombo.displayText : "No MIDI device"
                                 color: UiTheme.textSecondary
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 12
                                 verticalAlignment: Text.AlignVCenter
                                 leftPadding: 12
@@ -1420,6 +1451,7 @@ Item {
                                 contentItem: Text {
                                     text: model.text
                                     color: UiTheme.textSecondary
+                                    font.family: UiTheme.uiFontFamily
                                     font.pixelSize: 12
                                     elide: Text.ElideRight
                                     verticalAlignment: Text.AlignVCenter
@@ -1455,6 +1487,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: UiTheme.textPrimary
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 16
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -1476,6 +1509,7 @@ Item {
                         Text {
                             text: "Mapping File"
                             color: UiTheme.textLabel
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
                         }
@@ -1490,6 +1524,7 @@ Item {
                             contentItem: Text {
                                 text: mappingCombo.currentIndex >= 0 ? mappingCombo.displayText : "No Mapping"
                                 color: UiTheme.textSecondary
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 12
                                 verticalAlignment: Text.AlignVCenter
                                 leftPadding: 12
@@ -1501,6 +1536,7 @@ Item {
                                 contentItem: Text {
                                     text: model.text
                                     color: UiTheme.textSecondary
+                                    font.family: UiTheme.uiFontFamily
                                     font.pixelSize: 12
                                     elide: Text.ElideRight
                                     verticalAlignment: Text.AlignVCenter
@@ -1539,6 +1575,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: UiTheme.textPrimary
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 16
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -1554,6 +1591,7 @@ Item {
                         Text {
                             text: "LED Tests"
                             color: UiTheme.textLabel
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
                         }
@@ -1589,6 +1627,7 @@ Item {
                     Text {
                         text: midiManager ? "Mapping-Ordner: " + midiManager.getMappingsDirectoryPath() : ""
                         color: UiTheme.textDim
+                        font.family: UiTheme.uiFontFamily
                         font.pixelSize: 11
                         elide: Text.ElideMiddle
                         Layout.fillWidth: true
@@ -1598,6 +1637,7 @@ Item {
                         text: "MIDI Devices: " + (midiSettingsColumn.hasMidiDevices ? midiSettingsColumn.midiDeviceList.length : 0)
                               + " | Mappings: " + midiSettingsColumn.availableMappingCount
                         color: UiTheme.textMuted
+                        font.family: UiTheme.uiFontFamily
                         font.pixelSize: 10
                         Layout.fillWidth: true
                     }
@@ -1620,6 +1660,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: UiTheme.textPrimary
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 12
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -1658,6 +1699,7 @@ Item {
                                 anchors.verticalCenter: parent.verticalCenter
                                 text: "MIDI IN:"
                                 color: UiTheme.textDim
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 10
                                 font.bold: true
                                 font.letterSpacing: 0.5
@@ -1694,6 +1736,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: UiTheme.blue
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 12
                                 font.bold: true
                                 horizontalAlignment: Text.AlignHCenter
@@ -1730,6 +1773,7 @@ Item {
                     Text {
                         text: "Library"
                         color: UiTheme.textPrimary
+                        font.family: UiTheme.uiFontFamily
                         font.pixelSize: 18
                         font.bold: true
                     }
@@ -1748,6 +1792,7 @@ Item {
                         Text {
                             text: "Music Folder"
                             color: UiTheme.textLabel
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 12
                             Layout.preferredWidth: 130
                         }
@@ -1781,6 +1826,7 @@ Item {
                                 anchors.centerIn: parent
                                 text: "Browse"
                                 color: UiTheme.textSecondary
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 11
                             }
 
@@ -1862,6 +1908,7 @@ Item {
                         Text {
                             text: "DJ / Sync"
                             color: UiTheme.textPrimary
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 18
                             font.bold: true
                         }
@@ -1876,6 +1923,7 @@ Item {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             color: UiTheme.textSecondary
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 12
                             text: "When the same file plays on two synced decks, waveforms may align on the beat grid but not sample-for-sample. Summing them in the mixer can cause comb filtering (thin/hollow bass). Nudge one deck, use EQ, or polarity invert (−) on one channel."
                         }
@@ -1887,6 +1935,7 @@ Item {
                             Text {
                                 text: "Tight Double (same-file sample align)"
                                 color: UiTheme.textPrimary
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 12
                                 Layout.fillWidth: true
                                 wrapMode: Text.WordWrap
@@ -1894,6 +1943,22 @@ Item {
 
                             Switch {
                                 id: tightDoubleSwitch
+                                indicator: Rectangle {
+                                    implicitWidth: 40
+                                    implicitHeight: 20
+                                    x: tightDoubleSwitch.leftPadding
+                                    y: (tightDoubleSwitch.height - height) / 2
+                                    radius: 0
+                                    color: tightDoubleSwitch.checked ? UiTheme.blueDim : UiTheme.surfaceInset
+                                    border.color: tightDoubleSwitch.visualFocus ? UiTheme.focus : UiTheme.borderSubtle
+                                    Rectangle {
+                                        x: tightDoubleSwitch.visualPosition * (parent.width - width - 4) + 2
+                                        y: 2
+                                        width: 16; height: 16
+                                        radius: 0
+                                        color: tightDoubleSwitch.checked ? UiTheme.blue : UiTheme.textSecondary
+                                    }
+                                }
                                 checked: typeof settingsManager !== "undefined"
                                          && settingsManager
                                          ? settingsManager.tightDoubleSync
@@ -1909,6 +1974,7 @@ Item {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             color: UiTheme.textDim
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 11
                             text: "Optional: when SYNC is on and two decks share the same file, the follower trims transport position toward the master (including keylock latency). Off by default — normal beat/bar sync is unchanged."
                         }
@@ -1920,6 +1986,7 @@ Item {
                             Text {
                                 text: "Waveform rendering"
                                 color: UiTheme.textPrimary
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 12
                                 Layout.fillWidth: true
                             }
@@ -1942,6 +2009,7 @@ Item {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             color: UiTheme.textDim
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 11
                             text: "Changes visible waveform tiles and overviews only. Audio analysis, beatgrids and playback caches are not rebuilt."
                         }
@@ -1952,6 +2020,7 @@ Item {
                             Text {
                                 text: "Playhead position"
                                 color: UiTheme.textPrimary
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 12
                                 Layout.fillWidth: true
                             }
@@ -1979,6 +2048,7 @@ Item {
                             Layout.fillWidth: true
                             wrapMode: Text.WordWrap
                             color: UiTheme.textSecondary
+                            font.family: UiTheme.uiFontFamily
                             font.pixelSize: 11
                             text: "Move the white playhead left to see more upcoming audio. Applies to all scrolling waveforms and is saved automatically."
                         }
@@ -2002,6 +2072,7 @@ Item {
                     Text {
                         text: "Legal Notices"
                         color: UiTheme.textPrimary
+                        font.family: UiTheme.uiFontFamily
                         font.pixelSize: 18
                         font.bold: true
                     }
@@ -2016,6 +2087,7 @@ Item {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         color: UiTheme.textSecondary
+                        font.family: UiTheme.uiFontFamily
                         font.pixelSize: 12
                         text: "This software is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0-or-later)."
                     }
@@ -2024,6 +2096,7 @@ Item {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         color: UiTheme.textLabel
+                        font.family: UiTheme.uiFontFamily
                         font.pixelSize: 12
                         text: "You are entitled to receive the corresponding source code under the terms of the AGPL."
                     }
@@ -2032,6 +2105,7 @@ Item {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         color: UiTheme.textLabel
+                        font.family: UiTheme.uiFontFamily
                         font.pixelSize: 12
                         text: "Source repository: https://github.com/TimoRams/multiplatform-dj-software"
                     }
@@ -2040,6 +2114,7 @@ Item {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         color: UiTheme.textLabel
+                        font.family: UiTheme.uiFontFamily
                         font.pixelSize: 12
                         text: "License and third-party notices are documented in the NOTICE file."
                     }
@@ -2062,6 +2137,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: UiTheme.textPrimary
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 12
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter
@@ -2084,6 +2160,7 @@ Item {
                             contentItem: Text {
                                 text: parent.text
                                 color: UiTheme.textPrimary
+                                font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 12
                                 horizontalAlignment: Text.AlignHCenter
                                 verticalAlignment: Text.AlignVCenter

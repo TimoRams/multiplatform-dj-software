@@ -8,6 +8,11 @@ Controls.Button {
 
     readonly property var hostWindow: control.Window.window
     property bool useViewportScaling: false
+    property bool touchTarget: !!hostWindow && hostWindow.allInOneMode === true
+    property bool emphasized: checked
+    property int labelSize: 12
+    Accessible.name: text
+    focusPolicy: Qt.StrongFocus
     property color accentColor: UiTheme.blue
 
     function sp(px) {
@@ -17,7 +22,7 @@ Controls.Button {
         return (typeof hostWindow.sp === "function") ? hostWindow.sp(px) : px
     }
 
-    implicitHeight: Math.max(22, sp(22))
+    implicitHeight: touchTarget ? UiTheme.touchTarget : Math.max(UiTheme.controlHeightNormal, sp(30))
     implicitWidth:  Math.max(48, contentItem ? contentItem.implicitWidth + leftPadding + rightPadding : 64)
     padding:        0
     leftPadding:    Math.max(8, Math.round(implicitHeight * 0.28))
@@ -26,9 +31,11 @@ Controls.Button {
     bottomPadding:  0
 
     background: Rectangle {
-        radius: 0
-        color:  UiTheme.buttonBg(control.checked || control.down, control.hovered, control.down)
-        border.color: control.visualFocus ? control.accentColor
+        radius: UiTheme.radiusSmall
+        color: control.down ? UiTheme.controlHover
+               : control.emphasized ? Qt.tint(UiTheme.surface, Qt.rgba(control.accentColor.r, control.accentColor.g, control.accentColor.b, 0.14))
+               : control.hovered ? UiTheme.controlHover : UiTheme.surfaceRaised
+        border.color: control.visualFocus ? UiTheme.focus
                       : (control.hovered ? UiTheme.borderHover : UiTheme.borderSubtle)
 
         Rectangle {
@@ -39,7 +46,7 @@ Controls.Button {
             anchors.rightMargin: 1
             anchors.bottomMargin: 1
             height: 2
-            visible: control.enabled && (control.checked || control.down)
+            visible: control.enabled && (control.emphasized || control.down)
             color: control.accentColor
         }
     }
@@ -47,9 +54,9 @@ Controls.Button {
     contentItem: Text {
         text:               control.text
         color:              control.enabled
-                            ? (control.checked || control.down ? UiTheme.textPrimary : UiTheme.textSecondary)
+                            ? (control.emphasized || control.down ? UiTheme.textPrimary : UiTheme.textSecondary)
                             : UiTheme.textMuted
-        font.pixelSize:     control.sp(12)
+        font.pixelSize:     control.sp(control.labelSize)
         font.family:        UiTheme.uiFontFamily
         font.weight:        Font.Medium
         renderType:         Text.QtRendering

@@ -357,7 +357,7 @@ Item {
             Rectangle {
                 width: 22
                 height: 22
-                radius: 11
+                radius: UiTheme.radiusSmall
                 color: UiTheme.orangeDim
                 anchors.verticalCenter: parent.verticalCenter
 

@@ -6,7 +6,7 @@ import DJSoftware
 
 Rectangle {
     id: root
-    color: "#171c24"
+    color: UiTheme.navigationSurface
     // The expanded tray deliberately paints below this fixed-height item as an
     // overlay.  Keeping it unclipped prevents the workspace from being moved.
     clip: false
@@ -15,8 +15,9 @@ Rectangle {
     // The first row remains fixed while the pull-down quick-access tray opens.
     readonly property int collapsedHeight: UiTheme.toolbarHeight
 
-    readonly property bool compactBar: width < 1050
-    readonly property color barHover: "#242c38"
+    readonly property bool compactBar: width / UiTheme.scale < 1100
+    readonly property bool compactHardwareBar: compactBar && !!root.Window.window && root.Window.window.allInOneMode === true
+    readonly property color barHover: UiTheme.controlHover
     signal searchRequested()
 
     // ── Sizing helpers ───────────────────────────────────────────────────────
@@ -46,7 +47,7 @@ Rectangle {
 
     readonly property var viewToggleDefinitions: [
         { label: "Scrolling Waveforms", propertyName: "showWaveforms", defaultOn: true },
-        { label: "Development Controls", propertyName: "showDevelopmentControls", defaultOn: true },
+        { label: "Development Controls", propertyName: "showDevelopmentControls", defaultOn: false },
         { label: "Deck A", propertyName: "showDeckA", defaultOn: true },
         { label: "Deck B", propertyName: "showDeckB", defaultOn: true },
         { label: "Mixer", propertyName: "showMixer", defaultOn: true, hidden: true },
@@ -99,7 +100,7 @@ Rectangle {
             id: togglePill
             width: 24
             height: 12
-            radius: 6
+            radius: 0
             anchors.verticalCenter: parent.verticalCenter
             anchors.right: parent.right
             anchors.rightMargin: 12
@@ -108,7 +109,7 @@ Rectangle {
             Rectangle {
                 width: 8
                 height: 8
-                radius: 4
+                radius: 0
                 color: UiTheme.textPrimary
                 y: 2
                 x: toggleCard.on ? parent.width - 10 : 2
@@ -125,59 +126,7 @@ Rectangle {
         }
     }
 
-    component StatusIcon: Canvas {
-        property string kind: "unknown"
-        property color ink: UiTheme.textSecondary
-        onKindChanged: requestPaint()
-        onInkChanged: requestPaint()
-        onPaint: {
-            const c = getContext("2d")
-            c.reset()
-            c.scale(width / 20, height / 20)
-            c.strokeStyle = ink
-            c.lineWidth = 1.5
-            c.lineCap = "round"
-            c.lineJoin = "round"
-            c.beginPath()
-            if (kind === "bluetooth") {
-                c.moveTo(9, 2); c.lineTo(15, 7); c.lineTo(5, 15)
-                c.moveTo(5, 5); c.lineTo(15, 13); c.lineTo(9, 18); c.lineTo(9, 2)
-            } else if (kind === "wifi") {
-                c.arc(10, 17, 14, -2.35, -0.79)
-                c.moveTo(3, 10); c.arc(10, 17, 10, -2.35, -0.79)
-                c.moveTo(6, 13); c.arc(10, 17, 6, -2.35, -0.79)
-                c.moveTo(9, 17); c.lineTo(11, 17)
-            } else if (kind === "search") {
-                c.arc(8, 8, 5, 0, Math.PI * 2)
-                c.moveTo(12, 12); c.lineTo(17, 17)
-            } else if (kind === "library") {
-                c.rect(3, 3, 3, 14); c.rect(8, 3, 3, 14)
-                c.moveTo(13, 4); c.lineTo(16, 3); c.lineTo(19, 16); c.lineTo(16, 17); c.closePath()
-            } else if (kind === "computer") {
-                c.rect(2, 3, 16, 11)
-                c.moveTo(10, 14); c.lineTo(10, 18)
-                c.moveTo(6, 18); c.lineTo(14, 18)
-            } else if (kind === "ethernet") {
-                c.rect(3, 2, 14, 10)
-                c.moveTo(10, 12); c.lineTo(10, 17)
-                c.moveTo(3, 17); c.lineTo(17, 17)
-                c.moveTo(3, 15); c.lineTo(3, 19)
-                c.moveTo(17, 15); c.lineTo(17, 19)
-            } else if (kind === "usb") {
-                c.moveTo(10, 18); c.lineTo(10, 2)
-                c.moveTo(7, 5); c.lineTo(10, 2); c.lineTo(13, 5)
-                c.moveTo(10, 13); c.lineTo(5, 10); c.lineTo(5, 7)
-                c.moveTo(10, 10); c.lineTo(15, 8); c.lineTo(15, 5)
-                c.rect(14, 3, 2, 2)
-            } else {
-                c.arc(10, 10, 8, 0, Math.PI * 2)
-                c.moveTo(2, 10); c.lineTo(18, 10)
-                c.moveTo(10, 2); c.bezierCurveTo(4, 7, 4, 13, 10, 18)
-                c.bezierCurveTo(16, 13, 16, 7, 10, 2)
-            }
-            c.stroke()
-        }
-    }
+    component StatusIcon: UiIcon {}
 
     // ── State ────────────────────────────────────────────────────────────────
     property string selectedSourceType: "local"
@@ -665,7 +614,7 @@ Rectangle {
             Layout.preferredWidth: root.btnH
             Layout.preferredHeight: root.btnH
             Layout.fillHeight: true
-            color: sourceMouse.containsMouse || selected ? UiTheme.inspectorInset : root.barBg
+            color: sourceMouse.containsMouse || selected ? UiTheme.inspectorInset : UiTheme.navigationSurface
             Rectangle {
                 anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
                 height: 2
@@ -689,7 +638,7 @@ Rectangle {
             }
             ToolTip.visible: sourceMouse.containsMouse
             ToolTip.delay: 600
-            ToolTip.text: root.selectedSourceName
+            ToolTip.text: "Source · " + root.selectedSourceName
             MouseArea {
                 id: sourceMouse
                 anchors.fill: parent
@@ -701,6 +650,7 @@ Rectangle {
 
         // ── Branding ─────────────────────────────────────────────────────────
         Item {
+            visible: !root.compactHardwareBar
             Layout.preferredWidth: brandRow.implicitWidth + root.padH * 2
             Layout.fillHeight: true
 
@@ -727,26 +677,32 @@ Rectangle {
         // ── Separator ────────────────────────────────────────────────────────
         Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; Layout.alignment: Qt.AlignVCenter; color: UiTheme.separatorSubtle }
 
+        Button {
+            objectName: "performanceNavigation"
+            Layout.preferredWidth: root.compactBar ? 64 : 100
+            Layout.fillHeight: true
+            text: root.compactBar ? "Live" : "Performance"
+            labelSize: 11
+            checked: root.Window.window && root.Window.window.activeMainTab === "performance"
+            onClicked: if (root.Window.window) {
+                root.Window.window.activeMainTab = "performance"
+                root.Window.window.closeTopBarPullDown()
+            }
+        }
+
         // ── Primary navigation ───────────────────────────────────────────────
-        Rectangle {
+        Button {
             id: libraryButton
-            Layout.preferredWidth: root.compactBar ? 38 : 88
+            objectName: "libraryNavigation"
+            Layout.preferredWidth: root.compactBar ? 64 : 88
             Layout.fillHeight: true
             readonly property bool active: root.Window.window
-                                           ? (root.Window.window.allInOneMode
-                                              ? root.Window.window.libraryPanelActive
-                                              : root.Window.window.showLibrary)
-                                           : false
-            color: libraryMouse.pressed ? UiTheme.buttonBg(false, false, true)
-                 : libraryMouse.containsMouse ? root.barHover : "transparent"
-            Row {
-                anchors.centerIn: parent
-                spacing: 5
-                StatusIcon { kind: "library"; ink: libraryButton.active ? UiTheme.blue : UiTheme.textLabel; width: 18; height: 18; anchors.verticalCenter: parent.verticalCenter }
-                Text { visible: !root.compactBar; text: "Library"; color: libraryButton.active ? UiTheme.textPrimary : UiTheme.textSecondary; font.pixelSize: root.sp(11); font.bold: true; font.letterSpacing: 0.2; anchors.verticalCenter: parent.verticalCenter }
-            }
-            Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 2; visible: libraryButton.active; color: root.accentBlue }
-            MouseArea { id: libraryMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: if (root.Window.window) root.Window.window.toggleAllInOneLibrary() }
+                ? (root.Window.window.allInOneMode ? root.Window.window.libraryPanelActive : root.Window.window.showLibrary)
+                : false
+            checked: active
+            text: "Library"
+            labelSize: 11
+            onClicked: if (root.Window.window) root.Window.window.toggleAllInOneLibrary()
         }
 
         Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; Layout.alignment: Qt.AlignVCenter; color: UiTheme.separatorSubtle }
@@ -765,6 +721,20 @@ Rectangle {
             MouseArea { id: searchMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: root.searchRequested() }
         }
 
+        Button {
+            objectName: "settingsNavigation"
+            Layout.preferredWidth: root.compactBar ? 68 : 88
+            Layout.fillHeight: true
+            text: "Settings"
+            labelSize: 11
+            checked: root.Window.window && root.Window.window.settingsPanelActive
+            onClicked: if (root.Window.window) {
+                if (!root.Window.window.toggleAllInOneSettings())
+                    root.showStandaloneSettings()
+                root.Window.window.closeTopBarPullDown()
+            }
+        }
+
         // Balance the larger output/status group while reserving meter space.
         Item { Layout.fillWidth: true; Layout.preferredWidth: 180 }
         Item {
@@ -779,6 +749,7 @@ Rectangle {
 
         // ── Master volume ─────────────────────────────────────────────────────
         Rectangle {
+            visible: !root.compactHardwareBar
             Layout.preferredWidth: root.compactBar ? 58 : 100
             Layout.fillHeight: true
             color: "transparent"
@@ -877,6 +848,7 @@ Rectangle {
         // ── Headphone cue ────────────────────────────────────────────────────
         Rectangle {
             id: headphoneCueBlock
+            visible: !root.compactHardwareBar
             Layout.preferredWidth: root.compactBar ? 88 : 112
             Layout.fillHeight: true
             color: "transparent"
@@ -1095,7 +1067,7 @@ Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
                     spacing: 3
                     Rectangle {
-                        width: 4; height: 4; radius: 2
+                        width: 4; height: 4; radius: 0
                         anchors.verticalCenter: parent.verticalCenter
                         color: linkBlock.on ? UiTheme.play : UiTheme.separatorSubtle
                     }
@@ -1126,7 +1098,7 @@ Rectangle {
                             required property int index
                             width: 7
                             height: 2
-                            radius: 1
+                            radius: 0
                             color: linkBlock.on && index === linkBlock.beatIndex ? UiTheme.play : UiTheme.surfaceInset
                         }
                     }
@@ -1263,7 +1235,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
                 Layout.preferredHeight: 44
-            radius: 5
+            radius: 0
             border.width: 1
             border.color: UiTheme.borderSubtle
             color: viewBtnMouse.pressed ? UiTheme.surfaceRaised : (viewBtnMouse.containsMouse ? UiTheme.panelRaised : UiTheme.panel)
@@ -1301,7 +1273,7 @@ Rectangle {
                 Layout.preferredHeight: 44
             property bool on: false
             property real gr: deckA ? deckA.gainReduction : 1.0
-            radius: 5
+            radius: 0
             border.width: 1
             border.color: on ? UiTheme.green : UiTheme.borderSubtle
             color: UiTheme.panel
@@ -1344,7 +1316,7 @@ Rectangle {
                 Layout.preferredWidth: 1
                 Layout.fillHeight: true
                 Layout.preferredHeight: 44
-                radius: 5
+                radius: 0
                 border.width: 1
                 border.color: UiTheme.borderSubtle
                 color: UiTheme.buttonBg(false, false, quickModeMouse.pressed)
@@ -1367,7 +1339,7 @@ Rectangle {
                 Layout.preferredWidth: 1
                 Layout.fillHeight: true
                 Layout.preferredHeight: 44
-                radius: 5
+                radius: 0
                 border.width: 1
                 border.color: UiTheme.borderSubtle
                 color: UiTheme.buttonBg(false, false, quickLibraryMouse.pressed)
@@ -1390,7 +1362,7 @@ Rectangle {
                 Layout.preferredWidth: 1
                 Layout.fillHeight: true
                 Layout.preferredHeight: 44
-                radius: 5
+                radius: 0
                 border.width: 1
                 border.color: UiTheme.borderSubtle
                 color: UiTheme.buttonBg(false, false, quickSourceMouse.pressed)
@@ -1412,7 +1384,7 @@ Rectangle {
                 Layout.preferredWidth: 1
                 Layout.fillHeight: true
                 Layout.preferredHeight: 44
-                radius: 5
+                radius: 0
                 border.width: 1
                 border.color: UiTheme.borderSubtle
                 color: UiTheme.buttonBg(false, false, quickPerformanceMouse.pressed)
@@ -1436,7 +1408,7 @@ Rectangle {
                 Layout.preferredWidth: 1
                 Layout.fillHeight: true
                 Layout.preferredHeight: 44
-                radius: 5
+                radius: 0
                 border.width: 1
                 border.color: UiTheme.borderSubtle
                 readonly property bool active: root.Window.window ? root.Window.window.settingsPanelActive : false
@@ -1468,7 +1440,7 @@ Rectangle {
                 Layout.preferredWidth: 1
                 Layout.fillHeight: true
                 Layout.preferredHeight: 44
-                radius: 5
+                radius: 0
                 border.width: 1
                 border.color: UiTheme.borderSubtle
                 color: UiTheme.buttonBg(false, false, quickFullscreenMouse.pressed)
@@ -1513,7 +1485,7 @@ Rectangle {
             anchors.centerIn: parent
             width: gripMouse.pressed || gripMouse.containsMouse ? 54 : 42
             height: 4
-            radius: 2
+            radius: 0
             color: gripMouse.pressed || gripMouse.containsMouse ? grip.activeColor : grip.idleColor
             Behavior on width { NumberAnimation { duration: 120 } }
             Behavior on color { ColorAnimation { duration: 120 } }
@@ -1589,7 +1561,7 @@ Rectangle {
         z: 11
         width: meterSlot.width
         height: 28
-        radius: 4
+        radius: 0
         color: "#0e131b"
         border.width: 1
         border.color: clipHold > 0 ? UiTheme.error : UiTheme.borderSubtle
@@ -1641,7 +1613,7 @@ Rectangle {
                         required property int index
                         width: root.compactBar ? 3 : 5
                         height: 4
-                        radius: 1
+                        radius: 0
                         readonly property int litCount: centerMeter.litSegments(centerMeter.displayL)
                         color: index < litCount ? centerMeter.segColor(index) : UiTheme.knobTrack
                     }
@@ -1656,7 +1628,7 @@ Rectangle {
                         required property int index
                         width: root.compactBar ? 3 : 5
                         height: 4
-                        radius: 1
+                        radius: 0
                         readonly property int litCount: centerMeter.litSegments(centerMeter.displayR)
                         color: index < litCount ? centerMeter.segColor(index) : UiTheme.knobTrack
                     }
@@ -1672,7 +1644,7 @@ Rectangle {
                         required property int index
                         width: 7
                         height: 2
-                        radius: 1
+                        radius: 0
                         readonly property bool deckABeat: index < 4
                         readonly property int beatIndex: index % 4
                         readonly property var inf: deckABeat ? root.deckBeatInfo(deckA) : root.deckBeatInfo(deckB)

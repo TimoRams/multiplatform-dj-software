@@ -1,4 +1,5 @@
 #include <QGuiApplication>
+#include <QDir>
 #include <QMouseEvent>
 #include <QColor>
 #include <QQmlComponent>
@@ -2861,7 +2862,6 @@ bool qmlMergeRuntimeTests()
         }
         return require(reachable, "every sidebar action is reachable without horizontal scrolling");
     };
-    std::vector<std::pair<int, qreal>> widthsAtFixedHeight;
     for (int width : {800, 1280, 1920}) {
         for (int height : {180, 240, 320, 399, 400, 420, 800, 2160, 240, 600}) {
             performanceWindow.resize(width, height);
@@ -2869,14 +2869,9 @@ bool qmlMergeRuntimeTests()
             performance->setProperty("leftPanel", "deck");
             QTest::qWait(220);
             const qreal sidebarWidth = performance->property("panelWidth").toDouble();
-            if (width == 800) widthsAtFixedHeight.emplace_back(height, sidebarWidth);
-            else {
-                const auto previous = std::find_if(widthsAtFixedHeight.begin(), widthsAtFixedHeight.end(),
-                    [height](const auto& sample) { return sample.first == height; });
-                ok &= require(previous != widthsAtFixedHeight.end()
-                                  && std::abs(sidebarWidth - previous->second) < 0.01,
-                              "widening the viewport does not enlarge the song-info or FX sidebars");
-            }
+            const qreal expectedPanelWidth = width >= 1600 && height >= 700 ? 232 : 208;
+            ok &= require(std::abs(sidebarWidth - expectedPanelWidth) < 0.01,
+                          "sidebar width follows the bounded display profile rather than stretching with the viewport");
             for (auto* fittedPanel : {quickA, quickB, beatFxPanel}) {
                 auto* viewport = fittedPanel->findChild<QObject*>(
                     fittedPanel == beatFxPanel ? "fxScroll" : "deckScroll");
@@ -2986,6 +2981,27 @@ bool qmlMergeRuntimeTests()
                           << beatFxPanel->findChild<QObject*>(QStringLiteral("fxScroll"))
                                  ->property("contentHeight").toDouble() << '\n';
             }
+        }
+    }
+
+    for (const QSize viewport : {QSize(1280, 800), QSize(1920, 720), QSize(2560, 1080), QSize(1024, 600)}) {
+        performanceWindow.resize(viewport);
+        performanceItem->setSize(viewport);
+        performance->setProperty("leftPanel", "deck");
+        performance->setProperty("rightPanelOpen", true);
+        QTest::qWait(220);
+        auto* waveformArea = performance->findChild<QQuickItem*>("waveformBacking");
+        const bool docked = performance->property("dockPanels").toBool();
+        ok &= require(docked == (viewport.width() >= 1600 && viewport.height() >= 700),
+                      "wide panels dock and compact panels return to overlay on live resize");
+        ok &= require(waveformArea && waveformArea->width() >= (docked ? 900 : viewport.width()) - 1,
+                      "docked panels preserve the waveform reading area");
+        const QString captureDir = qEnvironmentVariable("BROCKDJ_UI_CAPTURE_DIR");
+        if (!captureDir.isEmpty()) {
+            QDir().mkpath(captureDir);
+            QTest::qWait(50);
+            ok &= require(performanceWindow.grabWindow().save(captureDir + QString("/performance-%1x%2.png")
+                .arg(viewport.width()).arg(viewport.height())), "performance reference capture saves");
         }
     }
 
@@ -3267,6 +3283,16 @@ bool qmlMergeRuntimeTests()
                           "widening the lower deck row preserves control metrics and native item scale");
         }
 
+        const QString captureDir = qEnvironmentVariable("BROCKDJ_UI_CAPTURE_DIR");
+        if (!captureDir.isEmpty()) {
+            QDir().mkpath(captureDir);
+            fit(1280);
+            infoWindow.show();
+            QTest::qWait(50);
+            ok &= require(infoWindow.grabWindow().save(captureDir + "/deck-information.png"),
+                          "deck information reference capture saves");
+        }
+
     }
 
     {
@@ -3307,6 +3333,12 @@ bool qmlMergeRuntimeTests()
                           && deviceLibrary->property("selectedDeviceId").toString() == "usb-test",
                       "controller source navigation still opens the selected USB library");
 
+        const QString captureDir = qEnvironmentVariable("BROCKDJ_UI_CAPTURE_DIR");
+        if (!captureDir.isEmpty()) {
+            QTest::qWait(50);
+            ok &= require(sourceWindow.grabWindow().save(captureDir + "/sources.png"),
+                          "source reference capture saves");
+        }
         deviceLibrary->setProperty("devices", QVariantList{});
     }
 
@@ -3437,6 +3469,106 @@ bool qmlMergeRuntimeTests()
 }
 }
 
+bool designSystemRuntimeTests()
+{
+    QQmlEngine engine;
+    auto host = createQmlObject(engine, QStringLiteral(R"(
+        import QtQuick
+        import DJSoftware
+        QtObject {
+            function profile(w, h, factor) { return UiTheme.layoutProfile(w, h, factor) }
+            function labelSize(h, factor) { return UiTheme.fontSize(10, h, factor) }
+            readonly property color background: UiTheme.surfaceRaised
+            readonly property var foregrounds: [UiTheme.textPrimary, UiTheme.textSecondary,
+                                                UiTheme.textLabel, UiTheme.textDim]
+        }
+    )"), "design-system production helpers instantiate");
+    if (!host) return false;
+    bool ok = true;
+    for (const auto size : {QSize(800, 600), QSize(1024, 600), QSize(1280, 720),
+             QSize(1280, 800), QSize(1920, 720), QSize(1920, 1080),
+             QSize(2560, 1080), QSize(2560, 1440), QSize(3840, 2160)}) {
+        for (double factor : {0.8, 1.0, 1.4}) {
+            QVariant value;
+            QMetaObject::invokeMethod(host.get(), "profile", Q_RETURN_ARG(QVariant, value),
+                Q_ARG(QVariant, size.width()), Q_ARG(QVariant, size.height()), Q_ARG(QVariant, factor));
+            const QString expected = size.width() / factor < 1100 || size.height() / factor < 700
+                ? "compact" : size.width() / factor >= 1600 ? "wide" : "standard";
+            ok &= require(value.toString() == expected, "display profiles account for width, height and user scale independently");
+            QMetaObject::invokeMethod(host.get(), "labelSize", Q_RETURN_ARG(QVariant, value),
+                Q_ARG(QVariant, size.height()), Q_ARG(QVariant, factor));
+            ok &= require(value.toDouble() >= 11 * factor,
+                          "labels retain their readability floor at every display profile");
+        }
+    }
+    for (const auto& boundary : {QSize(1099, 800), QSize(1100, 800), QSize(1599, 800),
+                                QSize(1600, 800), QSize(1920, 699), QSize(1920, 700)}) {
+        QVariant value;
+        QMetaObject::invokeMethod(host.get(), "profile", Q_RETURN_ARG(QVariant, value),
+            Q_ARG(QVariant, boundary.width()), Q_ARG(QVariant, boundary.height()), Q_ARG(QVariant, 1.0));
+        const QString expected = boundary.width() < 1100 || boundary.height() < 700
+            ? "compact" : boundary.width() >= 1600 ? "wide" : "standard";
+        ok &= require(value.toString() == expected, "profile boundaries transition without gaps");
+    }
+    const auto luminance = [](const QColor& color) {
+        const auto linear = [](double v) { return v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4); };
+        return 0.2126 * linear(color.redF()) + 0.7152 * linear(color.greenF()) + 0.0722 * linear(color.blueF());
+    };
+    const double background = luminance(host->property("background").value<QColor>());
+    for (const auto& foreground : host->property("foregrounds").toList())
+        ok &= require((luminance(foreground.value<QColor>()) + 0.05) / (background + 0.05) >= 4.5,
+                      "enabled text tokens meet 4.5 to 1 contrast on the raised working surface");
+    return ok;
+}
+
+bool squareControlsRuntimeTests()
+{
+    QQmlEngine engine;
+    QQuickWindow window;
+    window.resize(220, 100);
+    window.setColor(QColor("#ff00ff"));
+    const QString directory = QString::fromUtf8(BROCKDJ_SOURCE_DIR)
+        + QStringLiteral("/src/qml/components/");
+    bool ok = true;
+    for (const QString& name : {QStringLiteral("Button.qml"), QStringLiteral("ComboBox.qml")}) {
+        QQmlComponent component(&engine, QUrl::fromLocalFile(directory + name));
+        std::unique_ptr<QObject> object(component.create());
+        if (!require(object != nullptr, "production square control instantiates")) {
+            std::cerr << component.errorString().toStdString();
+            return false;
+        }
+        auto* control = qobject_cast<QQuickItem*>(object.get());
+        if (!require(control != nullptr, "square control is visual")) return false;
+        control->setParentItem(window.contentItem());
+        control->setPosition(QPointF(20, 20));
+        control->setSize(QSizeF(180, 44));
+        if (name == "Button.qml") object->setProperty("text", QStringLiteral("LOAD A"));
+        window.show();
+        for (bool active : {false, true}) {
+            if (name == "Button.qml") object->setProperty("checked", active);
+            // Focus remains a distinct square outline; neither state rounds corners.
+            control->forceActiveFocus(active ? Qt::TabFocusReason : Qt::OtherFocusReason);
+            QTest::qWait(40);
+            const QImage frame = window.grabWindow();
+            if (!require(!frame.isNull(), "square control renders into a real framebuffer")) return false;
+            const qreal dpr = frame.devicePixelRatio();
+            const QColor corner = frame.pixelColor(qRound(20 * dpr), qRound(20 * dpr));
+            const QColor edge = frame.pixelColor(qRound(100 * dpr), qRound(20 * dpr));
+            ok &= require(corner == edge && corner != window.color(),
+                          "button and selector frames keep filled square corners in normal and keyboard-focus states");
+        }
+        if (name == "Button.qml") {
+            object->setProperty("checked", false);
+            control->setFocus(false);
+            QQmlExpression border(QQmlEngine::contextForObject(object.get()), object.get(),
+                QStringLiteral("background.border.color === UiTheme.borderSubtle"));
+            ok &= require(border.evaluate().toBool() && !border.hasError(),
+                          "inactive buttons retain a subtle outline instead of the bright strong border");
+        }
+    }
+    return ok;
+}
+
 int main(int argc, char** argv)
 {
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
@@ -3445,7 +3577,11 @@ int main(int argc, char** argv)
         qputenv("QT_QUICK_BACKEND", "software");
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
     QGuiApplication app(argc, argv);
+    qmlRegisterType(QUrl::fromLocalFile(QString::fromUtf8(BROCKDJ_SOURCE_DIR)
+        + QStringLiteral("/src/qml/components/UiIcon.qml")), "DJSoftware", 1, 0, "UiIcon");
     bool ok = sliderCleanupTests();
+    ok &= designSystemRuntimeTests();
+    ok &= squareControlsRuntimeTests();
     const auto main = read("src/qml/main.qml");
     ok &= viewportHeightScalingTests(main);
     ok &= sourceViewToggleTests(main);
@@ -3621,7 +3757,7 @@ int main(int argc, char** argv)
                       && occurrences(fxUnit, "accent: root.accentColor") == 2,
                   "merged QML components remain local, independently scoped, and non-nested");
     ok &= require(!qmlManifest.empty()
-                      && occurrences(qmlManifest, "src/qml/") == 22
+                      && occurrences(qmlManifest, "src/qml/") == 23
                       && qmlManifest.find("src/qml/performance/PerformanceBackdrop.qml") != std::string::npos
                       && qmlManifest.find("src/qml/shell/AppOverlays.qml") != std::string::npos
                       && qmlManifest.find("PerformanceBeatgridPanel.qml") == std::string::npos
@@ -3635,7 +3771,7 @@ int main(int argc, char** argv)
                       && qmlManifest.find("UiShortcutManager.qml") == std::string::npos
                       && qmlManifest.find("TurntableIndicator.qml") == std::string::npos
                       && qmlManifest.find("CrossfaderBar.qml") == std::string::npos,
-                  "central manifest packages 22 QML resources including the shared backdrop and excludes merged components");
+                  "central manifest packages 23 QML resources including shared icons and backdrop and excludes merged components");
     ok &= require(deckQuickPanel.find("property real beatJumpBeats") == std::string::npos
                       && deckQuickPanel.find("root.engine.beatJumpBeats") != std::string::npos
                       && engineHeader.find("Q_PROPERTY(double beatJumpBeats") != std::string::npos,
@@ -4088,11 +4224,11 @@ int main(int argc, char** argv)
                   "FLX10 Beat FX channel selector follows CH1, CH2 and Master notes");
     ok &= require(waveformScreen.find("property string leftPanel: \"deck\"")
                       != std::string::npos
-                  && waveformScreen.find("readonly property real panelWidth: 208")
+                  && waveformScreen.find("readonly property real panelWidth: UiTheme.px(wideLayout ? 232 : 208)")
                       != std::string::npos
-                  && waveformScreen.find("readonly property real handleWidth: 22")
+                  && waveformScreen.find("readonly property real handleWidth: UiTheme.touchTarget")
                       != std::string::npos,
-                  "performance song information is open by default with compact side handles");
+                  "performance song information is open by default with accessible touch handles");
     ok &= require(waveformScreen.find("clip: true") != std::string::npos
                   && waveformScreen.find(
                          "x: -width * (1.0 - root.leftPanelReveal)")

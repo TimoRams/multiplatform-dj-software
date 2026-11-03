@@ -5,6 +5,9 @@ routing, deck transport, analysis, QML shell, controller integration, or
 lifecycle code. Record date, platform, audio backend/device, sample rate,
 buffer size, build type, and pass/fail notes.
 
+For the AIO design contract, display profiles and reproducible component captures,
+see [AIO interface](../design/aio-interface.md).
+
 ## Automated baseline
 
 Run the repository entry points:

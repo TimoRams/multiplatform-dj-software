@@ -42,7 +42,7 @@ ApplicationWindow {
     property bool showLibrary: true
     property bool showCrossfader: true
     // Desktop-only bridge while we develop the standalone/AIO surface.
-    property bool showDevelopmentControls: true
+    property bool showDevelopmentControls: false
     property bool showAioDeckControls: true
     property bool fourDeckMode: false
     property bool allInOneMode: false
@@ -191,7 +191,7 @@ ApplicationWindow {
         window.showDeckB      = b("showDeckB", true)
         window.showLibrary    = b("showLibrary", true)
         window.showCrossfader = b("showCrossfader", true)
-        window.showDevelopmentControls = b("showDevelopmentControls", true)
+        window.showDevelopmentControls = b("showDevelopmentControls", false)
         window.showAioDeckControls = b("showAioDeckControls", true)
         window.fourDeckMode   = b("fourDeckMode", false)
         window.showMixer      = b("showMixer", true)
@@ -377,7 +377,8 @@ ApplicationWindow {
         return Math.max(0.84, Math.min(1.18, hs))
     }
     // True on small panels — used to tighten fixed-height bars for 10" screens.
-    readonly property bool compactLayout: height < 720
+    readonly property string layoutProfile: UiTheme.layoutProfile(width, height, UiTheme.scale)
+    readonly property bool compactLayout: layoutProfile === "compact"
     // AIO reference sizes for layout DoD (see docs/testing/regression-checklist.md).
     readonly property bool aioPrimaryProfile: width <= 1280 && height <= 800
     readonly property bool aioCompactProfile: width <= 1024 && height <= 600
@@ -407,17 +408,9 @@ ApplicationWindow {
     }
 
     function _scaledFontSize(basePx) {
-        var scale = responsiveFontScale * (uiScaleController ? uiScaleController.scale : 1.0)
-        var scaled = basePx * scale
-
-        if (basePx <= 8)
-            scaled *= 1.24
-        else if (basePx <= 10)
-            scaled *= 1.18
-        else if (basePx <= 12)
-            scaled *= 1.10
-
+        var scaled = UiTheme.fontSize(basePx, height, UiTheme.scale)
         var dpr = _dpr()
+
         var snapped = Math.round(scaled * dpr) / dpr
         return Math.max(1, snapped)
     }

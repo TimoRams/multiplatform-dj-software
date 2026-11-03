@@ -19,16 +19,16 @@ Controls.ComboBox {
         return (typeof hostWindow.sp === "function") ? hostWindow.sp(px) : px
     }
 
-    implicitHeight: Math.max(22, sp(22))
+    implicitHeight: hostWindow && hostWindow.allInOneMode === true ? UiTheme.touchTarget : Math.max(30, sp(30))
     implicitWidth:  Math.max(120, sp(140))
     padding: 0
 
     background: Rectangle {
-        radius: 0
+        radius: UiTheme.radiusSmall
         color: UiTheme.buttonBg(false, control.hovered, control.pressed)
         border.width: 1
-        border.color: control.visualFocus ? UiTheme.blue
-                      : (control.hovered ? UiTheme.borderHover : UiTheme.border)
+        border.color: control.visualFocus ? UiTheme.focus
+                      : (control.hovered ? UiTheme.borderHover : UiTheme.borderSubtle)
     }
 
     contentItem: Text {
@@ -62,7 +62,7 @@ Controls.ComboBox {
     }
 
     popup.background: Rectangle {
-        radius: 0
+        radius: UiTheme.radiusSmall
         color: UiTheme.surfaceInset
         border.width: 1
         border.color: UiTheme.borderStrong

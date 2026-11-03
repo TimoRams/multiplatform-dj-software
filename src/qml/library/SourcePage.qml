@@ -266,7 +266,7 @@ Rectangle {
             }
             Rectangle {
                 anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                width: 32; height: 32; radius: 4
+                width: 32; height: 32; radius: 0
                 color: closeMouse.containsMouse ? UiTheme.inspectorInset : "transparent"
                 border.color: UiTheme.borderSubtle
                 Text { anchors.centerIn: parent; text: "×"; color: UiTheme.textSecondary; font.pixelSize: 20 }
@@ -288,7 +288,7 @@ Rectangle {
                 Layout.preferredWidth: Math.min(400, browser.width * 0.43)
                 Layout.preferredHeight: Math.min(parent.height, Math.max(196, 48 + root.sourceCount * 68 + (root.devices.length === 0 ? 64 : 0)))
                 Layout.alignment: Qt.AlignTop
-                color: UiTheme.inspectorSurface; radius: 4
+                color: UiTheme.inspectorSurface; radius: 0
                 border.color: UiTheme.borderSubtle
 
                 ColumnLayout {
@@ -315,7 +315,7 @@ Rectangle {
                         readonly property bool focused: root.sourcePane === "sources" && root.sourceCursorIndex === 0
                         color: focused ? root.selectionSurface : UiTheme.inspectorInset
                         border.color: focused ? root.selectionAccent : "transparent"
-                        radius: 3
+                        radius: 0
                         MediaIcon {
                             anchors.left: parent.left; anchors.leftMargin: 13
                             anchors.verticalCenter: parent.verticalCenter
@@ -349,7 +349,7 @@ Rectangle {
                             required property var modelData
                             required property int index
                             readonly property bool focused: root.sourcePane === "sources" && root.sourceCursorIndex === index + 1
-                            width: ListView.view.width; height: 64; radius: 3
+                            width: ListView.view.width; height: 64; radius: 0
                             color: focused ? root.selectionSurface : UiTheme.inspectorInset
                             border.color: focused ? root.selectionAccent : "transparent"
                             MediaIcon {
@@ -382,7 +382,7 @@ Rectangle {
                                 id: deviceAction
                                 anchors.right: parent.right; anchors.rightMargin: 8
                                 anchors.verticalCenter: parent.verticalCenter
-                                width: visible ? 56 : 0; height: 28; radius: 3
+                                width: visible ? 56 : 0; height: 28; radius: 0
                                 visible: modelData.canMount || modelData.canEject || modelData.operationPending
                                 color: actionMouse.containsMouse ? UiTheme.panelRaised : UiTheme.inspectorSurface
                                 border.color: UiTheme.borderSubtle
@@ -425,7 +425,7 @@ Rectangle {
                 Layout.alignment: Qt.AlignTop
                 readonly property var device: root.sourceCursorIndex > 0 ? root.devices[root.sourceCursorIndex - 1] : null
                 readonly property bool ready: root.sourceCursorIndex === 0 || (device && device.ready)
-                color: UiTheme.inspectorSurface; radius: 4
+                color: UiTheme.inspectorSurface; radius: 0
                 border.color: UiTheme.borderSubtle
                 Column {
                     anchors.left: parent.left; anchors.right: parent.right
@@ -454,7 +454,7 @@ Rectangle {
                     readonly property bool focused: root.sourcePane === "services" && root.serviceCursorIndex === 0
                     anchors.left: parent.left; anchors.right: parent.right
                     anchors.bottom: parent.bottom; anchors.margins: 12
-                    height: 66; radius: 3
+                    height: 66; radius: 0
                     color: focused ? root.selectionSurface : UiTheme.inspectorInset
                     border.color: focused ? root.selectionAccent : UiTheme.borderSubtle
                     opacity: servicePanel.ready ? 1 : 0.5

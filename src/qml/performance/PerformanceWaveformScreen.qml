@@ -24,8 +24,11 @@ Item {
             settingsManager.setUiState("performanceFxPanelOpen", rightPanelOpen ? "1" : "0")
     }
 
-    readonly property real panelWidth: 208
-    readonly property real handleWidth: 22
+    readonly property real panelWidth: UiTheme.px(wideLayout ? 232 : 208)
+    readonly property real handleWidth: UiTheme.touchTarget
+    readonly property bool wideLayout: UiTheme.layoutProfile(width,
+        Window.window ? Window.window.height : height, UiTheme.scale) === "wide"
+    readonly property bool dockPanels: wideLayout && width - 2 * panelWidth - 2 * handleWidth >= UiTheme.px(900)
     property real leftPanelReveal: leftPanel === "closed" ? 0.0 : 1.0
     property real rightPanelReveal: rightPanelOpen ? 1.0 : 0.0
     readonly property var selectedEngine: selectedDeck === "A" ? deckAEngine : deckBEngine
@@ -56,34 +59,19 @@ Item {
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
     }
 
-    component PerformanceActionButton: Rectangle {
+    component PerformanceActionButton: Button {
         required property string label
         required property real rowHeight
         required property color accent
         property bool active: false
-        signal clicked()
+        text: label
+        accentColor: accent
+        emphasized: active
+        labelSize: 12
         Layout.fillWidth: true
-        Layout.preferredHeight: rowHeight
-        Layout.minimumHeight: rowHeight
-        radius: 0
-        color: buttonMouse.pressed ? UiTheme.surfaceRaised
-                                  : (active ? Qt.rgba(accent.r, accent.g, accent.b, 0.16)
-                                            : (buttonMouse.containsMouse ? UiTheme.panelRaised : UiTheme.surface))
-        border.color: active ? accent : (buttonMouse.containsMouse ? UiTheme.borderHover : UiTheme.borderSubtle)
-        border.width: 1
-        PerformanceText {
-            anchors.centerIn: parent
-            width: Math.max(0, parent.width - 8)
-            text: parent.label
-            elide: Text.ElideRight
-            horizontalAlignment: Text.AlignHCenter
-            color: parent.active ? parent.accent : UiTheme.textPrimary
-            font.pixelSize: 12
-            font.weight: Font.DemiBold
-            font.letterSpacing: 0.5
-        }
-        MouseArea { id: buttonMouse; anchors.fill: parent; hoverEnabled: true; onClicked: parent.clicked() }
-        ToolTip.visible: buttonMouse.containsMouse
+        Layout.preferredHeight: Math.max(UiTheme.touchTarget, rowHeight)
+        Layout.minimumHeight: Math.max(UiTheme.touchTarget, rowHeight)
+        ToolTip.visible: hovered
         ToolTip.delay: 600
         ToolTip.text: label
     }
@@ -456,7 +444,7 @@ Item {
                         visible: trackDisplay.height >= 124
                         Rectangle {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            width: parent.height; height: width; radius: 4
+                            width: parent.height; height: width; radius: 0
                             color: root.rowColor
                             border.color: root.lineColor
                             Rectangle {
@@ -464,7 +452,7 @@ Item {
                                 width: parent.width * 0.6; height: width; radius: width / 2
                                 color: "transparent"; border.color: UiTheme.borderStrong
                                 Rectangle {
-                                    anchors.centerIn: parent; width: 6; height: 6; radius: 3
+                                    anchors.centerIn: parent; width: 6; height: 6; radius: width / 2
                                     color: root.mutedText
                                 }
                             }
@@ -796,7 +784,7 @@ Item {
                 Layout.fillWidth: true; Layout.preferredHeight: 42
                 Layout.minimumHeight: 42
                 color: root.rowColor
-                radius: 4
+                radius: 0
                 PerformanceText {
                     anchors.left: parent.left; anchors.leftMargin: 12
                     anchors.top: parent.top; anchors.topMargin: 3
@@ -1086,10 +1074,16 @@ Item {
     }
 
     Behavior on leftPanelReveal {
-        NumberAnimation { duration: 190; easing.type: Easing.OutCubic }
+        NumberAnimation { duration: UiTheme.motionPanel; easing.type: Easing.OutCubic }
     }
     Behavior on rightPanelReveal {
-        NumberAnimation { duration: 190; easing.type: Easing.OutCubic }
+        NumberAnimation { duration: UiTheme.motionPanel; easing.type: Easing.OutCubic }
+    }
+
+    // Fill the handle gutters as well as the waveform viewport when docked.
+    Rectangle {
+        anchors.fill: parent
+        color: UiTheme.displayBackground
     }
 
     // The capture source contains only waveforms: never the panels or their blur.
@@ -1097,12 +1091,14 @@ Item {
         id: waveformBacking
         objectName: "waveformBacking"
         anchors.fill: parent
+        anchors.leftMargin: root.dockPanels ? (root.panelWidth + root.handleWidth) * root.leftPanelReveal : 0
+        anchors.rightMargin: root.dockPanels ? (root.panelWidth + root.handleWidth) * root.rightPanelReveal : 0
         Rectangle { anchors.fill: parent; color: UiTheme.displayBackground }
 
         EnlargedWaveform {
             x: 0
             y: 0
-            width: root.width
+            width: waveformBacking.width
             height: root.deckAHeight
             deckName: "A"
             engine: root.deckAEngine
@@ -1114,7 +1110,7 @@ Item {
         Rectangle {
             x: 0
             y: root.deckAHeight
-            width: root.width
+            width: waveformBacking.width
             height: root.separatorHeight
             color: UiTheme.borderSubtle
         }
@@ -1122,7 +1118,7 @@ Item {
         EnlargedWaveform {
             x: 0
             y: root.deckBY
-            width: root.width
+            width: waveformBacking.width
             height: Math.max(0, root.height - y)
             deckName: "B"
             engine: root.deckBEngine
@@ -1139,13 +1135,16 @@ Item {
         anchors.bottomMargin: 8
         spacing: 3
         z: 20
-        Rectangle {
-            width: 42; height: 34; radius: 0; color: UiTheme.surface; border.color: UiTheme.borderSubtle; border.width: 1
-            PerformanceText { anchors.centerIn: parent; text: "−"; color: UiTheme.textPrimary; font.pixelSize: 18 }
-            MouseArea { anchors.fill: parent; onClicked: if (waveformZoomController) waveformZoomController.zoomOut() }
+        Button {
+            objectName: "waveformZoomOut"
+            width: UiTheme.touchTarget; height: UiTheme.touchTarget
+            text: "−"
+            labelSize: 18
+            Accessible.name: "Zoom out"
+            onClicked: if (waveformZoomController) waveformZoomController.zoomOut()
         }
         Rectangle {
-            width: 54; height: 34; radius: 0; color: UiTheme.surface; border.color: UiTheme.borderSubtle; border.width: 1
+            width: UiTheme.px(56); height: UiTheme.touchTarget; radius: 0; color: UiTheme.surface; border.color: UiTheme.borderSubtle; border.width: 1
 
             // Where the current zoom sits in the whole range, so the level is
             // readable at a glance without parsing the number.
@@ -1188,13 +1187,16 @@ Item {
                 }
             }
         }
-        Rectangle {
-            width: 42; height: 34; radius: 0; color: UiTheme.surface; border.color: UiTheme.borderSubtle; border.width: 1
-            PerformanceText { anchors.centerIn: parent; text: "+"; color: UiTheme.textPrimary; font.pixelSize: 18 }
-            MouseArea { anchors.fill: parent; onClicked: if (waveformZoomController) waveformZoomController.zoomIn() }
+        Button {
+            objectName: "waveformZoomIn"
+            width: UiTheme.touchTarget; height: UiTheme.touchTarget
+            text: "+"
+            labelSize: 18
+            Accessible.name: "Zoom in"
+            onClicked: if (waveformZoomController) waveformZoomController.zoomIn()
         }
         Rectangle {
-            width: 54; height: 34; radius: 0
+            width: UiTheme.px(56); height: UiTheme.touchTarget; radius: 0
             readonly property color deckAccent: UiTheme.deckColor(root.selectedDeck)
             color: root.leftPanel === "grid" ? Qt.rgba(deckAccent.r, deckAccent.g, deckAccent.b, 0.16) : UiTheme.surface
             border.color: root.leftPanel === "grid" ? UiTheme.deckColor(root.selectedDeck) : UiTheme.borderSubtle
@@ -1222,7 +1224,7 @@ Item {
             anchors.fill: parent
             sourceItem: waveformBacking
             sourceOrigin: Qt.point(leftHost.x, leftHost.y)
-            requested: root.leftPanel !== "closed"
+            requested: root.leftPanel !== "closed" && !root.dockPanels
         }
         PerformanceBeatgridPanel {
             id: gridPanel
@@ -1266,12 +1268,15 @@ Item {
 
     Rectangle {
         id: leftHandle
-        width: root.handleWidth; height: 32
+        width: root.handleWidth; height: UiTheme.touchTarget
         anchors.left: root.leftPanel === "closed" ? parent.left : leftHost.right
         anchors.top: parent.top
         anchors.topMargin: 4
         color: UiTheme.panelRaised; border.color: UiTheme.borderSubtle; border.width: 1; radius: 0; z: 32
         PerformanceText { anchors.centerIn: parent; text: root.leftPanel === "closed" ? "›" : "‹"; color: UiTheme.textSecondary; font.pixelSize: 15 }
+        Accessible.role: Accessible.Button
+        Accessible.name: root.leftPanel === "closed" ? "Show deck information" : "Hide deck information"
+        Accessible.onPressAction: root.toggleDeckPanel()
         MouseArea { anchors.fill: parent; onClicked: root.toggleDeckPanel() }
     }
 
@@ -1289,7 +1294,7 @@ Item {
             anchors.fill: parent
             sourceItem: waveformBacking
             sourceOrigin: Qt.point(rightHost.x, rightHost.y)
-            requested: root.rightPanelOpen
+            requested: root.rightPanelOpen && !root.dockPanels
         }
         PerformanceBeatFxPanel {
             id: fxPanel
@@ -1302,12 +1307,15 @@ Item {
 
     Rectangle {
         id: rightHandle
-        width: root.handleWidth; height: 32
+        width: root.handleWidth; height: UiTheme.touchTarget
         anchors.right: root.rightPanelOpen ? rightHost.left : parent.right
         anchors.top: parent.top
         anchors.topMargin: 4
         color: UiTheme.panelRaised; border.color: UiTheme.borderSubtle; border.width: 1; radius: 0; z: 32
         PerformanceText { anchors.centerIn: parent; text: root.rightPanelOpen ? "›" : "‹"; color: UiTheme.textSecondary; font.pixelSize: 15 }
+        Accessible.role: Accessible.Button
+        Accessible.name: root.rightPanelOpen ? "Hide effects" : "Show effects"
+        Accessible.onPressAction: root.rightPanelOpen = !root.rightPanelOpen
         MouseArea { anchors.fill: parent; onClicked: root.rightPanelOpen = !root.rightPanelOpen }
     }
 }

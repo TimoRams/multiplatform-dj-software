@@ -10,7 +10,36 @@ QtObject {
 
     function px(value) { return Math.round(value * scale) }
 
+    // Layout uses logical pixels; DPR is reserved for raster alignment.
+    readonly property int touchTarget: Math.max(44, px(44))
+    // Rectangular UI surfaces stay square at every UI scale.
+    readonly property int radiusSmall: 0
+    readonly property int space7: px(24)
+    readonly property int motionFast: 120
+    readonly property int motionPanel: 180
+    readonly property color navigationSurface: "#151c25"
+    readonly property color controlHover: "#344253"
+    readonly property color focus: "#a8cfff"
+
+    function layoutProfile(width, height, userScale) {
+        var factor = isFinite(userScale) && userScale > 0 ? userScale : 1
+        var w = Math.max(0, width) / factor
+        var h = Math.max(0, height) / factor
+        if (w < 1100 || h < 700) return "compact"
+        return w >= 1600 ? "wide" : "standard"
+    }
+
+    function fontSize(reference, viewportHeight, userScale) {
+        var factor = isFinite(userScale) && userScale > 0 ? userScale : 1
+        // Labels have a readability floor; extra space goes to content.
+        return Math.max(reference <= 12 ? 11 : 12,
+                        reference * Math.max(0.92, Math.min(1.12, viewportHeight / 800))) * factor
+    }
+
     function applyNumericFontMetrics(textItem) {
+        // Optional font features retain compatibility with Qt 6.4.
+        if ("features" in textItem.font)
+            textItem.font.features = { "tnum": 1 }
         // This optional font property was introduced in Qt 6.8.
         if ("preferTypoLineMetrics" in textItem.font)
             textItem.font.preferTypoLineMetrics = Qt.binding(function() {
@@ -35,7 +64,7 @@ QtObject {
 
     readonly property int controlHeightSmall: px(22)
     readonly property int controlHeightNormal: px(30)
-    readonly property int toolbarHeight: px(48)
+    readonly property int toolbarHeight: Math.max(44, px(48))
     readonly property int toolbarPullExtra: px(144)
     readonly property int deckHeaderHeight: px(42)
     readonly property int transportStripHeight: px(62)
@@ -49,11 +78,11 @@ QtObject {
 
     // Canonical design-token names. Existing aliases below remain during the
     // component migration; new UI code uses these semantic names.
-    readonly property color surface:           "#e6212730"
-    readonly property color surfaceRaised:     "#e62c3440"
+    readonly property color surface:           "#1b222c"
+    readonly property color surfaceRaised:     "#293440"
     readonly property color surfaceInset:      "#151b24"
     readonly property color displayBackground: "#10151d"
-    readonly property color inspectorSurface:   "#f2151b24"
+    readonly property color inspectorSurface:   "#151b24"
     readonly property color inspectorInset:     "#1b222c"
 
     readonly property color borderSubtle:      "#28313e"
@@ -66,10 +95,10 @@ QtObject {
     readonly property color browserSelectionSurface: "#393023"
     readonly property color sync:              "#56a8ff"
 
-    // Tinted translucency, without refraction, gloss or faux-3D.
+    // Opaque working surfaces keep contrast independent of moving content.
     readonly property color panel:         surface
     readonly property color panelDeep:     surfaceInset
-    readonly property color panelInset:    "#bd1a212b"
+    readonly property color panelInset:    "#19212b"
     readonly property color panelRaised:   surfaceRaised
 
     // Legacy aliases — keep call sites working with the flat palette
@@ -103,8 +132,8 @@ QtObject {
     readonly property color textPrimary:   "#eef2f8"
     readonly property color textSecondary: "#b0bdce"
     readonly property color textLabel:     "#8e9db1"
-    readonly property color textDim:       "#718096"
-    readonly property color textMuted:     "#58667a"
+    readonly property color textDim:       "#9aa9bc"
+    readonly property color textMuted:     "#7f8fa4"
 
     // ── Functional accents ────────────────────────────────────────────────
     readonly property color green:       "#62cf9e"

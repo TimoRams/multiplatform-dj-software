@@ -188,6 +188,7 @@ qt_add_resources(${PROJECT_NAME} "BrockDJ_controller_mappings"
 set(BROCKDJ_QML_FILES
     src/qml/main.qml
     src/qml/components/UiTheme.qml
+    src/qml/components/UiIcon.qml
     src/qml/components/Knob.qml
     src/qml/components/Button.qml
     src/qml/components/Slider.qml

@@ -387,7 +387,7 @@ Item {
                         anchors.left: timeMain.right
                         anchors.leftMargin: root.valuePx(2, 1)
                         anchors.bottom: parent.bottom
-                        readonly property real digitPx: root.valuePx(24, 14)
+                        readonly property real digitPx: root.valuePx(18, 11)
                         // Reserve four fixed character cells for ".mmm"; its width
                         // must never depend on the currently displayed digits.
                         width: digitPx * 2.5

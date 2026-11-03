@@ -135,18 +135,18 @@ Rectangle {
     }
 
     // ── Theme ───────────────────────────────────────────────────────────────
-    readonly property color bgBase:      "#11171f"
-    readonly property color bgSidebar:   "#151c25"
-    readonly property color bgSidebarHv: "#202a36"
-    readonly property color bgToolbar:   "#171f29"
-    readonly property color bgHeader:    "#151d27"
-    readonly property color bgRowEven:   "#11171f"
-    readonly property color bgRowOdd:    "#11171f"
-    readonly property color bgRowHover:  "#1d2835"
+    readonly property color bgBase:      Design.UiTheme.displayBackground
+    readonly property color bgSidebar:   Design.UiTheme.navigationSurface
+    readonly property color bgSidebarHv: Design.UiTheme.controlHover
+    readonly property color bgToolbar:   Design.UiTheme.surface
+    readonly property color bgHeader:    Design.UiTheme.navigationSurface
+    readonly property color bgRowEven:   Design.UiTheme.displayBackground
+    readonly property color bgRowOdd:    Design.UiTheme.displayBackground
+    readonly property color bgRowHover:  Design.UiTheme.surfaceRaised
     readonly property color bgRowActive: Design.UiTheme.browserSelectionSurface
-    readonly property color borderSub:   "#19232f"
-    readonly property color borderMain:  "#26313f"
-    readonly property color borderHigh:  "#465366"
+    readonly property color borderSub:   Design.UiTheme.borderSubtle
+    readonly property color borderMain:  Design.UiTheme.borderSubtle
+    readonly property color borderHigh:  Design.UiTheme.borderStrong
     readonly property color textPrimary: Design.UiTheme.textPrimary
     readonly property color textSecond:  Design.UiTheme.textSecondary
     readonly property color textDim:     Design.UiTheme.textDim
@@ -2231,7 +2231,7 @@ Rectangle {
                     border.width: 1
                     Text {
                         anchors.centerIn: parent
-                        text: "▶ " + modelData
+                        text: "LOAD " + modelData
                         color: libraryRoot.accentBlueLt
                         font.pixelSize: window.sp(11)
                         font.bold: true
@@ -2400,7 +2400,7 @@ Rectangle {
         width: parent ? parent.width : libraryRoot.aioNavTileW
         height: libraryRoot.aioNavTileH
         clip: true
-        radius: 5
+        radius: 0
         color: tileCursor ? libraryRoot.sidebarSel : "transparent"
         border.color: tileCursor ? Design.UiTheme.browserSelectionAccent : "transparent"
         border.width: 1
@@ -2734,12 +2734,12 @@ Rectangle {
                     Rectangle {
                         required property string modelData
                         width: 46; height: parent.height
-                        color: loadDeckMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.blueDim
+                        color: loadDeckMa.containsMouse ? Design.UiTheme.surfaceRaised : Design.UiTheme.deckTint(modelData)
                         border.color: libraryRoot.borderMain; border.width: 1
                         Text {
                             anchors.centerIn: parent
-                            text: "▶ " + modelData
-                            color: libraryRoot.accentBlueLt; font.pixelSize: window.sp(12); font.bold: true
+                            text: "LOAD " + modelData
+                            color: Design.UiTheme.deckColor(modelData); font.pixelSize: window.sp(11); font.bold: true
                         }
                         MouseArea {
                             id: loadDeckMa; anchors.fill: parent
@@ -2799,7 +2799,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 Rectangle {
                     anchors.centerIn: parent
-                    width: 24; height: 24; radius: 3
+                    width: 24; height: 24; radius: 0
                     color: tr.artBgColor; clip: true
                     Image {
                         id: trCoverCompact
@@ -2883,7 +2883,7 @@ Rectangle {
                 Repeater {
                     model: 5
                     Rectangle {
-                        width: 5; height: 5; radius: 2.5
+                        width: 5; height: 5; radius: 0
                         anchors.verticalCenter: parent.verticalCenter
                         color: (index < tr.rowRating) ? Design.UiTheme.cue : Design.UiTheme.knobTrack
                     }
@@ -2903,7 +2903,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 width: tr.touchMode ? 52 : 44
                 height: tr.touchMode ? 52 : 44
-                radius: 4
+                radius: 0
                 color: tr.artBgColor
                 clip: true
 
@@ -2920,7 +2920,7 @@ Rectangle {
                 Rectangle {
                     anchors.top: parent.top; anchors.right: parent.right
                     anchors.topMargin: 3; anchors.rightMargin: 3
-                    width: 6; height: 6; radius: 3
+                    width: 6; height: 6; radius: 0
                     visible: !tr.rowIsAnalyzed
                     color: libraryRoot.textDim
                     z: 2
@@ -3053,7 +3053,7 @@ Rectangle {
                     Repeater {
                         model: 5
                         Rectangle {
-                            width: 6; height: 6; radius: 3
+                            width: 6; height: 6; radius: 0
                             color: (index < tr.rowRating) ? Design.UiTheme.cue : Design.UiTheme.knobTrack
                         }
                     }
@@ -3362,7 +3362,7 @@ Rectangle {
             visible: navBtn.badgeCount > 0
             anchors.verticalCenter: parent.verticalCenter
             anchors.right: parent.right; anchors.rightMargin: 10
-            width: Math.max(24, navBadgeLabel.implicitWidth + 10); height: 20; radius: 4
+            width: Math.max(24, navBadgeLabel.implicitWidth + 10); height: 20; radius: 0
             color: "transparent"
 
             Text {
@@ -3405,7 +3405,7 @@ Rectangle {
         required property bool   ascending
         signal tapped()
 
-        height: libraryRoot.touchMode ? 36 : 26; radius: 4
+        height: libraryRoot.touchMode ? 36 : 26; radius: 0
         width: Math.max(libraryRoot.touchMode ? 56 : 0,
                         pillLabel.implicitWidth + (isActive ? pillArrow.implicitWidth + 28 : 20))
         color: isActive ? libraryRoot.bgRowActive : "transparent"
@@ -3739,7 +3739,7 @@ Rectangle {
                                 visible: modelData.trackCount > 0
                                 anchors.verticalCenter: parent.verticalCenter
                                 anchors.right: parent.right; anchors.rightMargin: 10
-                                width: Math.max(22, plBadge.implicitWidth + 10); height: 20; radius: 4
+                                width: Math.max(22, plBadge.implicitWidth + 10); height: 20; radius: 0
                                 color: "transparent"
                                 Text {
                                     id: plBadge; anchors.centerIn: parent
@@ -4197,7 +4197,7 @@ Rectangle {
                         Layout.preferredWidth: libraryRoot.touchMode ? 148 : 176
                         Layout.preferredHeight: libraryRoot.touchMode ? 40 : 32
                         Layout.alignment: Qt.AlignVCenter
-                        radius: 5; clip: true
+                        radius: 0; clip: true
                         color: analyzeHover.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
                         border.color: libraryAnalyzer && libraryAnalyzer.running
                                       ? libraryRoot.accentBlue : libraryRoot.borderSub
@@ -4335,7 +4335,7 @@ Rectangle {
                                                    : Math.min(260, Math.max(150, parent.width * 0.28))
                         Layout.preferredHeight: libraryRoot.touchMode ? 40 : 32
                         Layout.alignment: Qt.AlignVCenter
-                        color: libraryRoot.bgBase; radius: 5
+                        color: libraryRoot.bgBase; radius: 0
                         border.color: searchField.activeFocus ? libraryRoot.accentBlue : libraryRoot.borderSub
                         border.width: 1
                         Behavior on border.color { ColorAnimation { duration: 150 } }
@@ -4349,7 +4349,7 @@ Rectangle {
                             opacity: searchField.activeFocus ? 0.75 : 0.30
 
                             Rectangle {
-                                width: 9; height: 9; radius: 4.5
+                                width: 9; height: 9; radius: 0
                                 color: "transparent"
                                 border.color: libraryRoot.textPrimary; border.width: 1.5
                                 anchors.top: parent.top; anchors.left: parent.left
@@ -4435,7 +4435,7 @@ Rectangle {
                         Layout.preferredWidth: libraryRoot.touchMode ? 44 : 30
                         Layout.preferredHeight: libraryRoot.touchMode ? 40 : 32
                         Layout.alignment: Qt.AlignVCenter
-                        radius: 5
+                        radius: 0
                         color: libraryRoot.filterPanelOpen ? libraryRoot.bgRowActive
                              : filterBtnMa.containsMouse ? libraryRoot.bgSidebarHv : libraryRoot.bgBase
                         border.color: libraryRoot.filtersActive ? libraryRoot.accentBlue : libraryRoot.borderSub
@@ -4945,14 +4945,16 @@ Rectangle {
                                       ? "Artist wählen"
                                       : (libraryRoot.aioLibSplitBrowse && !libraryRoot.aioBrowseDrilled
                                          ? "Keine Treffer"
-                                         : "Library is empty")
+                                         : searchText.length > 0 || filtersActive ? "No matching tracks" : "Library is empty")
                                 color: libraryRoot.textDim; font.pixelSize: window.sp(12)
                             }
                             Text {
                                 anchors.horizontalCenter: parent.horizontalCenter
                                 visible: !(libraryRoot.aioLibSplitBrowse && !libraryRoot.aioBrowseDrilled
                                            && libraryRoot.aioBrowseFocusKey.length === 0)
-                                text: "Lade einen Track auf ein Deck, um ihn hinzuzufügen"
+                                text: libraryRoot.searchText.length > 0 || libraryRoot.filtersActive
+                                      ? "Change the search or clear filters to see more tracks"
+                                      : "Choose a source to browse your music"
                                 color: libraryRoot.textDim; font.pixelSize: window.sp(10)
                             }
                         }
@@ -5641,7 +5643,7 @@ Rectangle {
                                             id: usbDeviceDot
                                             anchors.left: parent.left; anchors.leftMargin: 13
                                             anchors.verticalCenter: parent.verticalCenter
-                                            width: 7; height: 7; radius: 3.5
+                                            width: 7; height: 7; radius: 0
                                             visible: modelData.color
                                             color: deviceAccent
                                         }
