@@ -1,4 +1,5 @@
 #include "ApplicationLifecycle.h"
+#include "audio/SamplerController.h"
 
 #include "deck/DjEngine.h"
 #include "audio/AudioEngine.h"
@@ -137,6 +138,7 @@ void shutdownApplication(ApplicationRuntime& runtime)
     }
     runtime.shutdownStarted = true;
     runtime.stopping = true;
+    if (runtime.sampler) runtime.sampler->shutdown();
 
     performExitTeardown(runtime, runtime.settingsManager
                                      ? runtime.settingsManager->requestManualBackupOnExit()
@@ -179,6 +181,7 @@ void shutdownApplication(ApplicationRuntime& runtime)
     runtime.deckC.reset();
     runtime.deckB.reset();
     runtime.deckA.reset();
+    runtime.sampler.reset();
     runtime.audioEngine.reset();
     runtime.libraryPreviewPlayer.reset();
     runtime.syncClockRegistration.reset();

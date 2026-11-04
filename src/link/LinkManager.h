@@ -27,6 +27,7 @@ public:
     double bpm()      const { return m_bpm; }
     double phase()    const { return m_phase; }
     double beat()     const { return m_beat; }
+    double currentBeat() const { return m_link.captureAppSessionState().beatAtTime(m_link.clock().micros(), 4.0); }
     int    numPeers() const { return m_numPeers; }
 
     void setEnabled(bool on);

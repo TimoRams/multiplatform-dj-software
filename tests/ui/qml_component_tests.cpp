@@ -259,6 +259,7 @@ bool desktopLibraryHeightTests(const std::string& main, const std::string& works
             property bool allInOneMode: false
             property bool fourDeckMode: false
             property bool libraryExpanded: false
+            property bool samplerPanelOpen: false
             property bool showDeckA: true
             property bool showDeckB: true
             property bool showWaveforms: true
@@ -3585,6 +3586,98 @@ bool squareControlsRuntimeTests()
     return ok;
 }
 
+bool samplerAndRecordingRuntimeTests(const std::string& header)
+{
+    const QString directory = QString::fromUtf8(BROCKDJ_SOURCE_DIR) + "/src/qml/";
+    for (const QString& name : {QStringLiteral("Button"), QStringLiteral("Slider"), QStringLiteral("ComboBox")})
+        qmlRegisterType(QUrl::fromLocalFile(directory + "components/" + name + ".qml"), "DJSoftware", 1, 0, name.toUtf8());
+    QQmlEngine engine;
+    auto recorder = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool recording: false
+            property bool stopping: false
+            property real elapsedSeconds: 0
+            property string error: ""
+            property int toggles: 0
+            function toggleRecording() { toggles++; recording = !recording }
+        }
+    )"), "recorder UI fixture instantiates");
+    if (!recorder) return false;
+    engine.rootContext()->setContextProperty("setRecorder", recorder.get());
+    const auto begin = header.find("            Rectangle {\n                id: quickRecording");
+    const auto end = header.find("            Rectangle {\n                objectName: \"quickSampler\"", begin);
+    if (!require(begin != std::string::npos && end != std::string::npos, "recording quick access exists")) return false;
+    auto host = createQmlObject(engine, QStringLiteral("import QtQuick; import QtQuick.Controls; import QtQuick.Layouts; import DJSoftware; Item { id: root; width: 250; height: 80; function sp(n) { return n }\n")
+        + QString::fromStdString(header.substr(begin, end-begin)) + "\n}", "real recording quick-access field instantiates");
+    if (!host) return false;
+    QQuickWindow window; window.resize(800, 600);
+    auto* item = qobject_cast<QQuickItem*>(host.get()); item->setParentItem(window.contentItem());
+    auto* button = host->findChild<QQuickItem*>("quickRecording");
+    button->setSize(QSizeF(250,80));
+    window.show(); QCoreApplication::processEvents();
+    bool ok = clickItem(window, button, "recording starts from the real quick-access field");
+    ok &= require(recorder->property("recording").toBool() && recorder->property("toggles").toInt() == 1, "recording quick access uses common toggle");
+    recorder->setProperty("elapsedSeconds", 3661.0); QCoreApplication::processEvents();
+    auto* duration = host->findChild<QObject*>("quickRecordingDuration");
+    ok &= require(duration && duration->property("text") == "01:01:01", "recording field displays hours/minutes/seconds");
+    recorder->setProperty("stopping", true); QCoreApplication::processEvents();
+    ok &= clickItem(window, button, "saving recording field remains visible");
+    ok &= require(recorder->property("toggles").toInt() == 1, "saving state prevents repeated recording toggles");
+    item->setVisible(false);
+
+    auto controller = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property int bank: 0
+            property int selectedSlot: 0
+            property real gain: 0.72
+            property bool cue: false
+            property int quantize: 1
+            property string clockSource: "INTERNAL"
+            property real bpm: 120
+            property string error: ""
+            property var fileInfo: ({})
+            property int triggers: 0
+            property int stops: 0
+            property var slots: [{name:"Airhorn", color:"#e0a344", loaded:true, state:"READY", duration:2, start:0, end:2, gain:1, waveform:[0.2,0.5,0.8]}, {}, {}, {}, {}, {}, {}, {}]
+            function trigger(pad) { triggers++ }
+            function stopAll() { stops++ }
+            function probeFile(path) {}
+            function captureDeck(pad, deck, beats) {}
+            function clear(pad) {}
+            function edit() {}
+            function loadFile() {}
+        }
+    )"), "sampler UI fixture instantiates");
+    if (!controller) return false;
+    engine.rootContext()->setContextProperty("sampler", controller.get());
+    QQmlComponent component(&engine, QUrl::fromLocalFile(directory + "performance/SamplerPanel.qml"));
+    std::unique_ptr<QObject> panel(component.create());
+    if (!require(panel != nullptr, "full sampler panel instantiates")) { std::cerr << component.errorString().toStdString(); return false; }
+    auto* panelItem = qobject_cast<QQuickItem*>(panel.get()); panelItem->setParentItem(window.contentItem());
+    for (const QSize size : {QSize(800,600), QSize(1280,800), QSize(1920,1080)}) {
+        window.resize(size); panelItem->setSize(QSizeF(size.width(), 244)); QCoreApplication::processEvents();
+        auto* bank = findVisualItem(panelItem, "samplerBank2");
+        ok &= clickItem(window, bank, "sampler bank button fits viewport and responds");
+        ok &= require(controller->property("bank").toInt() == 2, "sampler bank selector updates common controller");
+        auto* pad = findVisualItem(panelItem, "samplerPad0");
+        const int previous = controller->property("triggers").toInt();
+        // The edit affordance occupies the right edge; play uses the left half.
+        const QPoint point = pad->mapToScene(QPointF(pad->width()/3, pad->height()/2)).toPoint();
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, point);
+        ok &= require(controller->property("triggers").toInt() == previous + 1, "sampler pad triggers with no deck engine");
+        ok &= require(pad->property("radius").toDouble() == 0 && pad->height() >= 44, "sampler pads retain square touch targets");
+        if (size.width() == 1280 && !qEnvironmentVariableIsEmpty("BROCKDJ_TEST_CAPTURE_DIR")) {
+            QTest::qWait(40);
+            window.grabWindow().save(QDir(qEnvironmentVariable("BROCKDJ_TEST_CAPTURE_DIR")).filePath("sampler-panel.png"));
+        }
+    }
+    ok &= clickItem(window, findVisualItem(panelItem, "samplerStopAll"), "sampler stop-all is directly reachable");
+    ok &= require(controller->property("stops").toInt() == 1, "sampler stop-all reaches controller");
+    return ok;
+}
+
 int main(int argc, char** argv)
 {
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
@@ -3618,6 +3711,7 @@ int main(int argc, char** argv)
     const auto developmentControls = read("src/qml/development/DevelopmentControlsWindow.qml");
     const auto performancePads = read("src/qml/performance/PerformancePads.qml");
     ok &= appOverlaysRuntimeTests(appOverlays);
+    ok &= samplerAndRecordingRuntimeTests(topHeader);
     ok &= shortcutRuntimeTests(main);
     ok &= deckCueFlatButtonRuntimeTests(deckControl);
     ok &= aioDeckControlTests(workspace);
@@ -3773,8 +3867,9 @@ int main(int argc, char** argv)
                       && occurrences(fxUnit, "accent: root.accentColor") == 2,
                   "merged QML components remain local, independently scoped, and non-nested");
     ok &= require(!qmlManifest.empty()
-                      && occurrences(qmlManifest, "src/qml/") == 23
+                      && occurrences(qmlManifest, "src/qml/") == 24
                       && qmlManifest.find("src/qml/performance/PerformanceBackdrop.qml") != std::string::npos
+                      && qmlManifest.find("src/qml/performance/SamplerPanel.qml") != std::string::npos
                       && qmlManifest.find("src/qml/shell/AppOverlays.qml") != std::string::npos
                       && qmlManifest.find("PerformanceBeatgridPanel.qml") == std::string::npos
                       && qmlManifest.find("PerformanceDeckQuickPanel.qml") == std::string::npos
@@ -3787,7 +3882,7 @@ int main(int argc, char** argv)
                       && qmlManifest.find("UiShortcutManager.qml") == std::string::npos
                       && qmlManifest.find("TurntableIndicator.qml") == std::string::npos
                       && qmlManifest.find("CrossfaderBar.qml") == std::string::npos,
-                  "central manifest packages 23 QML resources including shared icons and backdrop and excludes merged components");
+                  "central manifest packages 24 QML resources including shared icons and backdrop and excludes merged components");
     ok &= require(deckQuickPanel.find("property real beatJumpBeats") == std::string::npos
                       && deckQuickPanel.find("root.engine.beatJumpBeats") != std::string::npos
                       && engineHeader.find("Q_PROPERTY(double beatJumpBeats") != std::string::npos,

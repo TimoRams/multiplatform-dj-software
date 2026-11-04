@@ -34,7 +34,13 @@ QByteArray waveHeader(quint32 rate, quint32 dataBytes)
 SetRecorder::SetRecorder(QObject* parent) : QObject(parent), m_ring(kCapacity * 2)
 {
     m_timer.setInterval(200);
-    connect(&m_timer, &QTimer::timeout, this, &SetRecorder::changed);
+    connect(&m_timer, &QTimer::timeout, this, [this] {
+        if (!recording()) {
+            if (m_writer.joinable()) m_writer.join();
+            m_timer.stop();
+        }
+        emit changed();
+    });
 }
 SetRecorder::~SetRecorder() { stopRecording(); }
 void SetRecorder::configure(double rate) noexcept
@@ -67,8 +73,9 @@ bool SetRecorder::startRecording(const QString& directory)
     if (!std::isfinite(m_recordingRate) || m_recordingRate < 8000 || m_recordingRate > 384000) {
         m_startError = QStringLiteral("Start the audio engine before recording"); emit changed(); return false;
     }
-    const QString folder = directory.isEmpty()
-        ? QStandardPaths::writableLocation(QStandardPaths::MusicLocation) + "/BrockDJ/Recordings" : directory;
+    const QString requested = directory.isEmpty() ? m_directory : directory;
+    const QString folder = requested.isEmpty()
+        ? QStandardPaths::writableLocation(QStandardPaths::MusicLocation) + "/BrockDJ/Recordings" : requested;
     if (!QDir().mkpath(folder) || QStorageInfo(folder).bytesAvailable() < 16 * 1024 * 1024) {
         m_startError = QStringLiteral("Choose a writable recording folder with at least 16 MiB free"); emit changed(); return false;
     }
@@ -84,6 +91,16 @@ void SetRecorder::stopRecording()
     while (m_readers.load(std::memory_order_acquire)) std::this_thread::yield();
     if (m_writer.joinable()) m_writer.join();
     m_running.store(false); m_timer.stop(); emit changed();
+}
+void SetRecorder::requestStopRecording()
+{
+    m_accepting.store(false, std::memory_order_release);
+    emit changed();
+}
+void SetRecorder::toggleRecording()
+{
+    if (stopping()) return;
+    if (recording()) requestStopRecording(); else startRecording();
 }
 void SetRecorder::markTrack()
 {

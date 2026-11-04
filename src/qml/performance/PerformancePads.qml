@@ -12,6 +12,8 @@ Item {
     property int activeTab: 0
     property bool hotCueOnly: false
     property bool compact: false
+    readonly property var samplerController: typeof sampler !== "undefined" ? sampler : null
+    readonly property var sampleEntries: samplerController ? samplerController.slots : []
 
     property double hotCueHoldPressedIndex: -1
     property double hotCueHoldCuePosition: 0.0
@@ -252,6 +254,10 @@ Item {
     }
 
     function beginPadPress(index) {
+        if (root.activeTab === 3 && !root.keyShiftMode) {
+            if (root.samplerController) root.samplerController.trigger(index)
+            return
+        }
         if (!root.engine || index < 0 || index >= 8)
             return
 
@@ -308,6 +314,7 @@ Item {
     }
 
     function endPadPress(index) {
+        if (root.activeTab === 3 && !root.keyShiftMode) return
         if (index < 0 || index >= 8)
             return
         if (root.usesSharedPadRouter) {
@@ -424,7 +431,7 @@ Item {
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                         elide: Text.ElideRight
-                        text: root.keyShiftMode && index === 3 ? "KEY SHIFT" : modelData
+                        text: root.keyShiftMode && index === 3 ? "KEY SHIFT" : index === 3 && root.samplerController ? "SAMPLER " + "ABCD"[root.samplerController.bank] : modelData
                         color: root.activeTab === index ? UiTheme.textPrimary : UiTheme.textSecondary
                         font.family: UiTheme.uiFontFamily
                         font.pixelSize: 10
@@ -488,7 +495,8 @@ Item {
                         readonly property bool isBeatJumpTab: root.activeTab === 2
                         readonly property bool isKeyShiftTab: root.activeTab === 3 && root.keyShiftMode
                         readonly property bool isSamplerTab:  root.activeTab === 3 && !isKeyShiftTab
-                        readonly property bool isCuePlaybackTab: isHotCueTab || isSamplerTab
+                        readonly property bool isCuePlaybackTab: isHotCueTab
+                        readonly property var sample: root.sampleEntries[index] || ({})
                         readonly property string kind:        root.padKind(index)
                         readonly property bool padSet:        isCuePlaybackTab && kind !== "empty"
 
@@ -501,6 +509,7 @@ Item {
                                 : padFxToggleOn
 
                         readonly property color padAccent: {
+                            if (isSamplerTab && sample.color) return sample.color
                             if (padSet)        return root.padColor(index)
                             if (isBeatJumpTab) return UiTheme.cue
                             if (isPadFxTab)    return root.padFxDefs[index].accent
@@ -508,9 +517,9 @@ Item {
                         }
                         readonly property bool padHeld: padMouse.pressed || padTouch.pressed
                             || (isCuePlaybackTab && root.hotCueHoldPressedIndex === index)
-                        readonly property bool padActive: padHeld || padFxLit
+                        readonly property bool padActive: padHeld || padFxLit || (isSamplerTab && (sample.state === "PLAYING" || sample.state === "QUEUED"))
                             || (isKeyShiftTab && root.keyShiftPadSelected(index))
-                        readonly property bool populated: padSet || isPadFxTab || isBeatJumpTab || isKeyShiftTab
+                        readonly property bool populated: padSet || isPadFxTab || isBeatJumpTab || isKeyShiftTab || (isSamplerTab && !!sample.loaded)
 
                         radius: 0
                         color: UiTheme.padBackground(padAccent, populated, padActive, padMouse.containsMouse)
@@ -571,7 +580,7 @@ Item {
                             text: {
                                 if (isHotCueTab)   return root.padLabel(index)
                                 if (isKeyShiftTab) return root.keyShiftLabel(index)
-                                if (isSamplerTab)  return padSet ? root.padLabel(index) : "EMPTY"
+                                if (isSamplerTab)  return sample.name || "EMPTY"
                                 if (isBeatJumpTab) return root.beatJumpLabel(index)
                                 if (isPadFxTab)    return root.padFxDefs[index].name
                                 return "—"
@@ -615,6 +624,11 @@ Item {
                             onCanceled: root.endPadPress(index)
 
                             onClicked: (mouse) => {
+                                if (isSamplerTab) {
+                                    if (mouse.button === Qt.MiddleButton && root.samplerController) root.samplerController.stop(index)
+                                    else if (mouse.button === Qt.RightButton && root.Window.window && root.Window.window.openSamplerEditor) root.Window.window.openSamplerEditor(index)
+                                    return
+                                }
                                 if (!root.engine) return
 
                                 if (!isHotCueTab) return
@@ -644,8 +658,10 @@ Item {
                                 else
                                     root.endPadPress(index)
                             }
-                            onLongPressed: root.openPadEditor(
-                                index, padRect, point.position.x, point.position.y)
+                            onLongPressed: {
+                                if (padRect.isSamplerTab && root.Window.window && root.Window.window.openSamplerEditor) root.Window.window.openSamplerEditor(index)
+                                else root.openPadEditor(index, padRect, point.position.x, point.position.y)
+                            }
                         }
                     }
                 }

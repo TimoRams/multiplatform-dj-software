@@ -62,6 +62,16 @@ int main(int argc, char** argv)
     recorder.stopRecording();
     ok &= check(recorder.error().contains("sample rate"), "device rate change stops rather than corrupting a WAV");
     recorder.configure(48000);
+    recorder.setDirectory(directory.filePath("SharedRecordingFolder"));
+    recorder.toggleRecording();
+    ok &= check(recorder.recording() && recorder.filePath().contains("SharedRecordingFolder"), "toggle uses shared recording directory");
+    recorder.capture(tone, 512);
+    const auto startStop = std::chrono::steady_clock::now();
+    recorder.requestStopRecording();
+    ok &= check(std::chrono::steady_clock::now() - startStop < std::chrono::milliseconds(30), "UI stop requests never join the disk writer");
+    for (int i = 0; i < 200 && recorder.recording(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    ok &= check(!recorder.recording() && recorder.error().isEmpty(), "asynchronous stop drains and completes");
+    recorder.stopRecording();
     ok &= check(recorder.startRecording(directory.path()), "recorder recovers from a device change");
     recorder.capture(tone, (1 << 19) + 1);
     recorder.stopRecording();

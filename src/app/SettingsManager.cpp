@@ -15,6 +15,13 @@
 #include <QXmlStreamWriter>
 #include <juce_audio_devices/juce_audio_devices.h>
 
+QString SettingsManager::recordingDirectory() const { return getUiState("recordingDirectory", ""); }
+void SettingsManager::setRecordingDirectory(const QString& directory)
+{
+    if (recordingDirectory() == directory) return;
+    setUiState("recordingDirectory", directory); emit liveSettingsChanged();
+}
+
 namespace {
 juce::PropertiesFile* userSettings(SettingsManager& manager)
 {

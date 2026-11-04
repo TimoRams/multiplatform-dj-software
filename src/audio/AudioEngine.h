@@ -3,6 +3,7 @@
 #include "audio/AudioBusMixer.h"
 #include "audio/AudioParameters.h"
 #include "audio/SetRecorder.h"
+#include "audio/SamplerAudioEngine.h"
 #include "audio/DeckAudioPipeline.h"
 #include "fx/FxTypes.h"
 #include "platform/AudioThreadScheduling.h"
@@ -83,6 +84,7 @@ public:
     void unregisterCallback(juce::AudioDeviceManager& adm);
 
     SetRecorder& recorder() noexcept { return m_recorder; }
+    SamplerAudioEngine& sampler() noexcept { return m_sampler; }
     static void setMasterVolume(float v);
     static void setAntiClipEnabled(bool enabled);
     static bool antiClipEnabled();
@@ -171,6 +173,8 @@ private:
     juce::AudioBuffer<float> m_headphoneBuf;
     juce::AudioBuffer<float> m_previewScratch;
     juce::AudioBuffer<float> m_previewBus;
+    juce::AudioBuffer<float> m_samplerCue;
+    SamplerAudioEngine m_sampler;
     SetRecorder m_recorder;
     MasterMixer m_masterMixer;
     HeadphoneBus m_headphoneBus;

@@ -42,6 +42,10 @@ target_sources(${PROJECT_NAME} PRIVATE
     audio/AudioEngine.cpp
     audio/SetRecorder.cpp
     audio/SetRecorder.h
+    audio/SamplerAudioEngine.cpp
+    audio/SamplerAudioEngine.h
+    audio/SamplerController.cpp
+    audio/SamplerController.h
     audio/AudioBusMixer.h
     audio/AudioBusMixer.cpp
     audio/TimeStretchProcessor.cpp
@@ -204,6 +208,7 @@ set(BROCKDJ_QML_FILES
     src/qml/performance/PerformanceWaveformScreen.qml
     src/qml/performance/PerformanceBackdrop.qml
     src/qml/performance/PerformancePads.qml
+    src/qml/performance/SamplerPanel.qml
     src/qml/library/Library.qml
     src/qml/library/SourcePage.qml
     src/qml/settings/SettingsPanel.qml

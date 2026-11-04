@@ -34,6 +34,7 @@
 
 class DjEngine;
 class FxManager;
+class SamplerController;
 class ParameterStore;
 class QXmlStreamAttributes;
 
@@ -81,6 +82,7 @@ class MidiControllerManager : public QObject, public juce::MidiInputCallback
     Q_OBJECT
 
 public:
+    void connectSampler(SamplerController* sampler);
     enum class HardwareAccess { Enabled, Disabled };
     MidiControllerManager(ParameterStore* store, ControlClock& controlClock,
                           QObject* parent = nullptr,
@@ -180,6 +182,7 @@ public slots:
     void onParameterChanged(const QString& id, float value);
 
 private:
+    QPointer<SamplerController> m_sampler;
     // Sentinel identifier for "listen on every input at once" rather than one
     // named device. Lives here because this class owns the device lists it is
     // stored in, and enumeration, mapping and the FLX10 bridge all compare

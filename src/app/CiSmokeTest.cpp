@@ -1,6 +1,7 @@
 #include "deck/DjEngine.h"
 #include "deck/sync/DeckSync.h"
 #include "audio/AudioEngine.h"
+#include "audio/SamplerController.h"
 #include "audio/RenderModeRouter.h"
 #include "audio/device/AudioDeviceService.h"
 #include "audio/cache/AudioPageCache.h"
@@ -78,6 +79,64 @@ bool testLiveDeckFeatures(QString& error)
         deck.setLibraryDatabase(&database);
         deck.loadTrack(fixture.filePath());
         if (!require(wait([&] { return deck.hasTrack(); }), "local deck fixture did not load")) return false;
+        const QString samplerDirectory = directory.filePath("Sampler");
+        const QString sourceSample = directory.filePath("sample-source.wav");
+        require(QFile::copy(fixture.filePath(), sourceSample), "sampler source fixture copy failed");
+        {
+            SamplerController sampler(bus.sampler(), clock, samplerDirectory);
+            sampler.attachDecks({&deck, nullptr, nullptr, nullptr}, &sync, nullptr);
+            const int oldMaster = AudioEngine::masterFirstChannel(), oldBooth = AudioEngine::boothFirstChannel(), oldHeadphones = AudioEngine::headphonesFirstChannel();
+            AudioEngine::setOutputRouting(1,3,2); sampler.setCue(true);
+            require(!sampler.cue() && sampler.error().contains("headphone"), "sampler cue accepts an overlapping output assignment");
+            AudioEngine::setOutputRouting(1,3,5); sampler.setCue(true);
+            require(sampler.cue(), "sampler cue rejects a valid separate headphone pair");
+            sampler.setCue(false); AudioEngine::setOutputRouting(oldMaster,oldBooth,oldHeadphones);
+            sampler.probeFile(sourceSample);
+            require(wait([&] { return !sampler.fileInfo().value("loading").toBool(); })
+                && sampler.fileInfo().value("waveform").toList().size() == 192,
+                "asynchronous source overview is unavailable before sampler import");
+            sampler.loadFile(0, sourceSample, 0, 1, 120, true, true, "Loop fixture", "#40a0e0", 0.5);
+            require(wait([&] { return sampler.slotList().first().toMap().value("loaded").toBool(); }), "sampler import failed");
+            auto entry = sampler.slotList().first().toMap();
+            require(entry.value("name") == "Loop fixture" && entry.value("loop").toBool()
+                && entry.value("sync").toBool(), "sampler import lost mode/name/sync metadata");
+            sampler.loadFile(0, directory.filePath("invalid.wav"));
+            require(wait([&] { return !sampler.slotList().first().toMap().value("state").toString().contains("LOADING"); }), "failed sampler import did not finish");
+            require(sampler.slotList().first().toMap().value("loaded").toBool(), "failed import destroyed prior playable sample");
+            sampler.edit(0, "Edited loop", "#80b040", 0.7, true, true, 120, 0.1, 0.9);
+            require(wait([&] { return sampler.slotList().first().toMap().value("loaded").toBool(); }), "sampler trim edit failed");
+            sampler.setBank(1); sampler.loadFile(2, sourceSample, 0, 0.5);
+            require(wait([&] { return sampler.slotList()[2].toMap().value("loaded").toBool(); }), "second sampler bank did not load");
+            sampler.setBank(0); sampler.setGain(0.63); sampler.setQuantize(4);
+            require(QFile::remove(sourceSample), "cannot remove original sample fixture");
+        }
+        {
+            SamplerController restored(bus.sampler(), clock, samplerDirectory);
+            require(wait([&] { return restored.slotList().first().toMap().value("loaded").toBool(); }), "sampler restart failed without original file");
+            const auto entry = restored.slotList().first().toMap();
+            require(entry.value("name") == "Edited loop" && std::abs(entry.value("start").toDouble() - 0.1) < 0.001
+                && std::abs(entry.value("end").toDouble() - 0.9) < 0.001 && restored.quantize() == 4
+                && std::abs(restored.gain() - 0.63) < 0.001, "sampler metadata/range/settings did not persist");
+            restored.setBank(1);
+            require(wait([&] { return restored.slotList()[2].toMap().value("loaded").toBool(); }), "sampler bank identity did not persist");
+            restored.clear(2);
+            require(!restored.slotList()[2].toMap().value("loaded").toBool(), "cleared sampler slot remains playable");
+            restored.attachDecks({&deck, nullptr, nullptr, nullptr}, &sync, nullptr);
+            deck.setManualBpm(120);
+            restored.captureDeck(1, 0, 1);
+            require(wait([&] { return restored.slotList()[1].toMap().value("loaded").toBool(); }), "capture from deck beat range failed");
+            require(restored.slotList()[1].toMap().value("loop").toBool(), "captured beats did not become a loop");
+            ParameterStore parameters;
+            MidiControllerManager midi(&parameters, clock, nullptr, MidiControllerManager::HardwareAccess::Disabled);
+            midi.connectSampler(&restored);
+            restored.setQuantize(0);
+            midi.selectPerformancePadMode("deckA", 3);
+            midi.setPerformancePadPressed("deckA", 1, true);
+            juce::AudioBuffer<float> renderedSample(2,512);
+            for (int i = 0; i < 4; ++i) bus.getNextAudioBlock({&renderedSample,0,512});
+            require(bus.sampler().state(9) == SamplerAudioEngine::Playing,
+                "MIDI sampler pad depends on a deck connection or track instead of global sampler");
+        }
         deck.play();
         require(deck.isPlaying(), "live fixture must have play intent");
         deck.loadTrack(directory.filePath("missing.wav"));

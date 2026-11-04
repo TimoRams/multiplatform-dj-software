@@ -1224,9 +1224,67 @@ Rectangle {
             anchors.bottomMargin: UiTheme.px(18)
             width: Math.min(parent.width - UiTheme.space6 * 2, 880)
             height: Math.max(0, parent.height - UiTheme.px(48))
-            columns: 4
+            columns: 5
             rowSpacing: UiTheme.px(8)
             columnSpacing: UiTheme.px(8)
+
+            Rectangle {
+                id: quickRecording
+                objectName: "quickRecording"
+                Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: 1
+                Layout.preferredHeight: 44
+                radius: 0
+                readonly property var recorder: typeof setRecorder !== "undefined" ? setRecorder : null
+                readonly property bool active: recorder ? recorder.recording : false
+                readonly property bool stopping: recorder ? recorder.stopping : false
+                function duration(seconds) {
+                    const value = Math.max(0, Math.floor(seconds || 0))
+                    function two(n) { return (n < 10 ? "0" : "") + n }
+                    return two(Math.floor(value / 3600)) + ":" + two(Math.floor(value / 60) % 60) + ":" + two(value % 60)
+                }
+                color: recordingMouse.pressed ? UiTheme.surfaceRaised : UiTheme.panel
+                border.color: active ? UiTheme.error : UiTheme.borderSubtle
+                Column {
+                    anchors.centerIn: parent; spacing: 3
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: quickRecording.stopping ? "SAVING …" : quickRecording.active ? "STOP RECORDING" : "START RECORDING"
+                        color: quickRecording.active ? UiTheme.error : UiTheme.textPrimary
+                        font.pixelSize: root.sp(10); font.bold: true
+                    }
+                    Text {
+                        objectName: "quickRecordingDuration"
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: quickRecording.recorder && quickRecording.recorder.error ? "RECORDING ERROR"
+                            : quickRecording.duration(quickRecording.recorder ? quickRecording.recorder.elapsedSeconds : 0)
+                        color: quickRecording.recorder && quickRecording.recorder.error ? UiTheme.error : UiTheme.textSecondary
+                        font.family: UiTheme.numericFontFamily; font.pixelSize: root.sp(11)
+                    }
+                }
+                MouseArea {
+                    id: recordingMouse; anchors.fill: parent
+                    enabled: quickRecording.recorder !== null && !quickRecording.stopping
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: quickRecording.recorder.toggleRecording()
+                }
+                ToolTip.visible: recordingMouse.containsMouse && !!quickRecording.recorder && !!quickRecording.recorder.error
+                ToolTip.text: quickRecording.recorder ? quickRecording.recorder.error : ""
+            }
+
+            Rectangle {
+                objectName: "quickSampler"
+                Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredWidth: 1
+                Layout.preferredHeight: 44
+                radius: 0; color: UiTheme.panel; border.color: UiTheme.borderSubtle
+                Text { anchors.centerIn: parent; text: "Sampler"; color: UiTheme.textPrimary; font.pixelSize: root.sp(11); font.bold: true }
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: if (root.Window.window) {
+                        root.Window.window.samplerPanelOpen = !root.Window.window.samplerPanelOpen
+                        root.Window.window.closeTopBarPullDown()
+                    }
+                }
+            }
 
         // ── View toggles ──────────────────────────────────────────────────────
         Rectangle {

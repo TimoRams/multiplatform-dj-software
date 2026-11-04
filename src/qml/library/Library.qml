@@ -6207,6 +6207,16 @@ Rectangle {
         background: Rectangle { implicitWidth: 260; color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
 
         MenuItem {
+            text: "Load to selected sampler slot"
+            enabled: typeof sampler !== "undefined" && !!sampler
+            onTriggered: {
+                if (window && window.openSamplerEditor) {
+                    window.samplerPanelOpen = true
+                    window.openSamplerEditor(sampler.selectedSlot, libraryRoot.ctxFilePath)
+                }
+            }
+        }
+        MenuItem {
             text: "Preview track"
             contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
             background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }

@@ -29,6 +29,7 @@ class SettingsManager : public QObject
     Q_PROPERTY(bool flx10ControllerSupportEnabled READ flx10ControllerSupportEnabled WRITE setFlx10ControllerSupportEnabled NOTIFY controllerSettingsChanged)
     Q_PROPERTY(int flx10HostUsbPort READ flx10HostUsbPort WRITE setFlx10HostUsbPort NOTIFY controllerSettingsChanged)
     Q_PROPERTY(bool loadLock READ loadLock WRITE setLoadLock NOTIFY liveSettingsChanged)
+    Q_PROPERTY(QString recordingDirectory READ recordingDirectory WRITE setRecordingDirectory NOTIFY liveSettingsChanged)
     Q_PROPERTY(bool splitCue READ splitCue WRITE setSplitCue NOTIFY liveSettingsChanged)
     Q_PROPERTY(bool masterMono READ masterMono WRITE setMasterMono NOTIFY liveSettingsChanged)
     Q_PROPERTY(bool autoCueEnabled READ autoCueEnabled WRITE setAutoCueEnabled NOTIFY liveSettingsChanged)
@@ -56,6 +57,8 @@ class SettingsManager : public QObject
     Q_PROPERTY(QString crossfaderAssignD READ getCrossfaderAssignD WRITE setCrossfaderAssignD NOTIFY crossfaderSettingsChanged)
 
 public:
+    QString recordingDirectory() const;
+    void setRecordingDirectory(const QString& directory);
     static SettingsManager& getInstance();
 
     explicit SettingsManager(QObject* parent = nullptr);

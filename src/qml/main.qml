@@ -22,6 +22,11 @@ ApplicationWindow {
     font.hintingPreference: Font.PreferFullHinting
     font.family: interFont.status === FontLoader.Ready ? UiTheme.uiFontFamily : font.family
     property bool libraryExpanded: false
+    property bool samplerPanelOpen: false
+    function openSamplerEditor(pad, path) {
+        samplerPanelOpen = true
+        Qt.callLater(function() { samplerDock.openEditor(pad, path || "") })
+    }
     property string linkedDeckName: ""
     property bool exitPromptVisible: false
     property bool exitShutdownInProgress: false
@@ -552,7 +557,8 @@ ApplicationWindow {
     // Keep the established reference size; only shrink when the window needs it.
     // Above the reference height, additional desktop space belongs to the library.
     readonly property bool desktopLibraryLayout: !allInOneMode && effectiveLibraryVisible && !sourcePageActive
-    readonly property real performanceSizingHeight: desktopLibraryLayout ? Math.min(height, Math.max(minimumHeight, _refHeight)) : height
+    readonly property real samplerDockHeight: samplerPanelOpen ? Math.min(UiTheme.px(244), height * 0.43) : 0
+    readonly property real performanceSizingHeight: (desktopLibraryLayout ? Math.min(height, Math.max(minimumHeight, _refHeight)) : height) - samplerDockHeight
     readonly property real baseUiWidth: 1600
     // Width stretches the content columns; only height sizes the controls.
     function performanceScaleForHeight(viewportHeight, userScale, deckRows) {
@@ -639,6 +645,14 @@ ApplicationWindow {
             Layout.fillHeight: true
             appWindow: window
         }
+        SamplerPanel {
+            id: samplerDock
+            visible: window.samplerPanelOpen
+            Layout.fillWidth: true
+            Layout.preferredHeight: window.samplerDockHeight
+            Layout.minimumHeight: 0
+            Layout.maximumHeight: Layout.preferredHeight
+            onCloseRequested: window.samplerPanelOpen = false
+        }
     }
-
 }

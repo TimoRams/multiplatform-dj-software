@@ -1,8 +1,9 @@
 # Live functionality milestone (P0/P1)
 
 This implements the first milestone of the XDJ-AZ / PRIME 4+ comparison roadmap.
-Independent sampler, Touch Cue/Slicer, stems, network sources, lighting and event
-zone/microphone processing remain later milestones; none are claimed by the UI.
+The independent sampler and recording shortcut are covered by the subsequent
+[sampler milestone](sampler-milestone.md). Touch Cue/Slicer, stems, network
+sources, lighting and event zone/microphone processing remain later milestones.
 
 ## Audio and protection
 

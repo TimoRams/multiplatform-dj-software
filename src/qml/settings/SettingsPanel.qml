@@ -2214,16 +2214,22 @@ Item {
                         }
                     }
                     Text { text: "SET RECORDER"; color: UiTheme.textPrimary; font.pixelSize: 16 }
-                    TextField { id: recordingFolder; Layout.fillWidth: true; placeholderText: "Recording folder (empty: Music/BrockDJ/Recordings)"; enabled: !liveSettings.recorder || !liveSettings.recorder.recording }
+                    TextField {
+                        id: recordingFolder; Layout.fillWidth: true
+                        placeholderText: "Recording folder (empty: Music/BrockDJ/Recordings)"
+                        text: settingsManager ? settingsManager.recordingDirectory : ""
+                        onEditingFinished: if (settingsManager) settingsManager.recordingDirectory = text
+                        enabled: !liveSettings.recorder || !liveSettings.recorder.recording
+                    }
                     RowLayout {
                         Button {
-                            text: liveSettings.recorder && liveSettings.recorder.recording ? "STOP RECORDING" : "START RECORDING"
-                            enabled: liveSettings.recorder !== null
+                            text: liveSettings.recorder && liveSettings.recorder.stopping ? "SAVING …" : liveSettings.recorder && liveSettings.recorder.recording ? "STOP RECORDING" : "START RECORDING"
+                            enabled: liveSettings.recorder !== null && !liveSettings.recorder.stopping
                             accentColor: UiTheme.error
                             checked: liveSettings.recorder ? liveSettings.recorder.recording : false
                             onClicked: {
-                                if (liveSettings.recorder.recording) liveSettings.recorder.stopRecording()
-                                else liveSettings.recorder.startRecording(recordingFolder.text)
+                                settingsManager.recordingDirectory = recordingFolder.text
+                                liveSettings.recorder.toggleRecording()
                             }
                         }
                         Button { text: "TRACK MARK"; enabled: liveSettings.recorder && liveSettings.recorder.recording; onClicked: liveSettings.recorder.markTrack() }

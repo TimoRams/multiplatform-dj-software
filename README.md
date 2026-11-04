@@ -29,6 +29,8 @@ The project is still under active development, so bugs, unfinished features, exp
 * Headphone-only library preview, split cue and mono master options
 * Load lock, track-end warning, Auto Cue, editable memory cues and armed saved loops
 * Stereo 24-bit WAV set recording with track marks and bounded background writing
+* Independent sampler: four banks of eight slots, one-shots, quantized sync loops,
+  deck-loop/beat capture, local sample storage and pre-fader headphone cue
 
 The interface uses angular controls and subdued, translucent slate panels.
 In **Settings > DJ / Sync > Playhead position**, the white scrolling-waveform
@@ -49,11 +51,27 @@ uses `Music/BrockDJ/Recordings`. Track Mark starts a new numbered WAV part.
 External sources mixed exclusively inside a controller need a recording return
 input; they cannot be captured from the software master alone.
 
+Pull down the top menu to start/stop recording and see its HH:MM:SS timer in the
+same button. The saved recording directory applies to this shortcut and MIDI too.
+Stopping finalizes the file in the background; wait for “SAVING” to finish before
+starting another recording.
+
+The **Sampler** shortcut opens the bottom panel without stopping the decks.
+Banks A–D each contain eight slots; deck SAMPLER pads and FLX10 sampler pads use
+the same selected bank. Use EDIT to load/trim a file or capture a deck loop/beat
+range. The Library context menu and drag-and-drop also open the sample editor.
+Samples are copied into local storage (up to 30 seconds each, 256 MiB total PCM).
+One-shots retrigger; loops toggle. At most eight voices play simultaneously;
+occupied loop voices are never stolen. CUE is independent of the sampler level.
+Sampler program reaches the master/booth and recorder; headphone-only audio does
+not. Sync uses the active master/Link or a playing deck, then an internal clock.
+
 Memory cues are also reachable from the performance deck side panel. Name/delete
 cues and arm saved loops in Live / Recording. Imported USB performance edits are
 stored in BrockDJ's local library, leaving the original device database untouched.
 
 See [live milestone behavior and tests](docs/architecture/live-features-milestone.md).
+See [sampler implementation and remaining roadmap](docs/architecture/sampler-milestone.md).
 
 ## Platform status
 

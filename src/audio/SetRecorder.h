@@ -13,6 +13,7 @@
 class SetRecorder final : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool recording READ recording NOTIFY changed)
+    Q_PROPERTY(bool stopping READ stopping NOTIFY changed)
     Q_PROPERTY(QString filePath READ filePath NOTIFY changed)
     Q_PROPERTY(QString error READ error NOTIFY changed)
     Q_PROPERTY(double elapsedSeconds READ elapsedSeconds NOTIFY changed)
@@ -22,6 +23,7 @@ public:
     explicit SetRecorder(QObject* parent = nullptr);
     ~SetRecorder() override;
     bool recording() const { return m_running.load(std::memory_order_acquire); }
+    bool stopping() const { return recording() && !m_accepting.load(std::memory_order_acquire); }
     QString filePath() const { return m_path; }
     QString error() const;
     double elapsedSeconds() const;
@@ -31,6 +33,9 @@ public:
     void capture(const juce::AudioBuffer<float>& master, int samples) noexcept;
     Q_INVOKABLE bool startRecording(const QString& directory = {});
     Q_INVOKABLE void stopRecording();
+    Q_INVOKABLE void requestStopRecording();
+    Q_INVOKABLE void toggleRecording();
+    void setDirectory(const QString& directory) { m_directory = directory; }
     Q_INVOKABLE void markTrack();
 signals:
     void changed();
@@ -45,7 +50,7 @@ private:
     std::atomic<int> m_failure {0};
     std::atomic<double> m_rate {0}, m_peak {0};
     double m_recordingRate = 0;
-    QString m_path, m_startError;
+    QString m_path, m_startError, m_directory;
     QTimer m_timer;
     std::thread m_writer;
 };

@@ -1334,6 +1334,33 @@ int main(int argc, char** argv)
         for (int i = 0; i < 8; ++i) privateEngine.getNextAudioBlock({&outputs, 0, 512});
         ok &= require(outputs.getMagnitude(0, 512) == 0,
                       "changing to an overlapping headphone pair mutes preview instead of leaking it");
+        auto sample = std::make_unique<SamplerSample>();
+        sample->pcm.setSize(2, 48000); sample->sampleRate = 48000; sample->loop = true;
+        for (int ch = 0; ch < 2; ++ch) juce::FloatVectorOperations::fill(sample->pcm.getWritePointer(ch), 0.1f, 48000);
+        privateEngine.sampler().install(0, std::move(sample));
+        privateEngine.sampler().setGain(0); privateEngine.sampler().setCue(true);
+        privateEngine.sampler().trigger(0, 0);
+        AudioEngine::setOutputRouting(1, 3, 5); AudioEngine::setMasterCueEnabled(false);
+        for (int i = 0; i < 8; ++i) privateEngine.getNextAudioBlock({&outputs, 0, 512});
+        ok &= require(privateEngine.masterTap().getMagnitude(0,512) == 0 && outputs.getMagnitude(2,0,512) == 0
+            && std::abs(outputs.getMagnitude(4,0,512) - 0.175f) < 0.002f,
+            "library preview and pre-fader sampler cue coexist privately with silent master and booth");
+        privateEngine.sampler().setGain(1);
+        ok &= require(privateEngine.recorder().startRecording(directory.filePath("sampler-routing")), "sampler integration recorder starts");
+        for (int i = 0; i < 8; ++i) privateEngine.getNextAudioBlock({&outputs, 0, 512});
+        privateEngine.recorder().stopRecording();
+        ok &= require(std::abs(outputs.getMagnitude(0,0,512) - 0.1f) < 0.002f
+            && std::abs(outputs.getMagnitude(2,0,512) - 0.1f) < 0.002f,
+            "sampler program reaches master and booth independently of deck faders");
+        juce::AudioFormatManager recordedFormats; recordedFormats.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> recorded(recordedFormats.createReaderFor(juce::File(privateEngine.recorder().filePath().toStdString())));
+        juce::AudioBuffer<float> recordedBlock(2,512);
+        const bool readRecording = recorded && recorded->read(&recordedBlock,0,512,3072,true,true);
+        ok &= require(readRecording && std::abs(recordedBlock.getMagnitude(0,512) - 0.1f) < 0.002f,
+            "actual WAV contains sampler program and excludes simultaneous preview and sampler cue");
+        privateEngine.sampler().setGain(0); AudioEngine::setOutputRouting(1,3,2);
+        for (int i = 0; i < 8; ++i) privateEngine.getNextAudioBlock({&outputs,0,512});
+        ok &= require(outputs.getMagnitude(0,512) == 0, "overlapping headphones cannot leak sampler cue onto program outputs");
         AudioEngine::setHeadphoneGain(1.0f);
         AudioEngine::setMasterCueEnabled(false);
         AudioEngine::setHeadphoneMix(0.5f);
@@ -1370,6 +1397,15 @@ int main(int argc, char** argv)
     }
 
     AudioEngine audioEngine(cache);
+    struct StressPreview final : IAuxAudioEndpoint {
+        AuxAudioDestination destination() const noexcept override { return AuxAudioDestination::Headphones; }
+        void prepareAuxAudio(int, double) override {}
+        void releaseAuxAudio() override {}
+        void mixAuxAudio(juce::AudioBuffer<float>& cue, juce::AudioBuffer<float>&, int samples) noexcept override {
+            for (int ch = 0; ch < 2; ++ch) juce::FloatVectorOperations::fill(cue.getWritePointer(ch), 0.01f, samples);
+        }
+    } stressPreview;
+    auto stressPreviewRegistration = audioEngine.registerAuxEndpoint(stressPreview);
     std::array<DeckAudioPipeline*, 4> decks {
         &audioEngine.deck(0), &audioEngine.deck(1), &audioEngine.deck(2), &audioEngine.deck(3)
     };
@@ -1390,6 +1426,16 @@ int main(int argc, char** argv)
     AudioEngine::setMasterCueEnabled(true);
     AudioEngine::setAntiClipEnabled(true);
     audioEngine.prepareToPlay(16'384, 48'000.0);
+    for (int slot = 0; slot < 8; ++slot) {
+        auto sample = std::make_unique<SamplerSample>();
+        sample->pcm.setSize(2,48000); sample->sampleRate = 48000; sample->loop = true;
+        for (int ch = 0; ch < 2; ++ch) for (int i = 0; i < 48000; ++i)
+            sample->pcm.setSample(ch,i,static_cast<float>(0.01 * std::sin(2 * juce::MathConstants<double>::pi * (220+slot*30) * i/48000)));
+        audioEngine.sampler().install(slot,std::move(sample)); audioEngine.sampler().trigger(slot,0);
+    }
+    audioEngine.sampler().setCue(true);
+    ok &= require(audioEngine.recorder().startRecording(directory.filePath("four-deck-eight-sampler")),
+                  "combined four-deck/eight-sample/preview recording starts");
     audioEngine.resetRealtimeStats();
     AudioEngine::resetCallbackStats();
     {
@@ -1549,6 +1595,11 @@ int main(int argc, char** argv)
               << " deadline-misses=" << deadlineMisses
               << " silent-transition-blocks=" << silentBlocks << "\n";
 
+    for (int slot = 0; slot < 8; ++slot)
+        ok &= require(audioEngine.sampler().state(slot) == SamplerAudioEngine::Playing, "all eight sampler voices survive four-deck stress");
+    audioEngine.recorder().stopRecording();
+    ok &= require(audioEngine.recorder().error().isEmpty() && audioEngine.recorder().elapsedSeconds() > 0,
+                  "combined four-deck/eight-sample/preview recording completes without storage failure");
     audioEngine.beginShutdown();
     audioEngine.releaseResources();
 

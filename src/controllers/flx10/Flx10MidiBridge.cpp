@@ -1,4 +1,5 @@
 #include "controllers/midi/MidiControllerManager.h"
+#include "audio/SamplerController.h"
 #include "controllers/midi/MidiParameterDispatch.h"
 #include "controllers/flx10/Flx10ControllerIdentity.h"
 #include "audio/AudioEngine.h"
@@ -911,9 +912,12 @@ void MidiControllerManager::refreshPerformancePadLeds(QChar deck, DjEngine* engi
         sendMidiNoteLed(status, 0x70 + i, keyShiftLed);
         sendMidiNoteLed(status, 0x78 + i, keyShiftLed);
 
-        const CuePadInfo sample = cuePadInfo(engine, i);
-        sendMidiNoteLed(status, 0x30 + i,
-                        sample.set ? hotCueLedValueForColor(sample.color) : 0);
+        const auto entries = m_sampler ? m_sampler->slotList() : QVariantList{};
+        const auto sample = i < entries.size() ? entries[i].toMap() : QVariantMap{};
+        const QString state = sample.value("state").toString();
+        sendMidiNoteLed(status, 0x30 + i, state == "PLAYING" ? 0x7F
+            : state == "QUEUED" ? 0x11 : sample.value("loaded").toBool()
+                ? hotCueLedValueForColor(sample.value("color").toString()) : 0);
     }
 }
 
@@ -1208,6 +1212,27 @@ void MidiControllerManager::connectFxManager(FxManager* fxManager)
     pushBeatFxTiming();
 }
 
+void MidiControllerManager::connectSampler(SamplerController* sampler)
+{
+    if (m_sampler) disconnect(m_sampler, nullptr, this, nullptr);
+    m_sampler = sampler;
+    if (sampler) connect(sampler, &SamplerController::changed, this,
+        [this, previous = std::array<int, 8>{-1,-1,-1,-1,-1,-1,-1,-1}]() mutable {
+        if (!m_sampler) return;
+        const auto entries = m_sampler->slotList();
+        for (int i = 0; i < 8; ++i) {
+            const auto entry = entries[i].toMap();
+            const auto state = entry.value("state").toString();
+            const int value = state == "PLAYING" ? 0x7F : state == "QUEUED" ? 0x11
+                : entry.value("loaded").toBool() ? hotCueLedValueForColor(entry.value("color").toString()) : 0;
+            if (value == previous[i]) continue;
+            previous[i] = value;
+            for (const QChar deck : {QLatin1Char('A'), QLatin1Char('B'), QLatin1Char('C'), QLatin1Char('D')})
+                sendMidiNoteLed(hotCueStatusForDeck(deck), 0x30 + i, value);
+        }
+    });
+}
+
 void MidiControllerManager::applyBeatFxState(BeatFxEngage engage)
 {
     QScopedValueRollback<bool> applyingState(m_applyingBeatFxState, true);
@@ -1473,6 +1498,12 @@ void MidiControllerManager::handlePerformancePad(QChar deck,
                                                  bool pressed,
                                                  bool clearRequest)
 {
+    if (mode == MidiPadMode::Sampler) {
+        if (m_sampler && pressed && padIndex >= 0 && padIndex < 8) {
+            if (clearRequest) m_sampler->clear(padIndex); else m_sampler->trigger(padIndex);
+        }
+        return;
+    }
     if (!engine || padIndex < 0 || padIndex >= 8)
         return;
 
@@ -1498,13 +1529,6 @@ void MidiControllerManager::handlePerformancePad(QChar deck,
         return;
     }
 
-    if (mode == MidiPadMode::Sampler) {
-        // The current mixer has no independent sampler bus; assigned cue/loop
-        // slots form the deck-local sample bank and empty slots stay untouched.
-        if (!clearRequest)
-            handleCuePadHold(deck, engine, padIndex, pressed, false);
-        return;
-    }
 
     if (clearRequest)
         return;

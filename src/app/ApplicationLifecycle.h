@@ -29,6 +29,7 @@ class CursorControl;
 class CoverArtProvider;
 class LibraryCoverService;
 class LibraryPreviewPlayer;
+class SamplerController;
 class SettingsManager;
 class AppConfig;
 class MixerControl;
@@ -68,6 +69,7 @@ enum class QmlContextProperty : std::uint8_t {
     LibraryCover,
     LibraryPreview,
     SetRecorder,
+    Sampler,
     Count
 };
 
@@ -105,7 +107,8 @@ inline constexpr std::array<QmlContextPropertyContract,
         {"controlClock"},
         {"libraryCover"},
         {"libraryPreview"},
-        {"setRecorder"}
+        {"setRecorder"},
+        {"sampler"}
     }};
 
 // QML entry point for ordered app teardown before Qt.quit().
@@ -161,6 +164,7 @@ struct ApplicationRuntime {
     std::unique_ptr<DeviceLibraryManager> deviceLibraryManager;
     std::unique_ptr<LibraryPreviewPlayer> libraryPreviewPlayer;
     AudioEngine::AuxRegistration previewRegistration;
+    std::unique_ptr<SamplerController> sampler;
 
     std::unique_ptr<FxManager> fxManager;
     std::unique_ptr<LinkManager> linkManager;

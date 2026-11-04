@@ -1,5 +1,6 @@
 #include "ApplicationBootstrap.h"
 #include "ApplicationLifecycle.h"
+#include "audio/SamplerController.h"
 #include "platform/PosixSignalHandler.h"
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
@@ -789,9 +790,10 @@ int runApplication(int argc, char *argv[])
                 return !runtime.audioEngine || !runtime.audioEngine->recorder().recording()
                     || !onDevice(runtime.audioEngine->recorder().filePath());
             });
-            const auto applyMonitoring = [&settingsManager] {
+            const auto applyMonitoring = [&settingsManager, &runtime] {
                 AudioEngine::setSplitCue(settingsManager.splitCue());
                 AudioEngine::setMasterMono(settingsManager.masterMono());
+                runtime.audioEngine->recorder().setDirectory(settingsManager.recordingDirectory());
             };
             applyMonitoring();
             QObject::connect(&settingsManager, &SettingsManager::liveSettingsChanged, &app, applyMonitoring);
@@ -805,12 +807,30 @@ int runApplication(int argc, char *argv[])
                              });
             ApplicationLifecycle::setQmlContextProperty(engine, QmlContextProperty::SetRecorder,
                                                        &runtime.audioEngine->recorder());
+            runtime.sampler = std::make_unique<SamplerController>(runtime.audioEngine->sampler(),
+                *runtime.controlClock, settingsManager.getConfigDirectoryPath() + "/Sampler", &app);
+            runtime.sampler->attachDecks({runtime.deckA.get(), runtime.deckB.get(), runtime.deckC.get(), runtime.deckD.get()},
+                                         runtime.syncCoordinator.get(), runtime.linkManager.get());
+            ApplicationLifecycle::setQmlContextProperty(engine, QmlContextProperty::Sampler, runtime.sampler.get());
+            if (runtime.midiManager) runtime.midiManager->connectSampler(runtime.sampler.get());
             QObject::connect(runtime.parameterStore.get(), &ParameterStore::parameterChanged, &app,
                              [&runtime](const QString& id, float value) {
+                if (runtime.sampler) {
+                    auto& sampler = *runtime.sampler;
+                    if (id == "sampler_gain") { sampler.setGain(value * 1.5); return; }
+                    if (value >= 0.5f) {
+                        if (id == "sampler_stop_all") sampler.stopAll();
+                        else if (id == "sampler_cue") sampler.setCue(!sampler.cue());
+                        else if (id == "sampler_bank_next") sampler.setBank((sampler.bank() + 1) % 4);
+                        else if (id == "sampler_bank_previous") sampler.setBank((sampler.bank() + 3) % 4);
+                        else if (id.startsWith("sampler_bank") && id.size() == 13) sampler.setBank(id.back().unicode() - '1');
+                        else if (id.startsWith("sampler_pad") && id.size() == 12) sampler.trigger(id.back().unicode() - '1');
+                    }
+                }
                 if (value < 0.5f || !runtime.audioEngine) return;
                 auto& recorder = runtime.audioEngine->recorder();
                 if (id == "recording_toggle") {
-                    if (recorder.recording()) recorder.stopRecording(); else recorder.startRecording();
+                    recorder.toggleRecording();
                 } else if (id == "recording_track_mark") recorder.markTrack();
             });
             runtime.previewRegistration = runtime.audioEngine->registerAuxEndpoint(

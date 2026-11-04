@@ -208,6 +208,8 @@ void AudioEngine::prepareToPlay(int, double sampleRate)
     m_headphoneBuf.setSize(2, kProcessingChunkSize, false, true, true);
     m_previewScratch.setSize(2, kProcessingChunkSize, false, true, true);
     m_previewBus.setSize(2, kProcessingChunkSize, false, true, true);
+    m_samplerCue.setSize(2, kProcessingChunkSize, false, true, true);
+    m_sampler.prepare(kProcessingChunkSize, validRate);
     m_masterMixer.prepare(validRate, kProcessingChunkSize);
     m_headphoneBus.prepare(validRate, kProcessingChunkSize);
     s_limiterLatencySamples.store(m_masterMixer.limiterLatencySamples(),
@@ -223,6 +225,7 @@ void AudioEngine::prepareToPlay(int, double sampleRate)
 
 void AudioEngine::releaseResources()
 {
+    m_sampler.release();
     m_recorder.configure(0);
     m_isPrepared.store(false, std::memory_order_release);
     EndpointReadGuard guard(m_activeEndpointReaders);
@@ -386,6 +389,12 @@ void AudioEngine::processChunk(
     if (aux && (aux->destination() != AuxAudioDestination::Headphones || privateHeadphones))
         aux->mixAuxAudio(aux->destination() == AuxAudioDestination::Headphones
                             ? m_previewBus : m_masterBuf, m_previewScratch, samples);
+    m_samplerCue.clear(0, 0, samples);
+    m_samplerCue.clear(1, 0, samples);
+    m_sampler.render(m_masterBuf, m_samplerCue, samples,
+                     blockEndTimeSeconds - samples / m_sampleRate.load(std::memory_order_relaxed));
+    if (privateHeadphones)
+        for (int ch = 0; ch < 2; ++ch) m_previewBus.addFrom(ch, 0, m_samplerCue, ch, 0, samples);
     sanitizeStereo(m_masterBuf, samples);
     // The master cue tap is refreshed unconditionally: the headphone bus fades
     // it in and out across a block, and fading through a buffer that stopped
