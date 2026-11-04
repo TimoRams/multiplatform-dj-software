@@ -362,8 +362,35 @@ void suppressedInputSilencesMasterAndCue()
     assert(std::abs(tail(master, 0) - 0.5f) < 0.002f);
 }
 
+bool monoMasterMatchesMeterAndCue()
+{
+    constexpr int samples = 512;
+    MasterMixer mixer;
+    mixer.prepare(48000, samples);
+    AudioParameters parameters;
+    parameters.masterMono = true;
+    juce::AudioBuffer<float> master(2, samples), cue(2, samples);
+    for (int test = 0; test < 2; ++test) {
+        const float left = test ? 0.5f : 0.2f;
+        const float right = test ? -0.5f : 0.6f;
+        const float expected = (left + right) * 0.5f;
+        for (int channel = 0; channel < 2; ++channel)
+            std::fill_n(master.getWritePointer(channel), samples, channel ? right : left);
+        mixer.finalize(parameters, master, samples, &cue);
+        if (std::abs(mixer.meter().preLimiterPeakL - expected) > 1e-5f
+            || std::abs(mixer.meter().preLimiterPeakR - expected) > 1e-5f
+            || std::abs(cue.getSample(0, samples - 1) - expected) > 1e-5f
+            || std::abs(cue.getSample(1, samples - 1) - expected) > 1e-5f) {
+            std::cerr << "FAIL: mono fold, meters and master cue disagree\n";
+            return false;
+        }
+    }
+    return true;
+}
+
 int main()
 {
+    if (!monoMasterMatchesMeterAndCue()) return 1;
     parameterSnapshotIsCoherent();
     commandQueueIsBounded();
     everyChannelCrossfaderAssignment();

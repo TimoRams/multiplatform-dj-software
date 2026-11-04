@@ -3223,6 +3223,8 @@ bool qmlMergeRuntimeTests()
             QtObject {
                 property bool hasTrack: true
                 property bool isPlaying: false
+                property bool loopActive: false
+                property real visualPosition: 49.123
                 property string trackTitle: "After Hours / Extended Mix"
                 property string trackArtist: "Northbound"
                 property string trackKey: "Am"
@@ -3241,7 +3243,7 @@ bool qmlMergeRuntimeTests()
                 property bool seekPreviewActive: false
                 property real seekPreviewPosition: 0
                 property real mainCueSec: 0
-                function getVisualPositionQml() { return 49.123 }
+                function getVisualPositionQml() { return visualPosition }
                 function getPlayheadPositionAtomic() { return 49.123 }
                 function beginSeekPreview(value) {}
                 function updateSeekPreview(value) {}
@@ -3283,6 +3285,20 @@ bool qmlMergeRuntimeTests()
                           "widening the lower deck row preserves control metrics and native item scale");
         }
 
+        infoEngine->setProperty("isPlaying", true);
+        infoEngine->setProperty("visualPosition", 240.0);
+        QMetaObject::invokeMethod(infoA.get(), "refreshDisplayedPlaybackPosition");
+        QCoreApplication::processEvents();
+        ok &= require(infoA->property("trackEnding").toBool(), "playing deck warns near its real-time track end");
+        infoEngine->setProperty("loopActive", true);
+        QCoreApplication::processEvents();
+        ok &= require(!infoA->property("trackEnding").toBool(), "an active loop suppresses track-end warnings");
+        infoEngine->setProperty("loopActive", false);
+        infoEngine->setProperty("isPlaying", false);
+        QCoreApplication::processEvents();
+        ok &= require(!infoA->property("trackEnding").toBool(), "a paused deck does not show an end warning");
+        infoEngine->setProperty("visualPosition", 49.123);
+        QMetaObject::invokeMethod(infoA.get(), "refreshDisplayedPlaybackPosition");
         const QString captureDir = qEnvironmentVariable("BROCKDJ_UI_CAPTURE_DIR");
         if (!captureDir.isEmpty()) {
             QDir().mkpath(captureDir);

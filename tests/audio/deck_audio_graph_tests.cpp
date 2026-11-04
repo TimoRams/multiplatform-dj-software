@@ -1300,6 +1300,46 @@ int main(int argc, char** argv)
     }
     directDecks.clear();
 
+    // Preview is private even with MASTER CUE enabled and CUE MIX at Master.
+    {
+        struct PreviewEndpoint final : IAuxAudioEndpoint {
+            AuxAudioDestination destination() const noexcept override { return AuxAudioDestination::Headphones; }
+            void prepareAuxAudio(int, double) override {}
+            void releaseAuxAudio() override {}
+            void mixAuxAudio(juce::AudioBuffer<float>& cue, juce::AudioBuffer<float>&, int samples) noexcept override {
+                for (int channel = 0; channel < 2; ++channel)
+                    juce::FloatVectorOperations::fill(cue.getWritePointer(channel), 0.25f, samples);
+            }
+        } preview;
+        AudioEngine privateEngine(cache);
+        auto registration = privateEngine.registerAuxEndpoint(preview);
+        AudioEngine::setOutputRouting(1, 3, 5);
+        AudioEngine::setHeadphoneGain(0.5f);
+        AudioEngine::setMasterCueEnabled(true);
+        AudioEngine::setHeadphoneMix(1.0f);
+        privateEngine.prepareToPlay(512, 48000);
+        juce::AudioBuffer<float> outputs(6, 512);
+        for (int i = 0; i < 8; ++i) privateEngine.getNextAudioBlock({&outputs, 0, 512});
+        ok &= require(outputs.getMagnitude(0, 0, 512) == 0 && outputs.getMagnitude(2, 0, 512) == 0
+                          && privateEngine.masterTap().getMagnitude(0, 512) == 0,
+                      "preview never reaches master, booth or recording tap");
+        ok &= require(std::abs(outputs.getMagnitude(4, 0, 512) - 0.125f) < 0.002f,
+                      "preview reaches headphones through their level control");
+        AudioEngine::setSplitCue(true);
+        for (int i = 0; i < 8; ++i) privateEngine.getNextAudioBlock({&outputs, 0, 512});
+        ok &= require(outputs.getMagnitude(4, 0, 512) > 0.1f && outputs.getMagnitude(5, 0, 512) < 1e-6f,
+                      "split cue puts preview on left and leaves silent master on right");
+        AudioEngine::setSplitCue(false);
+        AudioEngine::setOutputRouting(1, 3, 2);
+        for (int i = 0; i < 8; ++i) privateEngine.getNextAudioBlock({&outputs, 0, 512});
+        ok &= require(outputs.getMagnitude(0, 512) == 0,
+                      "changing to an overlapping headphone pair mutes preview instead of leaking it");
+        AudioEngine::setHeadphoneGain(1.0f);
+        AudioEngine::setMasterCueEnabled(false);
+        AudioEngine::setHeadphoneMix(0.5f);
+        privateEngine.releaseResources();
+    }
+
     // Anti-clip must protect the output without hiding the requested overload.
     {
         struct OverloadEndpoint final : IAuxAudioEndpoint {

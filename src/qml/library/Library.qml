@@ -8,6 +8,18 @@ Rectangle {
     color: libraryRoot.bgBase
     focus: true
 
+    Text {
+        z: 100
+        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+        anchors.margins: 12
+        text: typeof libraryPreview !== "undefined" && libraryPreview && libraryPreview.error !== undefined ? libraryPreview.error : ""
+        visible: text.length > 0
+        wrapMode: Text.Wrap
+        color: Design.UiTheme.error
+        font.family: Design.UiTheme.uiFontFamily
+        font.pixelSize: 12
+    }
+
     // ── External API ───────────────────────────────────────────────────────
     property string activeTab:         "library"  // "library" | "playlist" | "files" | "streaming" | "usb"
     property string librarySubTab:     "allSongs"

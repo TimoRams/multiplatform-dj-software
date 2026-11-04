@@ -66,7 +66,8 @@ public:
              const juce::AudioBuffer<float>& masterTap,
              const AudioParameters& parameters,
              juce::AudioBuffer<float>& output,
-             int samples) noexcept;
+             int samples,
+             const juce::AudioBuffer<float>* preview = nullptr) noexcept;
 
 private:
     BrickwallLimiter m_limiter;

@@ -268,6 +268,11 @@ public:
     [[nodiscard]] Q_INVOKABLE bool hasStorableLoopRegion() const;
     [[nodiscard]] Q_INVOKABLE bool isLoopCuePad(int index) const;
     Q_INVOKABLE void setHotCueColor(int index, const QString& colorHex);
+    Q_INVOKABLE void storeMemoryCue(const QString& label = {});
+    Q_INVOKABLE void renameMemoryCue(int index, const QString& label);
+    Q_INVOKABLE void deleteMemoryCue(int index);
+    Q_INVOKABLE void jumpMemoryCue(int direction);
+    Q_INVOKABLE void setSavedLoopArmed(int index, bool armed);
     Q_INVOKABLE void triggerSavedLoop(int index);
     Q_INVOKABLE void storeSavedLoop(int index);
     Q_INVOKABLE void clearSavedLoop(int index);
@@ -603,6 +608,9 @@ private:
     bool isValidSavedLoopIndex(int index) const;
     void activateLoopRange(double inSec, double outSec, bool jumpToIn);
     void loadMainCueForCurrentTrack();
+    void savePerformanceExtras();
+    void loadPerformanceExtras();
+    void serviceArmedLoops();
     void installExternalCues(const ExternalTrackLoadSnapshot& external);
     void persistMainCuePoint();
     void resetMainCueButtonState();
@@ -657,6 +665,9 @@ private:
     std::uint64_t m_lastScratchDroppedRequests = 0;
     std::uint64_t m_lastHardwareXruns = 0;
     std::uint64_t m_lastKeylockSeedsOnAudioThread = 0;
+    QString m_performanceKey;
+    double m_lastActiveLoopPosition = -1;
+    bool m_activeLoopWasPlaying = false;
     QString m_currentTrackId;
     QString m_trackFilePath;
     std::uint64_t m_reanalyzedVisualGeneration = 0;

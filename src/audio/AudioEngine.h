@@ -2,6 +2,7 @@
 
 #include "audio/AudioBusMixer.h"
 #include "audio/AudioParameters.h"
+#include "audio/SetRecorder.h"
 #include "audio/DeckAudioPipeline.h"
 #include "fx/FxTypes.h"
 #include "platform/AudioThreadScheduling.h"
@@ -26,12 +27,15 @@ struct AudioEngineRealtimeStats {
     std::uint64_t nonFiniteDeckBlocks = 0;
 };
 
+enum class AuxAudioDestination { Master, Headphones };
+
 class IAuxAudioEndpoint {
 public:
     virtual ~IAuxAudioEndpoint() = default;
+    virtual AuxAudioDestination destination() const noexcept { return AuxAudioDestination::Master; }
     virtual void prepareAuxAudio(int maximumBlockSize, double sampleRate) = 0;
     virtual void releaseAuxAudio() = 0;
-    virtual void mixAuxAudio(juce::AudioBuffer<float>& masterBuffer,
+    virtual void mixAuxAudio(juce::AudioBuffer<float>& destinationBuffer,
                              juce::AudioBuffer<float>& scratchBuffer,
                              int numberOfSamples) noexcept = 0;
 };
@@ -78,6 +82,7 @@ public:
     void registerCallback(juce::AudioDeviceManager& adm);
     void unregisterCallback(juce::AudioDeviceManager& adm);
 
+    SetRecorder& recorder() noexcept { return m_recorder; }
     static void setMasterVolume(float v);
     static void setAntiClipEnabled(bool enabled);
     static bool antiClipEnabled();
@@ -99,6 +104,8 @@ public:
     static int boothFirstChannel();
     static int headphonesFirstChannel();
 
+    static void setSplitCue(bool enabled);
+    static void setMasterMono(bool enabled);
     static void setMasterCueEnabled(bool enabled);
     static bool masterCueEnabled();
     static void setHeadphoneMix(float mix);
@@ -163,6 +170,8 @@ private:
     juce::AudioBuffer<float> m_masterCueTap;
     juce::AudioBuffer<float> m_headphoneBuf;
     juce::AudioBuffer<float> m_previewScratch;
+    juce::AudioBuffer<float> m_previewBus;
+    SetRecorder m_recorder;
     MasterMixer m_masterMixer;
     HeadphoneBus m_headphoneBus;
     AudioOutputRouter m_outputRouter;

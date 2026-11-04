@@ -43,6 +43,7 @@ public:
         double lengthBeats = 0.0;
         QString label;
         QString color;
+        bool armed = false;
         friend bool operator==(const SavedLoop&, const SavedLoop&) = default;
     };
 

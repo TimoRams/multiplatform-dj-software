@@ -171,6 +171,7 @@ void AudioEngine::waitForEndpointReaders() const noexcept
 
 void AudioEngine::beginShutdown() noexcept
 {
+    m_recorder.stopRecording();
     m_shuttingDown.store(true, std::memory_order_release);
     {
         std::lock_guard lock(m_registrationMutex);
@@ -198,6 +199,7 @@ void AudioEngine::prepareToPlay(int, double sampleRate)
     s_audioThreadScheduling.reset();
     const double validRate = std::isfinite(sampleRate) && sampleRate > 0.0 ? sampleRate : 44100.0;
     m_sampleRate.store(validRate, std::memory_order_release);
+    m_recorder.configure(validRate);
 
     for (auto& buffer : m_deckBuffers)
         buffer.setSize(2, kProcessingChunkSize, false, true, true);
@@ -205,6 +207,7 @@ void AudioEngine::prepareToPlay(int, double sampleRate)
     m_masterCueTap.setSize(2, kProcessingChunkSize, false, true, true);
     m_headphoneBuf.setSize(2, kProcessingChunkSize, false, true, true);
     m_previewScratch.setSize(2, kProcessingChunkSize, false, true, true);
+    m_previewBus.setSize(2, kProcessingChunkSize, false, true, true);
     m_masterMixer.prepare(validRate, kProcessingChunkSize);
     m_headphoneBus.prepare(validRate, kProcessingChunkSize);
     s_limiterLatencySamples.store(m_masterMixer.limiterLatencySamples(),
@@ -220,6 +223,7 @@ void AudioEngine::prepareToPlay(int, double sampleRate)
 
 void AudioEngine::releaseResources()
 {
+    m_recorder.configure(0);
     m_isPrepared.store(false, std::memory_order_release);
     EndpointReadGuard guard(m_activeEndpointReaders);
     for (auto& pipeline : m_decks)
@@ -374,13 +378,20 @@ void AudioEngine::processChunk(
     }
 
     m_masterMixer.mixPrograms(programs, tailReturns, parameters, m_masterBuf, samples);
-    if (aux)
-        aux->mixAuxAudio(m_masterBuf, m_previewScratch, samples);
+    m_previewBus.clear(0, 0, samples);
+    m_previewBus.clear(1, 0, samples);
+    const bool privateHeadphones = parameters.headphonesFirstChannel > 0
+        && (parameters.masterFirstChannel <= 0 || std::abs(parameters.headphonesFirstChannel - parameters.masterFirstChannel) >= 2)
+        && (parameters.boothFirstChannel <= 0 || std::abs(parameters.headphonesFirstChannel - parameters.boothFirstChannel) >= 2);
+    if (aux && (aux->destination() != AuxAudioDestination::Headphones || privateHeadphones))
+        aux->mixAuxAudio(aux->destination() == AuxAudioDestination::Headphones
+                            ? m_previewBus : m_masterBuf, m_previewScratch, samples);
     sanitizeStereo(m_masterBuf, samples);
     // The master cue tap is refreshed unconditionally: the headphone bus fades
     // it in and out across a block, and fading through a buffer that stopped
     // being written the moment MASTER CUE was switched off would click.
     m_masterMixer.finalize(parameters, m_masterBuf, samples, &m_masterCueTap);
+    m_recorder.capture(m_masterBuf, samples);
     const auto& meter = m_masterMixer.meter();
     // Meter the requested master level before protection so enabling the
     // limiter cannot conceal overloads. Audio output still uses the limited buffer.
@@ -389,7 +400,7 @@ void AudioEngine::processChunk(
     minimumGainReduction = std::min(minimumGainReduction, meter.minimumGainReduction);
 
     m_headphoneBus.mix(pfl, m_masterCueTap, parameters,
-                       m_headphoneBuf, samples);
+                       m_headphoneBuf, samples, &m_previewBus);
     m_outputRouter.write(m_masterBuf, m_headphoneBuf, parameters,
                          output, outputStart, samples);
 }
@@ -489,6 +500,15 @@ int AudioEngine::boothFirstChannel()
 int AudioEngine::headphonesFirstChannel()
 {
     return s_parameterStore.controlSnapshot().headphonesFirstChannel;
+}
+
+void AudioEngine::setSplitCue(bool enabled)
+{
+    s_parameterStore.update([enabled](AudioParameters& p) { p.splitCue = enabled; });
+}
+void AudioEngine::setMasterMono(bool enabled)
+{
+    s_parameterStore.update([enabled](AudioParameters& p) { p.masterMono = enabled; });
 }
 
 void AudioEngine::setMasterCueEnabled(bool enabled)

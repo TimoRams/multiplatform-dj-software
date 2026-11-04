@@ -1007,3 +1007,12 @@ void WaveformZoomController::persist()
             QString::number(m_zoom, 'g', 12));
     }
 }
+
+int SettingsManager::autoCueThresholdDb() const
+{ return std::clamp(getUiState("autoCueThresholdDb", "-60").toInt(), -80, -20); }
+int SettingsManager::endWarningSeconds() const
+{ return std::clamp(getUiState("endWarningSeconds", "30").toInt(), 0, 120); }
+void SettingsManager::setAutoCueThresholdDb(int value)
+{ setUiState("autoCueThresholdDb", QString::number(std::clamp(value, -80, -20))); emit liveSettingsChanged(); }
+void SettingsManager::setEndWarningSeconds(int value)
+{ setUiState("endWarningSeconds", QString::number(std::clamp(value, 0, 120))); emit liveSettingsChanged(); }

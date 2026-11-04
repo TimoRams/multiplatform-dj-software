@@ -536,6 +536,7 @@ void DjEngine::onTransportControlTick(const ControlTickContext& context)
 
     if (m_transport->audioRunning())
         serviceQuantizedCueJump();
+    serviceArmedLoops();
 
     const auto transportUpdate = m_transport->updateControlState(
         {m_cueLoopController.activeLoop().active,

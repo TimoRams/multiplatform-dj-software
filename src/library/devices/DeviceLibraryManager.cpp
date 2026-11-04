@@ -779,6 +779,10 @@ void DeviceLibraryManager::ejectDevice(const QString& deviceId)
             || state->driveObjectPath != operation->driveObjectPath) {
             continue;
         }
+        if (m_ejectGuard && !m_ejectGuard(id, state->mountPath)) {
+            setStatusMessage(QStringLiteral("Stop playback and recording on this USB device before ejecting"));
+            return;
+        }
         if (state->scanning || state->pendingAnalysisReads > 0) {
             setStatusMessage(QStringLiteral("Wait for USB reads to finish"));
             return;

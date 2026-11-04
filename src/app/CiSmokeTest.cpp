@@ -1,3 +1,9 @@
+#include "deck/DjEngine.h"
+#include "deck/sync/DeckSync.h"
+#include "audio/AudioEngine.h"
+#include "audio/RenderModeRouter.h"
+#include "audio/device/AudioDeviceService.h"
+#include "audio/cache/AudioPageCache.h"
 #include "ApplicationBootstrap.h"
 #include "controllers/flx10/Flx10ControllerIdentity.h"
 #include "fx/FxManager.h"
@@ -30,6 +36,99 @@ int fail(const QString& message)
 {
     qCritical().noquote() << "[ci-smoke]" << message;
     return 1;
+}
+
+bool testLiveDeckFeatures(QString& error)
+{
+    QTemporaryDir directory;
+    auto& settings = SettingsManager::getInstance();
+    juce::PropertiesFile::Options options;
+    options.applicationName = "live-deck-test"; options.filenameSuffix = ".xml";
+    options.folderName = directory.path().toStdString(); options.osxLibrarySubFolder = "Application Support";
+    settings.getAppProperties().setStorageParameters(options);
+    settings.setLoadLock(true); settings.setAutoCueEnabled(false);
+    SetRecorder fixture;
+    fixture.configure(48000);
+    if (!fixture.startRecording(directory.path())) { error = fixture.error(); return false; }
+    juce::AudioBuffer<float> tone(2, 512);
+    for (int ch = 0; ch < 2; ++ch) juce::FloatVectorOperations::fill(tone.getWritePointer(ch), 0.1f, 512);
+    for (int i = 0; i < 192; ++i) fixture.capture(tone, 512);
+    fixture.stopRecording();
+    if (!fixture.error().isEmpty()) { error = fixture.error(); return false; }
+    LibraryDatabase database;
+    if (!database.open()) { error = "live feature database failed to open"; return false; }
+    AudioDeviceService devices;
+    AudioPageCache cache(32 * 1024 * 1024);
+    AudioEngine bus(cache);
+    ControlClock clock;
+    engine::sync::SyncCoordinator sync;
+    bus.prepareToPlay(512, 48000);
+    bool ok = true;
+    const auto require = [&](bool condition, const char* message) {
+        if (!condition) { error = QString::fromLatin1(message); ok = false; }
+        return condition;
+    };
+    const auto wait = [&](auto predicate) {
+        QElapsedTimer timer; timer.start();
+        while (!predicate() && timer.elapsed() < 8000) { QCoreApplication::processEvents(); QThread::msleep(1); }
+        return predicate();
+    };
+    {
+        DjEngine deck(devices, cache, bus.deck(0), clock, sync, 0);
+        deck.setLibraryDatabase(&database);
+        deck.loadTrack(fixture.filePath());
+        if (!require(wait([&] { return deck.hasTrack(); }), "local deck fixture did not load")) return false;
+        deck.play();
+        require(deck.isPlaying(), "live fixture must have play intent");
+        deck.loadTrack(directory.filePath("missing.wav"));
+        require(deck.trackLoadError().contains("Load lock") && deck.hasTrack(), "load lock did not protect a playing deck");
+        deck.ejectTrack();
+        require(deck.hasTrack(), "eject bypassed load lock");
+        deck.pause();
+        deck.storeMemoryCue("Intro");
+        require(deck.memoryCues().size() == 1, "memory cue storage failed");
+        deck.renameMemoryCue(0, "Renamed");
+        require(deck.memoryCues().first().toMap().value("label") == "Renamed", "memory cue rename failed");
+        deck.storeSavedLoop(0);
+        deck.setSavedLoopArmed(0, true);
+        require(deck.savedLoops().first().toMap().value("armed").toBool(), "saved loop did not arm");
+        deck.play();
+        juce::AudioBuffer<float> rendered(2, 512);
+        // The real callback completes the initial normal-playback handoff.
+        // Advancing only the control clock leaves that handoff pending forever.
+        for (int block = 0; block < 32 && bus.deck(0).renderModeRouter().normalPlaybackHandoffPending(); ++block)
+            bus.getNextAudioBlock({&rendered, 0, 512});
+        clock.advanceForTesting(0.02);
+        require(deck.loopActive(), "entering an armed region did not activate its loop");
+        deck.clearLoop(); clock.advanceForTesting(0.02);
+        require(!deck.loopActive(), "leaving an active loop immediately retriggered it");
+        deck.pause();
+        auto request = QVariantMap{{"readOnlyExternal", true}, {"sourceType", "rekordboxDevice"},
+            {"sourceId", "fixture-usb"}, {"trackId", "rekordbox:fixture-usb:1"},
+            {"filePath", fixture.filePath()}, {"title", "Imported One"}};
+        deck.loadExternalTrack(request);
+        if (!require(wait([&] { return deck.readOnlyExternalTrack(); }), "external fixture did not load")) return false;
+        deck.storeMemoryCue("External memory");
+        deck.storeSavedLoop(0); deck.setSavedLoopArmed(0, true);
+        request["trackId"] = "rekordbox:fixture-usb:2"; request["title"] = "Imported Two";
+        deck.loadExternalTrack(request);
+        if (!require(wait([&] { return deck.trackTitle() == "Imported Two"; }), "second external fixture did not load")) return false;
+        require(deck.memoryCues().isEmpty(), "external supplemental data leaked into another track");
+        request["trackId"] = "rekordbox:fixture-usb:1"; request["title"] = "Imported One";
+        deck.loadExternalTrack(request);
+        if (!require(wait([&] { return deck.trackTitle() == "Imported One"; }), "external fixture did not reload")) return false;
+        require(deck.memoryCues().size() == 1 && deck.memoryCues().first().toMap().value("label") == "External memory",
+                "external memory cue did not restore from local supplemental data");
+        require(deck.savedLoops().first().toMap().value("armed").toBool(), "external active-loop flag did not persist");
+        deck.deleteMemoryCue(0);
+        require(deck.memoryCues().isEmpty(), "memory cue deletion failed");
+        deck.prepareForShutdown();
+        bus.releaseResources();
+        deck.releaseTransportReaders();
+    }
+    database.shutdown(false);
+    settings.getAppProperties().closeFiles();
+    return ok;
 }
 
 bool testSoundColorAdjust(QString& error)
@@ -468,10 +567,13 @@ int runCiSmokeTest(int argc, char* argv[])
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
 
     QGuiApplication app(argc, argv);
+    juce::ScopedJuceInitialiser_GUI juceRuntime;
     QCoreApplication::setApplicationName(QStringLiteral("BrockDJ CI smoke test"));
     QCoreApplication::setApplicationVersion(QStringLiteral(BROCKDJ_VERSION));
 
     QString fxManagerError;
+    if (!testLiveDeckFeatures(fxManagerError))
+        return fail(fxManagerError);
     if (!testSoundColorAdjust(fxManagerError))
         return fail(fxManagerError);
     if (!testAnalysisSettingsAndPersistence(fxManagerError))

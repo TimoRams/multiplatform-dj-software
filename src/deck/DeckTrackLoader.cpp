@@ -543,6 +543,23 @@ TrackLoadResult DeckTrackLoader::prepare(const Request& request)
         return fail(TrackLoadError::UnsupportedFormat, QStringLiteral("Unsupported or damaged audio file"));
 
     result.metadata = readMetadata(*reader, result.canonicalPath, file);
+    if (m_autoCueEnabled.load()) {
+        const float threshold = std::pow(10.0f, m_autoCueThresholdDb.load() / 20.0f);
+        juce::AudioBuffer<float> scan(std::min(2, static_cast<int>(reader->numChannels)), 4096);
+        const auto limit = std::min<juce::int64>(reader->lengthInSamples, static_cast<juce::int64>(reader->sampleRate * 120));
+        bool found = false;
+        for (juce::int64 offset = 0; offset < limit && isCurrent(request.generation); offset += 4096) {
+            const int count = static_cast<int>(std::min<juce::int64>(4096, limit - offset));
+            if (!reader->read(&scan, 0, count, offset, true, true)) break;
+            for (int i = 0; i < count && !found; ++i)
+                for (int ch = 0; ch < scan.getNumChannels(); ++ch)
+                    if (std::abs(scan.getSample(ch, i)) >= threshold) {
+                        result.autoCueSec = std::max(0.0, (offset + i) / reader->sampleRate - 0.002);
+                        found = true; break;
+                    }
+            if (found) break;
+        }
+    }
     if (request.external) {
         const auto& supplied = request.external->metadata;
         if (!supplied.title.isEmpty()) result.metadata.title = supplied.title;

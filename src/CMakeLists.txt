@@ -40,6 +40,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     audio/device/AudioDeviceUtils.cpp
     audio/AudioEngine.h
     audio/AudioEngine.cpp
+    audio/SetRecorder.cpp
+    audio/SetRecorder.h
     audio/AudioBusMixer.h
     audio/AudioBusMixer.cpp
     audio/TimeStretchProcessor.cpp

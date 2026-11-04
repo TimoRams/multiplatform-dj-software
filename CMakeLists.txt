@@ -650,9 +650,18 @@ target_compile_definitions(BrockDJ_mixer_dsp_tests PRIVATE JUCE_USE_CURL=0 JUCE_
 target_compile_features(BrockDJ_mixer_dsp_tests PRIVATE cxx_std_23)
 add_test(NAME mixer_dsp COMMAND BrockDJ_mixer_dsp_tests)
 
+add_executable(BrockDJ_set_recorder_tests tests/audio/set_recorder_tests.cpp src/audio/SetRecorder.cpp src/audio/SetRecorder.h)
+target_include_directories(BrockDJ_set_recorder_tests PRIVATE src)
+target_link_libraries(BrockDJ_set_recorder_tests PRIVATE Qt6::Core juce::juce_audio_basics)
+target_compile_definitions(BrockDJ_set_recorder_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
+target_compile_features(BrockDJ_set_recorder_tests PRIVATE cxx_std_23)
+add_test(NAME set_recorder COMMAND BrockDJ_set_recorder_tests)
+
 add_executable(BrockDJ_deck_audio_graph_tests
     tests/audio/deck_audio_graph_tests.cpp
     src/audio/AudioEngine.cpp
+    src/audio/SetRecorder.cpp
+    src/audio/SetRecorder.h
     src/platform/AudioThreadScheduling.cpp
     src/audio/AudioBusMixer.cpp
     src/audio/DeckAudioPipeline.cpp
@@ -1226,6 +1235,7 @@ set(_brockdj_executable_targets
     BrockDJ_sync_coordinator_tests
     BrockDJ_control_clock_tests
     BrockDJ_master_bus_tests
+    BrockDJ_set_recorder_tests
     BrockDJ_signalsmith_dependency_tests
     BrockDJ_analysis_lifetime_tests
     BrockDJ_electronic_analysis_tests

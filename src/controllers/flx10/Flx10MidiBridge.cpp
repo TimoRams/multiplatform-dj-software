@@ -2152,6 +2152,31 @@ void MidiControllerManager::connectDecks(DjEngine* deckA, DjEngine* deckB,
             }
         };
 
+        QChar armedDeck;
+        int armedLoopIndex = -1;
+        if (parseDirectPadParam(id, QStringLiteral("active_loop_arm"), armedDeck, armedLoopIndex)) {
+            if (value >= 0.5f) {
+                if (auto* engine = engineForDeck(armedDeck)) {
+                    const auto loops = engine->savedLoops();
+                    if (armedLoopIndex >= 0 && armedLoopIndex < loops.size())
+                        engine->setSavedLoopArmed(armedLoopIndex, !loops[armedLoopIndex].toMap().value("armed").toBool());
+                }
+            }
+            return;
+        }
+        for (QChar name : {QChar('A'), QChar('B'), QChar('C'), QChar('D')}) {
+            const QString prefix = QStringLiteral("deck%1_memory_").arg(name);
+            if (!id.startsWith(prefix)) continue;
+            if (value < 0.5f) return;
+            if (auto* engine = engineForDeck(name)) {
+                const auto action = id.mid(prefix.size());
+                if (action == "store") engine->storeMemoryCue();
+                else if (action == "previous") engine->jumpMemoryCue(-1);
+                else if (action == "next") engine->jumpMemoryCue(1);
+            }
+            return;
+        }
+
         if (id == QStringLiteral("library_view_toggle")) {
             if (value >= 0.5f)
                 emit libraryViewToggleRequested();

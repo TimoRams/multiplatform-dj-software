@@ -19,13 +19,16 @@ The project is still under active development, so bugs, unfinished features, exp
 
 ## Features
 
-* Dual-deck playback with FLAC, WAV, OGG, and MP3 support
+* Four-deck playback with FLAC, WAV, OGG, and MP3 support
 * GPU-rendered RGB waveforms, beat grids, loops, hot cues, and sync
 * Read-only Rekordbox USB browsing (legacy and OneLibrary), imported dynamic
   beatgrids and cached analysis previews; built-in beat analysis remains static
 * Three-band EQ, filter, crossfader, and built-in effects
 * Library browsing, metadata extraction, cover art, and background analysis
 * MIDI mapping, controller integration, and Ableton Link support
+* Headphone-only library preview, split cue and mono master options
+* Load lock, track-end warning, Auto Cue, editable memory cues and armed saved loops
+* Stereo 24-bit WAV set recording with track marks and bounded background writing
 
 The interface uses angular controls and subdued, translucent slate panels.
 In **Settings > DJ / Sync > Playhead position**, the white scrolling-waveform
@@ -36,6 +39,21 @@ and is restored on restart.
 Crossfader position, curve/sharpness and per-deck A/THRU/B assignments are
 restored on restart, including changes made from a controller while the
 development controls are closed.
+
+## Live controls and recording
+
+Open **Settings > Live / Recording** for load protection, split cue, mono master,
+Auto Cue, track-end warning and the set recorder. Recording uses the final
+software master; headphone preview is excluded. Empty recording-folder input
+uses `Music/BrockDJ/Recordings`. Track Mark starts a new numbered WAV part.
+External sources mixed exclusively inside a controller need a recording return
+input; they cannot be captured from the software master alone.
+
+Memory cues are also reachable from the performance deck side panel. Name/delete
+cues and arm saved loops in Live / Recording. Imported USB performance edits are
+stored in BrockDJ's local library, leaving the original device database untouched.
+
+See [live milestone behavior and tests](docs/architecture/live-features-milestone.md).
 
 ## Platform status
 

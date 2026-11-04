@@ -1,3 +1,6 @@
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 #include "deck/DjEngine.h"
 #include "audio/AudioEngine.h"
 #include "audio/DeckAudioPipeline.h"
@@ -708,6 +711,7 @@ void DjEngine::loadHotCuesForCurrentTrack()
 
 void DjEngine::persistHotCueSlot(int index)
 {
+    if (m_readOnlyExternalTrack) { savePerformanceExtras(); return; }
     if (!isValidHotCueIndex(index) || !m_libraryDb || m_currentTrackId.isEmpty())
         return;
 
@@ -990,6 +994,7 @@ void DjEngine::loadMainCueForCurrentTrack()
 
 void DjEngine::persistMainCuePoint()
 {
+    if (m_readOnlyExternalTrack) { savePerformanceExtras(); return; }
     if (!m_libraryDb || m_currentTrackId.isEmpty())
         return;
     m_libraryDb->upsertMainCuePoint(m_currentTrackId, m_cueLoopController.mainCue().positionSec);
@@ -1158,6 +1163,7 @@ QVariantList DjEngine::savedLoops() const
         QVariantMap entry;
         entry.insert("index",       static_cast<int>(i));
         entry.insert("set",         slot.set);
+        entry.insert("armed",       slot.armed);
         entry.insert("inSec",       slot.inSec);
         entry.insert("outSec",      slot.outSec);
         entry.insert("lengthBeats", slot.lengthBeats);
@@ -1218,6 +1224,8 @@ void DjEngine::loadSavedLoopsForCurrentTrack()
 
 void DjEngine::persistSavedLoopSlot(int index)
 {
+    savePerformanceExtras();
+    if (m_readOnlyExternalTrack) return;
     if (!isValidSavedLoopIndex(index) || !m_libraryDb || m_currentTrackId.isEmpty())
         return;
 
@@ -1318,4 +1326,114 @@ void DjEngine::clearSavedLoop(int index)
 
     persistSavedLoopSlot(index);
     emit savedLoopsChanged();
+}
+
+void DjEngine::savePerformanceExtras()
+{
+    if (!m_libraryDb || m_performanceKey.isEmpty()) return;
+    QJsonObject data;
+    data["memoryCues"] = QJsonArray::fromVariantList(m_memoryCues);
+    data["loops"] = QJsonArray::fromVariantList(savedLoops());
+    if (m_readOnlyExternalTrack) {
+        data["hotCues"] = QJsonArray::fromVariantList(hotCues());
+        data["mainCue"] = mainCueSec();
+    }
+    m_libraryDb->setSetting("performance/" + m_performanceKey,
+        QString::fromUtf8(QJsonDocument(data).toJson(QJsonDocument::Compact)));
+}
+void DjEngine::loadPerformanceExtras()
+{
+    if (!m_libraryDb || m_performanceKey.isEmpty()) return;
+    const auto data = QJsonDocument::fromJson(m_libraryDb->getSetting("performance/" + m_performanceKey).toUtf8()).object();
+    if (data.isEmpty()) return;
+    if (data.contains("memoryCues")) {
+        m_memoryCues.clear();
+        for (const auto& value : data["memoryCues"].toArray()) {
+            const auto cue = value.toObject();
+            const double position = cue["positionSec"].toDouble(-1);
+            if (position >= 0 && position <= m_transport->trackLengthSeconds()) m_memoryCues.append(cue.toVariantMap());
+        }
+    }
+    for (const auto& value : data["loops"].toArray()) {
+        const auto map = value.toObject(); const int index = map["index"].toInt(-1);
+        if (!isValidSavedLoopIndex(index)) continue;
+        auto& slot = savedLoopAt(index);
+        if (m_readOnlyExternalTrack) {
+            const double in = map["inSec"].toDouble(-1), out = map["outSec"].toDouble(-1);
+            slot.set = map["set"].toBool() && in >= -PRE_ROLL_SECONDS && out > in && out <= m_transport->trackLengthSeconds();
+            if (slot.set) {
+                slot.inSec = in; slot.outSec = out;
+                slot.lengthBeats = beatCountBetween(in, out);
+                slot.label = map["label"].toString(); slot.color = map["color"].toString();
+            }
+        }
+        slot.armed = slot.set && map["armed"].toBool();
+    }
+    if (m_readOnlyExternalTrack && data.contains("hotCues")) {
+        clearHotCueState();
+        for (const auto& value : data["hotCues"].toArray()) {
+            const auto map = value.toObject(); const int index = map["index"].toInt(-1);
+            const double pos = map["positionSec"].toDouble(-1);
+            if (!isValidHotCueIndex(index) || !map["set"].toBool() || pos < -PRE_ROLL_SECONDS || pos > m_transport->trackLengthSeconds()) continue;
+            auto& slot = slotAt(index); slot.set = true; slot.positionSec = pos;
+            slot.label = map["label"].toString(); slot.color = map["color"].toString();
+        }
+        const double main = data["mainCue"].toDouble(-1);
+        if (main >= 0 && main <= m_transport->trackLengthSeconds()) m_cueLoopController.mainCue().positionSec = main;
+    }
+    emit memoryCuesChanged(); emit savedLoopsChanged(); emit hotCuesChanged(); emit mainCueChanged();
+}
+void DjEngine::storeMemoryCue(const QString& label)
+{
+    if (!m_hasTrack || m_memoryCues.size() >= 32) return;
+    const double pos = std::clamp(getPosition(), 0.0, m_transport->trackLengthSeconds());
+    for (const auto& cue : std::as_const(m_memoryCues))
+        if (std::abs(cue.toMap().value("positionSec").toDouble() - pos) < 0.01) return;
+    m_memoryCues.append(QVariantMap{{"positionSec", pos}, {"label", label.left(128)}, {"color", "#f2b134"}});
+    std::sort(m_memoryCues.begin(), m_memoryCues.end(), [](const QVariant& a, const QVariant& b) {
+        return a.toMap().value("positionSec").toDouble() < b.toMap().value("positionSec").toDouble();
+    });
+    savePerformanceExtras(); emit memoryCuesChanged();
+}
+void DjEngine::renameMemoryCue(int index, const QString& label)
+{
+    if (index < 0 || index >= m_memoryCues.size()) return;
+    auto cue = m_memoryCues[index].toMap(); cue["label"] = label.left(128); m_memoryCues[index] = cue;
+    savePerformanceExtras(); emit memoryCuesChanged();
+}
+void DjEngine::deleteMemoryCue(int index)
+{
+    if (index < 0 || index >= m_memoryCues.size()) return;
+    m_memoryCues.removeAt(index); savePerformanceExtras(); emit memoryCuesChanged();
+}
+void DjEngine::jumpMemoryCue(int direction)
+{
+    if (m_memoryCues.isEmpty() || direction == 0) return;
+    const double pos = getPosition();
+    for (int i = direction > 0 ? 0 : m_memoryCues.size() - 1;
+         i >= 0 && i < m_memoryCues.size(); i += direction > 0 ? 1 : -1) {
+        const double target = m_memoryCues[i].toMap().value("positionSec").toDouble();
+        if ((direction > 0 && target > pos + 0.05) || (direction < 0 && target < pos - 0.05)) { performCueJump(target); break; }
+    }
+}
+void DjEngine::setSavedLoopArmed(int index, bool armed)
+{
+    if (!isValidSavedLoopIndex(index) || !savedLoopAt(index).set) return;
+    savedLoopAt(index).armed = armed; m_lastActiveLoopPosition = -1; savePerformanceExtras(); emit savedLoopsChanged();
+}
+void DjEngine::serviceArmedLoops()
+{
+    const double pos = getPosition();
+    if (isPlaying() && !isReverse() && !loopActive()) {
+        for (const auto& loop : m_cueLoopController.savedLoops()) {
+            const bool entering = !m_activeLoopWasPlaying || m_lastActiveLoopPosition < loop.inSec || m_lastActiveLoopPosition >= loop.outSec;
+            if (loop.set && loop.armed && entering && pos >= loop.inSec
+                && (pos < loop.outSec || (m_lastActiveLoopPosition >= 0
+                    && m_lastActiveLoopPosition < loop.inSec && pos - m_lastActiveLoopPosition < 0.5))) {
+                activateLoopRange(loop.inSec, loop.outSec, false); break;
+            }
+        }
+    }
+    m_lastActiveLoopPosition = pos;
+    m_activeLoopWasPlaying = isPlaying() && !isReverse();
 }

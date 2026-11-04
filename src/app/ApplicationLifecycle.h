@@ -67,6 +67,7 @@ enum class QmlContextProperty : std::uint8_t {
     ControlClock,
     LibraryCover,
     LibraryPreview,
+    SetRecorder,
     Count
 };
 
@@ -103,7 +104,8 @@ inline constexpr std::array<QmlContextPropertyContract,
         {"mixerControl"},
         {"controlClock"},
         {"libraryCover"},
-        {"libraryPreview"}
+        {"libraryPreview"},
+        {"setRecorder"}
     }};
 
 // QML entry point for ordered app teardown before Qt.quit().

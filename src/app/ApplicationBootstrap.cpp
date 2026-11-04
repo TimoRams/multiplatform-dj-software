@@ -778,6 +778,23 @@ int runApplication(int argc, char *argv[])
             if (runtime.midiManager)
                 runtime.midiManager->connectFxManager(runtime.fxManager.get());
 
+            runtime.deviceLibraryManager->setEjectGuard([&runtime](const QString& sourceId, const QString& mountPath) {
+                const QString root = QDir::cleanPath(QFileInfo(mountPath).absoluteFilePath()) + "/";
+                const auto onDevice = [&root](const QString& path) {
+                    return !path.isEmpty() && QFileInfo(path).absoluteFilePath().startsWith(root);
+                };
+                for (auto* deck : {runtime.deckA.get(), runtime.deckB.get(), runtime.deckC.get(), runtime.deckD.get()})
+                    if (deck && deck->isPlaying()
+                        && (deck->externalSourceId() == sourceId || onDevice(deck->trackFilePath()))) return false;
+                return !runtime.audioEngine || !runtime.audioEngine->recorder().recording()
+                    || !onDevice(runtime.audioEngine->recorder().filePath());
+            });
+            const auto applyMonitoring = [&settingsManager] {
+                AudioEngine::setSplitCue(settingsManager.splitCue());
+                AudioEngine::setMasterMono(settingsManager.masterMono());
+            };
+            applyMonitoring();
+            QObject::connect(&settingsManager, &SettingsManager::liveSettingsChanged, &app, applyMonitoring);
             runtime.libraryPreviewPlayer = std::make_unique<LibraryPreviewPlayer>(
                 *runtime.controlClock, *runtime.audioPageCache, &app);
             QObject::connect(runtime.deviceLibraryManager.get(),
@@ -786,6 +803,16 @@ int runApplication(int argc, char *argv[])
                              [preview = runtime.libraryPreviewPlayer.get()](const QString&) {
                                  preview->stop();
                              });
+            ApplicationLifecycle::setQmlContextProperty(engine, QmlContextProperty::SetRecorder,
+                                                       &runtime.audioEngine->recorder());
+            QObject::connect(runtime.parameterStore.get(), &ParameterStore::parameterChanged, &app,
+                             [&runtime](const QString& id, float value) {
+                if (value < 0.5f || !runtime.audioEngine) return;
+                auto& recorder = runtime.audioEngine->recorder();
+                if (id == "recording_toggle") {
+                    if (recorder.recording()) recorder.stopRecording(); else recorder.startRecording();
+                } else if (id == "recording_track_mark") recorder.markTrack();
+            });
             runtime.previewRegistration = runtime.audioEngine->registerAuxEndpoint(
                 *runtime.libraryPreviewPlayer);
             ApplicationLifecycle::setQmlContextProperty(

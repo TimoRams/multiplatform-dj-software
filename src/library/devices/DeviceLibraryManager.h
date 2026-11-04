@@ -13,6 +13,7 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+#include <functional>
 
 class QStorageInfo;
 
@@ -63,6 +64,7 @@ public:
 
     Q_INVOKABLE void rescanNow();
     Q_INVOKABLE void mountDevice(const QString& deviceId);
+    void setEjectGuard(std::function<bool(const QString&, const QString&)> guard) { m_ejectGuard = std::move(guard); }
     Q_INVOKABLE void ejectDevice(const QString& deviceId);
     Q_INVOKABLE void chooseDevice(const QString& deviceId);
     Q_INVOKABLE void chooseTracks();
@@ -130,6 +132,7 @@ private:
     [[nodiscard]] std::shared_ptr<const rekordbox::DeviceIndex> selectedIndex() const;
     [[nodiscard]] QVariantMap trackMap(const rekordbox::Track& track) const;
 
+    std::function<bool(const QString&, const QString&)> m_ejectGuard;
     QHash<QString, DeviceState> m_devices;
     QStringList m_deviceOrder;
     QVariantList m_devicesView;

@@ -109,11 +109,11 @@ void LibraryPreviewPlayer::releaseAuxAudio()
     releaseResources();
 }
 
-void LibraryPreviewPlayer::mixAuxAudio(juce::AudioBuffer<float>& masterBuffer,
+void LibraryPreviewPlayer::mixAuxAudio(juce::AudioBuffer<float>& headphoneBuffer,
                                        juce::AudioBuffer<float>& scratchBuffer,
                                        int numberOfSamples) noexcept
 {
-    mixIntoOutputs(masterBuffer, scratchBuffer, 0, numberOfSamples);
+    mixIntoOutputs(headphoneBuffer, scratchBuffer, 0, numberOfSamples);
 }
 
 void LibraryPreviewPlayer::startPositionTimer()
@@ -179,8 +179,24 @@ void LibraryPreviewPlayer::waitForAudioReaders() const noexcept
         std::this_thread::yield();
 }
 
+void LibraryPreviewPlayer::setLevel(double value)
+{
+    if (!std::isfinite(value)) return;
+    m_level.store(std::clamp(value, 0.0, 1.0), std::memory_order_relaxed);
+    emit levelChanged();
+}
+
 void LibraryPreviewPlayer::preview(const QString& filePath)
 {
+    m_error.clear();
+    if (AudioEngine::headphonesFirstChannel() <= 0
+        || (AudioEngine::masterFirstChannel() > 0 && std::abs(AudioEngine::headphonesFirstChannel() - AudioEngine::masterFirstChannel()) < 2)
+        || (AudioEngine::boothFirstChannel() > 0 && std::abs(AudioEngine::headphonesFirstChannel() - AudioEngine::boothFirstChannel()) < 2)) {
+        m_error = QStringLiteral("Assign a separate headphone output before previewing");
+        emit errorChanged();
+        return;
+    }
+    emit errorChanged();
     if (filePath.isEmpty())
         return;
 
@@ -206,13 +222,15 @@ void LibraryPreviewPlayer::preview(const QString& filePath)
         const LoadedPreview loaded = watcher->result();
         watcher->deleteLater();
 
-        if (!loaded.reader
-            || loadGeneration != m_loadGeneration.load(std::memory_order_acquire))
-            return;
+        if (loadGeneration != m_loadGeneration.load(std::memory_order_acquire)) return;
+        if (!loaded.reader) {
+            m_error = QStringLiteral("Preview could not open this track"); emit errorChanged(); return;
+        }
 
         auto cacheHandle = m_cache.openTrack({loaded.path});
-        if (!cacheHandle.isValid())
-            return;
+        if (!cacheHandle.isValid()) {
+            m_error = QStringLiteral("Preview could not prepare this track"); emit errorChanged(); return;
+        }
         auto readerSource = std::make_unique<CachedPlaybackAudioSource>(m_cache, cacheHandle);
         readerSource->setCommandedReadPosition(static_cast<juce::int64>(
             std::llround(loaded.startSec * cacheHandle.sampleRate())));
@@ -298,7 +316,7 @@ void LibraryPreviewPlayer::seekProgress(double progress)
     seekSeconds(std::clamp(progress, 0.0, 1.0) * dur);
 }
 
-void LibraryPreviewPlayer::mixIntoOutputs(juce::AudioBuffer<float>& masterBuf,
+void LibraryPreviewPlayer::mixIntoOutputs(juce::AudioBuffer<float>& headphoneBuf,
                                           juce::AudioBuffer<float>& scratch,
                                           int startSample,
                                           int numSamples) noexcept
@@ -326,8 +344,8 @@ void LibraryPreviewPlayer::mixIntoOutputs(juce::AudioBuffer<float>& masterBuf,
                             / std::max(1.0, m_cacheHandle.sampleRate()),
                         std::memory_order_relaxed);
 
-    const float gain = static_cast<float>(kPreviewGain);
-    masterBuf.addFrom(0, startSample, scratch, 0, 0, numSamples, gain);
-    masterBuf.addFrom(1, startSample, scratch, 1, 0, numSamples, gain);
+    const float gain = static_cast<float>(m_level.load(std::memory_order_relaxed));
+    headphoneBuf.addFrom(0, startSample, scratch, 0, 0, numSamples, gain);
+    headphoneBuf.addFrom(1, startSample, scratch, 1, 0, numSamples, gain);
     m_activeAudioReaders.fetch_sub(1, std::memory_order_release);
 }

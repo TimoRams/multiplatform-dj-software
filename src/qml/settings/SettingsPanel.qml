@@ -197,6 +197,7 @@ Item {
         { label: "Analyse",         icon: "analysis" },
         { label: "DJ / Sync",       icon: "sync" },
         { label: "Legal",           icon: "legal" },
+        { label: "Live / Recording", icon: "audio" },
     ]
 
     readonly property bool isJackDeviceSelected: String(pendingAudioDeviceType).toLowerCase().indexOf("jack") >= 0
@@ -2170,6 +2171,99 @@ Item {
                         }
                     }
                 }
+                }
+            }
+
+            Flickable {
+                id: liveSettings
+                clip: true
+                contentWidth: width
+                contentHeight: liveContent.implicitHeight + 32
+                boundsBehavior: Flickable.StopAtBounds
+                property var selectedEngine: [deckA, deckB, deckC, deckD][liveDeck.currentIndex]
+                readonly property var recorder: typeof setRecorder !== "undefined" ? setRecorder : null
+                ScrollBar.vertical: ScrollBar {}
+                ColumnLayout {
+                    id: liveContent
+                    x: 16; y: 16
+                    width: Math.max(0, parent.width - 32)
+                    spacing: 12
+                    Text { text: "LIVE SAFETY & MONITORING"; color: UiTheme.textPrimary; font.family: UiTheme.uiFontFamily; font.pixelSize: 16 }
+                    CheckBox {
+                        text: "Load lock — stop a deck before replacing or ejecting its track"
+                        checked: settingsManager ? settingsManager.loadLock : true
+                        onClicked: settingsManager.loadLock = checked
+                    }
+                    CheckBox { text: "Split cue — cue left, master right"; checked: settingsManager ? settingsManager.splitCue : false; onClicked: settingsManager.splitCue = checked }
+                    CheckBox { text: "Mono master"; checked: settingsManager ? settingsManager.masterMono : false; onClicked: settingsManager.masterMono = checked }
+                    CheckBox { text: "Auto Cue — skip leading silence on load"; checked: settingsManager ? settingsManager.autoCueEnabled : true; onClicked: settingsManager.autoCueEnabled = checked }
+                    RowLayout {
+                        Text { text: "Auto Cue threshold (dB)"; color: UiTheme.textSecondary }
+                        SpinBox { from: -80; to: -20; stepSize: 5; value: settingsManager ? settingsManager.autoCueThresholdDb : -60; onValueModified: settingsManager.autoCueThresholdDb = value }
+                    }
+                    RowLayout {
+                        Text { text: "Track-end warning (seconds; 0 disables)"; color: UiTheme.textSecondary }
+                        SpinBox { from: 0; to: 120; value: settingsManager ? settingsManager.endWarningSeconds : 30; onValueModified: settingsManager.endWarningSeconds = value }
+                    }
+                    RowLayout {
+                        Text { text: "Preview level"; color: UiTheme.textSecondary }
+                        Slider {
+                            from: 0; to: 1
+                            value: typeof libraryPreview !== "undefined" && libraryPreview ? libraryPreview.level : 0.72
+                            onMoved: if (typeof libraryPreview !== "undefined" && libraryPreview) libraryPreview.level = value
+                        }
+                    }
+                    Text { text: "SET RECORDER"; color: UiTheme.textPrimary; font.pixelSize: 16 }
+                    TextField { id: recordingFolder; Layout.fillWidth: true; placeholderText: "Recording folder (empty: Music/BrockDJ/Recordings)"; enabled: !liveSettings.recorder || !liveSettings.recorder.recording }
+                    RowLayout {
+                        Button {
+                            text: liveSettings.recorder && liveSettings.recorder.recording ? "STOP RECORDING" : "START RECORDING"
+                            enabled: liveSettings.recorder !== null
+                            accentColor: UiTheme.error
+                            checked: liveSettings.recorder ? liveSettings.recorder.recording : false
+                            onClicked: {
+                                if (liveSettings.recorder.recording) liveSettings.recorder.stopRecording()
+                                else liveSettings.recorder.startRecording(recordingFolder.text)
+                            }
+                        }
+                        Button { text: "TRACK MARK"; enabled: liveSettings.recorder && liveSettings.recorder.recording; onClicked: liveSettings.recorder.markTrack() }
+                    }
+                    Text {
+                        Layout.fillWidth: true; wrapMode: Text.Wrap
+                        text: liveSettings.recorder ? Math.floor(liveSettings.recorder.elapsedSeconds) + " s · " + Math.round(liveSettings.recorder.freeSpaceMb) + " MiB free · Peak " + liveSettings.recorder.peak.toFixed(2) + "\n" + liveSettings.recorder.filePath : "Audio engine not ready"
+                        color: UiTheme.textSecondary
+                    }
+                    Text { Layout.fillWidth: true; wrapMode: Text.Wrap; text: liveSettings.recorder ? liveSettings.recorder.error : ""; color: UiTheme.error }
+                    Text { Layout.fillWidth: true; wrapMode: Text.Wrap; text: "Records the software master as 24-bit stereo WAV. Headphone preview is excluded. Sources mixed only by external hardware require a recording return input."; color: UiTheme.textLabel }
+                    Text { text: "MEMORY CUES & ACTIVE LOOPS"; color: UiTheme.textPrimary; font.pixelSize: 16 }
+                    ComboBox { id: liveDeck; model: ["Deck A", "Deck B", "Deck C", "Deck D"] }
+                    RowLayout {
+                        Button { text: "PREVIOUS CUE"; enabled: !!liveSettings.selectedEngine && liveSettings.selectedEngine.hasTrack; onClicked: liveSettings.selectedEngine.jumpMemoryCue(-1) }
+                        Button { text: "NEXT CUE"; enabled: !!liveSettings.selectedEngine && liveSettings.selectedEngine.hasTrack; onClicked: liveSettings.selectedEngine.jumpMemoryCue(1) }
+                        Button { text: "STORE CUE"; enabled: !!liveSettings.selectedEngine && liveSettings.selectedEngine.hasTrack; onClicked: liveSettings.selectedEngine.storeMemoryCue("Memory Cue") }
+                    }
+                    Repeater {
+                        model: liveSettings.selectedEngine ? liveSettings.selectedEngine.memoryCues : []
+                        RowLayout {
+                            required property var modelData
+                            required property int index
+                            Layout.fillWidth: true
+                            Text { text: Number(modelData.positionSec).toFixed(2) + " s"; color: UiTheme.cue; Layout.preferredWidth: 64 }
+                            TextField { Layout.fillWidth: true; text: modelData.label; onEditingFinished: liveSettings.selectedEngine.renameMemoryCue(index, text) }
+                            Button { text: "DELETE"; onClicked: liveSettings.selectedEngine.deleteMemoryCue(index) }
+                        }
+                    }
+                    Repeater {
+                        model: liveSettings.selectedEngine ? liveSettings.selectedEngine.savedLoops : []
+                        CheckBox {
+                            required property var modelData
+                            required property int index
+                            visible: modelData.set
+                            text: "Active Loop " + (index + 1) + " · " + (modelData.label || "Saved loop")
+                            checked: modelData.armed === true
+                            onClicked: liveSettings.selectedEngine.setSavedLoopArmed(index, checked)
+                        }
+                    }
                 }
             }
         }

@@ -10,6 +10,11 @@ Item {
     property var engine: null
     property bool onAir: false
     property bool showRemainingTime: true
+    readonly property int endWarningSeconds: typeof settingsManager !== "undefined" && settingsManager
+        && settingsManager.endWarningSeconds !== undefined ? settingsManager.endWarningSeconds : 30
+    readonly property bool trackEnding: hasTrack && engine && engine.isPlaying && !engine.loopActive
+        && endWarningSeconds > 0 && duration > 0
+        && (duration - displayedPlaybackSeconds) * tempoTimeScale <= endWarningSeconds
 
     readonly property color panelColor: UiTheme.inspectorSurface
     readonly property color panelRaised: UiTheme.inspectorInset
@@ -249,18 +254,18 @@ Item {
 
             Rectangle {
                 id: onAirBadge
-                visible: root.onAir
+                visible: root.onAir || root.trackEnding
                 anchors.top: parent.top
                 anchors.right: parent.right
                 width: root.valuePx(92, 62)
                 height: root.valuePx(30, 20)
                 color: Qt.rgba(root.playingColor.r, root.playingColor.g, root.playingColor.b, 0.15)
-                border.color: root.playingColor
+                border.color: root.trackEnding ? UiTheme.warning : root.playingColor
                 radius: 0
                 Text {
                     anchors.centerIn: parent
-                    text: "ON AIR"
-                    color: root.playingColor
+                    text: root.trackEnding ? "TRACK END" : "ON AIR"
+                    color: root.trackEnding ? UiTheme.warning : root.playingColor
                     font.pixelSize: root.valuePx(14, 9)
                     font.weight: Font.DemiBold
                     font.letterSpacing: 0.4

@@ -1125,8 +1125,8 @@ Rectangle {
             Text {
                 id: clockText
                 anchors.centerIn: parent
-                text: root.currentTime
-                color: UiTheme.textSecondary
+                text: typeof setRecorder !== "undefined" && setRecorder && setRecorder.recording ? "REC" : root.currentTime
+                color: typeof setRecorder !== "undefined" && setRecorder && setRecorder.recording ? UiTheme.error : UiTheme.textSecondary
                 font.pixelSize: root.sp(14); font.family: UiTheme.numericFontFamily; font.bold: true
             }
         }

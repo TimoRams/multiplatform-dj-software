@@ -188,6 +188,8 @@ void DjEngine::resetTrackLoadState()
     m_currentSegments.clear();
     m_memoryCues.clear();
     m_currentTrackId.clear();
+    m_performanceKey.clear();
+    m_lastActiveLoopPosition = -1;
     m_externalSourceId.clear();
     m_readOnlyExternalTrack = false;
     // Reset every cue/loop state under the new track generation, including
@@ -240,6 +242,11 @@ void DjEngine::releaseTransportReaders()
 
 void DjEngine::ejectTrack()
 {
+    if (m_hasTrack && isPlaying() && SettingsManager::getInstance().loadLock()) {
+        m_trackLoadError = QStringLiteral("Load lock: stop this deck before ejecting");
+        emit trackLoadErrorChanged();
+        return;
+    }
     resetExternalCache();
     m_trackLoader.requestCancel();
     if (!m_trackLoadError.isEmpty()) {
@@ -858,9 +865,10 @@ void DjEngine::externalSourceUnavailable(const QString& sourceId)
 {
     if (!m_readOnlyExternalTrack || sourceId != m_externalSourceId)
         return;
+    if (!m_externalCacheReady) pause();
     const QString error = m_externalCacheReady
         ? QStringLiteral("USB device removed; this track is fully cached and will continue playing")
-        : QStringLiteral("USB device removed; buffered playback may continue until more data is needed");
+        : QStringLiteral("USB device removed; uncached deck stopped safely");
     if (m_trackLoadError != error) {
         m_trackLoadError = error;
         emit trackLoadErrorChanged();
@@ -876,6 +884,13 @@ void DjEngine::ejectExternalSource(const QString& sourceId)
 void DjEngine::beginTrackLoad(
     QString rawPath, std::optional<ExternalTrackLoadSnapshot> external)
 {
+    if (m_hasTrack && isPlaying() && SettingsManager::getInstance().loadLock()) {
+        m_trackLoadError = QStringLiteral("Load lock: stop this deck before loading another track");
+        emit trackLoadErrorChanged();
+        return;
+    }
+    m_trackLoader.setAutoCueOptions(SettingsManager::getInstance().autoCueEnabled(),
+                                    SettingsManager::getInstance().autoCueThresholdDb());
     resetExternalCache();
     QPointer<DjEngine> safeThis(this);
     AudioPageCache* const cache = &m_audioPageCache;
@@ -940,6 +955,13 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
 {
     if (result.generation != m_trackLoader.currentGeneration()) {
         m_audioPageCache.releaseTrack(result.cacheHandle);
+        return;
+    }
+    // A paused deck may have been started while the worker was loading.
+    if (m_hasTrack && isPlaying() && SettingsManager::getInstance().loadLock()) {
+        m_audioPageCache.releaseTrack(result.cacheHandle);
+        m_trackLoadError = QStringLiteral("Load lock: deck started while the track was loading");
+        emit trackLoadErrorChanged();
         return;
     }
     if (!result.succeeded()) {
@@ -1011,10 +1033,13 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
             hasReusableAnalysis = true;
         }
         installExternalCues(*result.external);
+        m_performanceKey = QStringLiteral("external:") + result.external->sourceAwareId;
     } else {
         hasReusableAnalysis = hydrateLibraryStateForTrack(
             result.canonicalPath, result.metadata.durationSec);
     }
+    if (!result.external) m_performanceKey = QStringLiteral("local:") + m_currentTrackId;
+    loadPerformanceExtras();
     m_currentLoadHasReusableAnalysis = hasReusableAnalysis;
 
     if (result.autoCueSec > 0.0

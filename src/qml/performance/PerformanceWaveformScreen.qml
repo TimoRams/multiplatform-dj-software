@@ -605,6 +605,29 @@ Item {
             }
 
             // ── Quantize ────────────────────────────────────────────────────────
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 2
+                Repeater {
+                    model: [{label: "MEM −", action: -1}, {label: "MEM +", action: 1}, {label: "STORE", action: 0}]
+                    Button {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        Layout.preferredWidth: 1
+                        Layout.preferredHeight: 32
+                        Layout.maximumHeight: 32
+                        text: modelData.label
+                        labelSize: 10
+                        enabled: root.engine && root.engine.hasTrack
+                        Accessible.name: modelData.action === 0 ? "Store memory cue" : (modelData.action < 0 ? "Previous memory cue" : "Next memory cue")
+                        onClicked: {
+                            if (modelData.action === 0) root.engine.storeMemoryCue()
+                            else root.engine.jumpMemoryCue(modelData.action)
+                        }
+                    }
+                }
+            }
             Rectangle {
                 objectName: "quantizeRow"
                 Layout.fillWidth: true; Layout.preferredHeight: 26

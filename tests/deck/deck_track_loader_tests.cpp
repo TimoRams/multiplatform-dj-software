@@ -114,6 +114,22 @@ int main(int argc, char** argv)
         cache.releaseTrack(waiter.value().cacheHandle);
     }
     {
+        ResultWaiter waiter;
+        loader.setAutoCueOptions(true, -60);
+        loader.loadTrack(monoPath, waiter.callback());
+        ok &= require(waiter.wait() && waiter.value().succeeded(), "Auto Cue fixture loads");
+        ok &= require(waiter.value().autoCueSec > 0 && waiter.value().autoCueSec < 0.004,
+                      "Auto Cue detects first audible content and retains a short safety lead-in");
+        cache.releaseTrack(waiter.value().cacheHandle);
+        ResultWaiter disabled;
+        loader.setAutoCueOptions(false, -60);
+        loader.loadTrack(monoPath, disabled.callback());
+        ok &= require(disabled.wait() && disabled.value().autoCueSec < 0,
+                      "disabling Auto Cue preserves the start-of-file load behavior");
+        cache.releaseTrack(disabled.value().cacheHandle);
+        loader.setAutoCueOptions(true, -60);
+    }
+    {
         ExternalTrackLoadSnapshot external;
         external.sourceId = QStringLiteral("test-usb");
         external.sourceAwareId = QStringLiteral("rekordbox:test-usb:1001");

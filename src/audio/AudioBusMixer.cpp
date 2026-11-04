@@ -148,6 +148,13 @@ void MasterMixer::finalize(const AudioParameters& parameters,
     m_masterFx.setExternalDelayTime(parameters.masterFxExternalDelaySeconds);
     m_masterFx.setPrimaryParam(parameters.masterFxPrimaryParameter);
     m_masterFx.process(master, 0, samples);
+    // Fold after stereo master FX, before cue tap, metering and protection.
+    // Both meters and the recording/output tap must describe the audible mix.
+    if (parameters.masterMono) {
+        auto* left = master.getWritePointer(0);
+        auto* right = master.getWritePointer(1);
+        for (int i = 0; i < samples; ++i) left[i] = right[i] = (left[i] + right[i]) * 0.5f;
+    }
 
     // MASTER CUE monitors the canonical mix (including Master FX), but it is
     // electrically upstream of the hardware MASTER LEVEL control. Preserve
@@ -201,7 +208,8 @@ void HeadphoneBus::mix(
     const juce::AudioBuffer<float>& masterTap,
     const AudioParameters& parameters,
     juce::AudioBuffer<float>& output,
-    int samples) noexcept
+    int samples,
+    const juce::AudioBuffer<float>* preview) noexcept
 {
     output.clear(0, 0, samples);
     output.clear(1, 0, samples);
@@ -222,12 +230,17 @@ void HeadphoneBus::mix(
     float* outputR = output.getWritePointer(1);
 
     const auto addSlewed = [&](const float* sourceL, const float* sourceR,
-                               float target, float& gainState) noexcept {
+                               float target, float& gainState, bool masterSignal = false) noexcept {
         float gain = gainState;
         for (int sample = 0; sample < samples; ++sample) {
             gain = std::clamp(target, gain - step, gain + step);
-            outputL[sample] += sourceL[sample] * gain;
-            outputR[sample] += sourceR[sample] * gain;
+            if (parameters.splitCue) {
+                const float mono = (sourceL[sample] + sourceR[sample]) * 0.5f * gain;
+                (masterSignal ? outputR : outputL)[sample] += mono;
+            } else {
+                outputL[sample] += sourceL[sample] * gain;
+                outputR[sample] += sourceR[sample] * gain;
+            }
         }
         gainState = gain;
     };
@@ -254,11 +267,19 @@ void HeadphoneBus::mix(
     if (masterTap.getNumChannels() >= 2 && masterTap.getNumSamples() >= samples) {
         if (masterGain > 0.0f || m_masterTapGain > 0.0f)
             addSlewed(masterTap.getReadPointer(0), masterTap.getReadPointer(1),
-                      masterGain, m_masterTapGain);
+                      masterGain, m_masterTapGain, true);
     } else {
         m_masterTapGain = 0.0f;
     }
 
+    if (preview && preview->getNumChannels() >= 2 && preview->getNumSamples() >= samples) {
+        const auto* left = preview->getReadPointer(0);
+        const auto* right = preview->getReadPointer(1);
+        for (int i = 0; i < samples; ++i) {
+            if (parameters.splitCue) outputL[i] += (left[i] + right[i]) * 0.5f;
+            else { outputL[i] += left[i]; outputR[i] += right[i]; }
+        }
+    }
     const float targetGain = std::clamp(parameters.headphoneGain, 0.0f, 2.0f);
     output.applyGainRamp(0, 0, samples, m_gain, targetGain);
     output.applyGainRamp(1, 0, samples, m_gain, targetGain);

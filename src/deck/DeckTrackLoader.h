@@ -150,6 +150,7 @@ public:
                                     CompletionCallback completion,
                                     RenderChunkCallback renderChunk = {},
                                     VisualCompletionCallback visualCompletion = {});
+    void setAutoCueOptions(bool enabled, int thresholdDb) noexcept { m_autoCueEnabled.store(enabled); m_autoCueThresholdDb.store(thresholdDb); }
     void setWaveformSeekHint(double positionSec) noexcept;
     void setWaveformDemand(const waveform::WaveformDemand& demand) noexcept;
     void requestCancel() noexcept;
@@ -180,6 +181,8 @@ private:
     const int m_waveformPointsPerSecond;
     AudioPageCache& m_audioPageCache;
     juce::AudioFormatManager m_formatManager;
+    std::atomic<bool> m_autoCueEnabled {true};
+    std::atomic<int> m_autoCueThresholdDb {-60};
     std::atomic<std::uint64_t> m_generation{0};
     std::atomic<TrackLoadState> m_state{TrackLoadState::Idle};
     std::atomic<bool> m_shuttingDown{false};

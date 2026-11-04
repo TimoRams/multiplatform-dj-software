@@ -28,6 +28,12 @@ class SettingsManager : public QObject
     Q_PROPERTY(int audioBufferSize READ getAudioBufferSize WRITE setAudioBufferSize NOTIFY audioSettingsChanged)
     Q_PROPERTY(bool flx10ControllerSupportEnabled READ flx10ControllerSupportEnabled WRITE setFlx10ControllerSupportEnabled NOTIFY controllerSettingsChanged)
     Q_PROPERTY(int flx10HostUsbPort READ flx10HostUsbPort WRITE setFlx10HostUsbPort NOTIFY controllerSettingsChanged)
+    Q_PROPERTY(bool loadLock READ loadLock WRITE setLoadLock NOTIFY liveSettingsChanged)
+    Q_PROPERTY(bool splitCue READ splitCue WRITE setSplitCue NOTIFY liveSettingsChanged)
+    Q_PROPERTY(bool masterMono READ masterMono WRITE setMasterMono NOTIFY liveSettingsChanged)
+    Q_PROPERTY(bool autoCueEnabled READ autoCueEnabled WRITE setAutoCueEnabled NOTIFY liveSettingsChanged)
+    Q_PROPERTY(int autoCueThresholdDb READ autoCueThresholdDb WRITE setAutoCueThresholdDb NOTIFY liveSettingsChanged)
+    Q_PROPERTY(int endWarningSeconds READ endWarningSeconds WRITE setEndWarningSeconds NOTIFY liveSettingsChanged)
     Q_PROPERTY(bool tightDoubleSync READ tightDoubleSync WRITE setTightDoubleSync NOTIFY tightDoubleSyncChanged)
     Q_PROPERTY(bool soundColorAdjustEnabled READ soundColorAdjustEnabled WRITE setSoundColorAdjustEnabled NOTIFY soundColorAdjustEnabledChanged)
     Q_PROPERTY(QString timeStretchBackend READ timeStretchBackend WRITE setTimeStretchBackend NOTIFY timeStretchBackendChanged)
@@ -139,6 +145,18 @@ public:
     int flx10HostUsbPort() const;
     void setFlx10HostUsbPort(int port);
 
+    bool loadLock() const { return getUiState("loadLock", "1") != "0"; }
+    bool splitCue() const { return getUiState("splitCue", "0") == "1"; }
+    bool masterMono() const { return getUiState("masterMono", "0") == "1"; }
+    bool autoCueEnabled() const { return getUiState("autoCueEnabled", "1") != "0"; }
+    int autoCueThresholdDb() const;
+    int endWarningSeconds() const;
+    void setLoadLock(bool enabled) { setUiState("loadLock", enabled ? "1" : "0"); emit liveSettingsChanged(); }
+    void setSplitCue(bool enabled) { setUiState("splitCue", enabled ? "1" : "0"); emit liveSettingsChanged(); }
+    void setMasterMono(bool enabled) { setUiState("masterMono", enabled ? "1" : "0"); emit liveSettingsChanged(); }
+    void setAutoCueEnabled(bool enabled) { setUiState("autoCueEnabled", enabled ? "1" : "0"); emit liveSettingsChanged(); }
+    void setAutoCueThresholdDb(int value);
+    void setEndWarningSeconds(int value);
     bool tightDoubleSync() const;
     void setTightDoubleSync(bool enabled);
     bool soundColorAdjustEnabled() const;
@@ -183,6 +201,7 @@ public:
     void setCrossfaderAssignD(const QString& assign);
 
 signals:
+    void liveSettingsChanged();
     void analysisSettingsChanged();
     void audioSettingsChanged();
     void controllerSettingsChanged();

@@ -36,6 +36,12 @@ public:
     [[nodiscard]] double positionSec() const { return m_positionSec.load(std::memory_order_relaxed); }
     [[nodiscard]] double progress() const;
 
+    Q_PROPERTY(QString error READ error NOTIFY errorChanged)
+    Q_PROPERTY(double level READ level WRITE setLevel NOTIFY levelChanged)
+    QString error() const { return m_error; }
+    double level() const { return m_level.load(std::memory_order_relaxed); }
+    void setLevel(double value);
+    AuxAudioDestination destination() const noexcept override { return AuxAudioDestination::Headphones; }
     Q_INVOKABLE void preview(const QString& filePath);
     Q_INVOKABLE void stop();
     Q_INVOKABLE void togglePreview(const QString& filePath);
@@ -44,17 +50,19 @@ public:
 
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate);
     void releaseResources();
-    void mixIntoOutputs(juce::AudioBuffer<float>& masterBuf,
+    void mixIntoOutputs(juce::AudioBuffer<float>& headphoneBuf,
                         juce::AudioBuffer<float>& scratch,
                         int startSample,
                         int numSamples) noexcept;
     void prepareAuxAudio(int maximumBlockSize, double sampleRate) override;
     void releaseAuxAudio() override;
-    void mixAuxAudio(juce::AudioBuffer<float>& masterBuffer,
+    void mixAuxAudio(juce::AudioBuffer<float>& headphoneBuffer,
                      juce::AudioBuffer<float>& scratchBuffer,
                      int numberOfSamples) noexcept override;
 
 signals:
+    void errorChanged();
+    void levelChanged();
     void playingChanged();
     void currentPathChanged();
     void durationChanged();
@@ -83,5 +91,6 @@ private:
     std::atomic<double> m_positionSec { 0.0 };
     std::atomic<bool> m_prepared { false };
 
-    static constexpr double kPreviewGain = 0.72;
+    QString m_error;
+    std::atomic<double> m_level { 0.72 };
 };

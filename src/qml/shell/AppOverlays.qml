@@ -9,6 +9,34 @@ Item {
     required property var mainLayout
     z: 1000
 
+    Rectangle {
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 12
+        width: Math.min(680, Math.max(0, parent.width - 24))
+        height: liveError.implicitHeight + 16
+        radius: 0
+        color: UiTheme.surfaceInset
+        border.color: UiTheme.warning
+        visible: liveError.text.length > 0 && root.appWindow.startupReady && !root.appWindow.exitPromptVisible
+        Text {
+            id: liveError
+            anchors.fill: parent; anchors.margins: 8
+            color: UiTheme.warning
+            font.family: UiTheme.uiFontFamily; font.pixelSize: 12
+            wrapMode: Text.Wrap
+            text: {
+                var messages = []
+                var decks = [typeof deckA !== "undefined" ? deckA : null, typeof deckB !== "undefined" ? deckB : null,
+                             typeof deckC !== "undefined" ? deckC : null, typeof deckD !== "undefined" ? deckD : null]
+                for (var i = 0; i < decks.length; ++i)
+                    if (decks[i] && decks[i].trackLoadError) messages.push("Deck " + "ABCD"[i] + ": " + decks[i].trackLoadError)
+                if (typeof setRecorder !== "undefined" && setRecorder && setRecorder.error) messages.push(setRecorder.error)
+                return messages.join("\n")
+            }
+        }
+    }
+
     StartupOverlay {
         anchors.fill: parent
         appWindow: root.appWindow
