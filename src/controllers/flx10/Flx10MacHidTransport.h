@@ -2,6 +2,7 @@
 
 #include <QByteArray>
 #include <QString>
+#include "Flx10ConnectionPolicy.h"
 
 #include <memory>
 
@@ -12,7 +13,8 @@ class Flx10MacHidTransport final
 public:
     Flx10MacHidTransport();
     ~Flx10MacHidTransport();
-    bool open(QString& error);
+    bool open(QString& error, flx10::ConnectionFailure* failure = nullptr);
+    static QString deviceSignature();
     void close() noexcept;
     void beginWrites();
     void endWrites() noexcept;

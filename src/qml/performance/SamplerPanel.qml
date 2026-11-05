@@ -1,63 +1,27 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QtQuick.Dialogs
 import DJSoftware
 
 Rectangle {
     id: root
     objectName: "samplerPanel"
     property var controller: typeof sampler !== "undefined" ? sampler : null
+    property bool pageMode: false
     signal closeRequested()
     color: UiTheme.panel
-    border.color: UiTheme.borderSubtle
     radius: 0
     readonly property var entries: controller ? controller.slots : []
-    property int editorPad: 0
-    property int editorBank: 0
-    property string editorPath: ""
-    property real editorDuration: 0
-    property var editorWaveform: []
-    property string editorError: ""
+    readonly property var transport: controller && controller.playback ? controller.playback : []
+    readonly property var bankActivity: controller && controller.bankActivity ? controller.bankActivity : []
+    function openEditor(pad, path) { sampleEditor.openForPad(pad, path || "") }
+    function seconds(value) { return isFinite(value) ? Math.max(0, value).toFixed(1) : "0.0" }
+    onVisibleChanged: if (!visible) sampleEditor.close()
 
-    function openEditor(pad, path) {
-        if (!controller) return
-        editorPad = pad; editorBank = controller.bank
-        controller.selectedSlot = pad
-        editorPath = path || ""
-        editorError = ""
-        const entry = entries[pad] || {}
-        sampleName.text = entry.name || ""
-        sampleColor.text = entry.color || "#e0a344"
-        sampleBpm.text = entry.bpm > 0 ? entry.bpm.toFixed(2) : ""
-        sampleGain.value = entry.gain === undefined ? 1 : entry.gain
-        mode.currentIndex = entry.loop ? 1 : 0
-        syncCheck.checked = !!entry.sync
-        editorDuration = entry.duration || 0
-        rangeStart.text = Number(entry.start || 0).toFixed(3)
-        rangeEnd.text = Number(entry.end || entry.duration || 0).toFixed(3)
-        editorWaveform = entry.waveform || []
-        editor.open()
-        if (editorPath) controller.probeFile(editorPath)
-    }
-    Connections {
-        target: root.controller
-        function onFileInfoChanged() {
-            if (!editor.visible || !root.editorPath) return
-            const info = root.controller.fileInfo
-            if (info.loading) return
-            root.editorError = info.error || ""
-            if (!info.error) {
-                root.editorDuration = info.duration
-                sampleName.text = info.name
-                rangeStart.text = "0.000"
-                rangeEnd.text = Math.min(30, info.duration).toFixed(3)
-                root.editorWaveform = info.waveform || []
-            }
-        }
-    }
     Flickable {
-        anchors.fill: parent; anchors.margins: 10
+        id: samplerFlick
+        anchors.fill: parent
+        anchors.margins: root.pageMode ? UiTheme.px(20) : UiTheme.px(10)
         clip: true
         contentWidth: width
         contentHeight: content.implicitHeight
@@ -66,235 +30,164 @@ Rectangle {
         ColumnLayout {
             id: content
             width: parent.width
-            spacing: 8
+            spacing: UiTheme.px(12)
             RowLayout {
+                id: samplerHeader
                 Layout.fillWidth: true
-                spacing: 6
-                Text { text: "SAMPLER"; color: UiTheme.textPrimary; font.bold: true; font.pixelSize: 12 }
+                spacing: UiTheme.px(6)
+                Text { text: "SAMPLER"; color: UiTheme.textPrimary; font.bold: true; font.pixelSize: root.pageMode ? 20 : 14 }
                 Repeater {
                     model: 4
-                    Button {
+                    Button { touchTarget: true;
                         required property int index
                         objectName: "samplerBank" + index
-                        text: "ABCD"[index]
-                        Layout.preferredWidth: UiTheme.touchTarget
-                        Layout.preferredHeight: UiTheme.touchTarget
+                        readonly property var activity: root.bankActivity[index] || ({playing:0, queued:0})
+                        text: "ABCD"[index] + (activity.playing || activity.queued ? " · " + activity.playing + "/" + activity.queued : "")
+                        Layout.preferredWidth: UiTheme.px(64)
+                        Layout.minimumHeight: UiTheme.touchTarget
                         checked: !!root.controller && root.controller.bank === index
                         onClicked: if (root.controller) root.controller.bank = index
+                        ToolTip.visible: hovered
+                        ToolTip.text: activity.playing + " playing · " + activity.queued + " waiting"
                     }
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: root.controller ? root.controller.clockSource + " · " + root.controller.bpm.toFixed(1) + " BPM" : ""
-                    elide: Text.ElideRight; color: UiTheme.textSecondary; font.pixelSize: 11
+                    Layout.minimumWidth: 24
+                    text: root.controller ? root.controller.clockSource + " · " + root.controller.bpm.toFixed(1) + " BPM" : "INTERNAL"
+                    elide: Text.ElideRight
+                    color: UiTheme.textSecondary
+                    font.pixelSize: 12
                 }
-                Button { objectName: "samplerStopAll"; text: "STOP ALL"; accentColor: UiTheme.error; onClicked: if (root.controller) root.controller.stopAll() }
-                Button { text: "CLOSE"; onClicked: root.closeRequested() }
-            }
-            GridLayout {
-                Layout.fillWidth: true
-                columns: 4; columnSpacing: 6; rowSpacing: 6
-                Repeater {
-                    model: 8
-                    Rectangle {
-                        id: pad
-                        required property int index
-                        property var entry: root.entries[index] || ({})
-                        property bool active: entry.state === "PLAYING" || entry.state === "QUEUED"
-                        objectName: "samplerPad" + index
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: UiTheme.px(56)
-                        radius: 0
-                        color: UiTheme.padBackground(entry.color || UiTheme.orange, !!entry.loaded, active, padMouse.containsMouse)
-                        border.color: active ? (entry.color || UiTheme.orange) : UiTheme.borderSubtle
-                        Rectangle { width: 2; anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; color: pad.entry.loaded ? (pad.entry.color || UiTheme.orange) : UiTheme.borderSubtle }
-                        Text { x: 8; y: 5; text: (pad.index + 1) + " · " + (pad.entry.state || "EMPTY"); color: UiTheme.textSecondary; font.pixelSize: 9 }
-                        Text {
-                            anchors.left: parent.left; anchors.right: editButton.left; anchors.bottom: parent.bottom
-                            anchors.leftMargin: 8; anchors.bottomMargin: 8
-                            text: pad.entry.name || "Load sample"
-                            elide: Text.ElideRight; color: UiTheme.textPrimary; font.pixelSize: 11
-                        }
-                        MouseArea {
-                            id: padMouse
-                            anchors.fill: parent; hoverEnabled: true
-                            acceptedButtons: Qt.LeftButton | Qt.RightButton
-                            onPressed: mouse => {
-                                if (mouse.button === Qt.RightButton || !pad.entry.loaded) root.openEditor(pad.index, "")
-                                else if (root.controller) { root.controller.selectedSlot = pad.index; root.controller.trigger(pad.index) }
-                            }
-                        }
-                        Button {
-                            id: editButton
-                            anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                            width: Math.max(UiTheme.touchTarget, UiTheme.px(52)); height: UiTheme.touchTarget
-                            leftPadding: 4; rightPadding: 4
-                            text: "EDIT"
-                            onClicked: root.openEditor(pad.index, "")
-                        }
-                        DropArea {
-                            anchors.fill: parent
-                            keys: ["text/uri-list"]
-                            onDropped: drop => {
-                                if (drop.hasUrls && drop.urls.length) root.openEditor(pad.index, drop.urls[0].toString())
-                            }
-                        }
-                    }
-                }
+                Button { touchTarget: true; objectName: "samplerStopAll"; text: "STOP ALL"; accentColor: UiTheme.error; onClicked: if (root.controller) root.controller.stopAll() }
+                Button { touchTarget: true; text: root.pageMode ? "BACK TO LIVE" : "CLOSE"; onClicked: root.closeRequested() }
             }
             RowLayout {
+                id: samplerControls
                 Layout.fillWidth: true
-                Text { text: "LEVEL"; color: UiTheme.textSecondary; font.pixelSize: 10 }
+                spacing: UiTheme.px(10)
+                Text { text: "LEVEL"; color: UiTheme.textSecondary; font.pixelSize: 12 }
                 Slider {
                     objectName: "samplerGain"
-                    Layout.fillWidth: true; Layout.maximumWidth: 280
+                    Layout.fillWidth: true; Layout.maximumWidth: 280; Layout.minimumWidth: 72
                     from: 0; to: 1.5
                     value: root.controller ? root.controller.gain : 0.72
                     onMoved: if (root.controller) root.controller.gain = value
                 }
-                Button { text: "CUE"; checked: root.controller ? root.controller.cue : false; onClicked: if (root.controller) root.controller.cue = !root.controller.cue }
-                Text { text: "QUANTIZE"; color: UiTheme.textSecondary; font.pixelSize: 10 }
+                Text { text: Math.round((root.controller ? root.controller.gain : 0.72) * 100) + "%"; color: UiTheme.textPrimary; Layout.preferredWidth: 44; font.pixelSize: 12 }
+                Text {
+                    objectName: "samplerPickup"
+                    visible: !!root.controller && !!root.controller.midiPickupPending
+                    text: "KNOB PICKUP"; color: UiTheme.textSecondary; font.pixelSize: 10
+                    ToolTip.visible: pickupHover.hovered
+                    ToolTip.text: "Move the sampler knob to the current level to take control"
+                    HoverHandler { id: pickupHover }
+                }
+                Button { touchTarget: true; objectName: "samplerCue"; text: "CUE"; checked: root.controller ? root.controller.cue : false; onClicked: if (root.controller) root.controller.cue = !root.controller.cue }
+                Text { text: "QUANTIZE"; color: UiTheme.textSecondary; font.pixelSize: 12 }
                 ComboBox {
+                    objectName: "samplerQuantize"
                     model: ["OFF", "1 BEAT", "4 BEATS"]
                     currentIndex: root.controller ? (root.controller.quantize === 0 ? 0 : root.controller.quantize === 4 ? 2 : 1) : 1
                     onActivated: if (root.controller) root.controller.quantize = [0, 1, 4][currentIndex]
                 }
                 Item { Layout.fillWidth: true }
             }
-            Text {
-                Layout.fillWidth: true; wrapMode: Text.Wrap
-                text: root.controller ? root.controller.error : ""
-                visible: text.length > 0; color: UiTheme.error; font.pixelSize: 11
-            }
-        }
-    }
-
-    FileDialog {
-        id: picker
-        title: "Load sampler audio"
-        nameFilters: ["Audio (*.wav *.flac *.ogg *.mp3 *.aif *.aiff)"]
-        onAccepted: { root.editorPath = selectedFile.toString(); root.controller.probeFile(root.editorPath) }
-    }
-    Dialog {
-        id: editor
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        width: Math.min(parent.width - 24, 660)
-        height: Math.min(parent.height - 24, 600)
-        modal: true
-        title: "SAMPLE " + "ABCD"[root.editorBank] + (root.editorPad + 1)
-        background: Rectangle { color: UiTheme.panel; border.color: UiTheme.borderSubtle; radius: 0 }
-        contentItem: Flickable {
-            clip: true; contentWidth: width; contentHeight: editorContent.implicitHeight
-            ScrollBar.vertical: ScrollBar {}
-            ColumnLayout {
-                id: editorContent
-                width: parent.width; spacing: 10
-                RowLayout {
-                    Layout.fillWidth: true
-                    Button { text: "LOAD FILE"; onClicked: picker.open() }
-                    Text { Layout.fillWidth: true; text: root.editorPath || "Local sample asset"; elide: Text.ElideMiddle; color: UiTheme.textSecondary }
-                }
-                TextField { id: sampleName; Layout.fillWidth: true; placeholderText: "Sample name" }
-                Rectangle {
-                    Layout.fillWidth: true; Layout.preferredHeight: 80
-                    color: UiTheme.displayBackground; radius: 0
-                    Canvas {
-                        id: waveform
-                        anchors.fill: parent
-                        property var peaks: root.editorWaveform
-                        onPeaksChanged: requestPaint()
-                        onWidthChanged: requestPaint()
-                        onPaint: {
-                            const ctx = getContext("2d"); ctx.reset()
-                            ctx.strokeStyle = UiTheme.orange; ctx.lineWidth = 1
-                            ctx.beginPath()
-                            for (let i = 0; i < peaks.length; ++i) {
-                                const x = i * width / peaks.length
-                                const amplitude = Math.min(1, peaks[i]) * height * 0.45
-                                ctx.moveTo(x, height/2 - amplitude); ctx.lineTo(x, height/2 + amplitude)
+            Rectangle { id: samplerDivider; Layout.fillWidth: true; implicitHeight: 1; color: UiTheme.separatorSubtle }
+            GridLayout {
+                id: samplerPads
+                Layout.fillWidth: true
+                columns: 4
+                columnSpacing: UiTheme.px(8); rowSpacing: UiTheme.px(8)
+                Repeater {
+                    model: 8
+                    Rectangle {
+                        id: pad
+                        required property int index
+                        property var entry: root.entries[index] || ({})
+                        property var playback: root.transport[index] || ({})
+                        property string transportState: entry.transportState || entry.state || "EMPTY"
+                        property bool active: transportState === "PLAYING" || transportState === "QUEUED"
+                        objectName: "samplerPad" + index
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        Layout.preferredHeight: root.pageMode ? Math.max(UiTheme.px(168), Math.min(UiTheme.px(280), (samplerFlick.height - samplerHeader.implicitHeight - samplerControls.implicitHeight - samplerDivider.implicitHeight - content.spacing*3 - samplerPads.rowSpacing - (samplerError.visible ? samplerError.implicitHeight + content.spacing : 0)) / 2)) : UiTheme.px(168)
+                        radius: 0
+                        color: UiTheme.padBackground(entry.color || UiTheme.orange, !!entry.loaded, active, triggerMouse.containsMouse)
+                        Rectangle { width: 2; anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; color: pad.active || pad.entry.loaded ? (pad.entry.color || UiTheme.orange) : UiTheme.borderSubtle }
+                        MouseArea {
+                            id: triggerMouse
+                            anchors.fill: parent
+                            anchors.bottomMargin: UiTheme.touchTarget + UiTheme.px(10)
+                            hoverEnabled: true
+                            acceptedButtons: Qt.LeftButton | Qt.RightButton
+                            onPressed: mouse => {
+                                if (mouse.button === Qt.RightButton || !pad.entry.loaded) root.openEditor(pad.index, "")
+                                else if (root.controller) { root.controller.selectedSlot = pad.index; root.controller.trigger(pad.index) }
                             }
-                            ctx.stroke()
                         }
-                    }
-                    Repeater {
-                        model: 2
-                        Rectangle {
-                            required property int index
-                            width: 2; height: parent.height
-                            color: index === 0 ? UiTheme.play : UiTheme.error
-                            x: root.editorDuration > 0 ? Math.max(0, Math.min(parent.width - width,
-                                Number(index === 0 ? rangeStart.text : rangeEnd.text) / root.editorDuration * parent.width)) : 0
-                            MouseArea {
-                                width: UiTheme.touchTarget; height: parent.height
-                                anchors.horizontalCenter: parent.horizontalCenter
-                                onPositionChanged: mouse => {
-                                    if (!pressed) return
-                                    const point = mapToItem(waveform, mouse.x, mouse.y)
-                                    const seconds = Math.max(0, Math.min(root.editorDuration, point.x / waveform.width * root.editorDuration))
-                                    if (parent.index === 0) rangeStart.text = seconds.toFixed(3)
-                                    else rangeEnd.text = seconds.toFixed(3)
+                        ColumnLayout {
+                            anchors.fill: parent; anchors.margins: UiTheme.px(10)
+                            spacing: UiTheme.px(4)
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text { text: (pad.index + 1).toString(); font.bold: true; font.pixelSize: 12; color: UiTheme.textPrimary }
+                                Item { Layout.fillWidth: true }
+                                Text { text: pad.entry.state || "EMPTY"; color: pad.entry.state === "ERROR" ? UiTheme.error : pad.active ? (pad.entry.color || UiTheme.orange) : UiTheme.textSecondary; font.pixelSize: 10 }
+                            }
+                            Text { Layout.fillWidth: true; text: pad.entry.name || "Load sample"; elide: Text.ElideRight; color: UiTheme.textPrimary; font.bold: true; font.pixelSize: root.pageMode ? 16 : 12 }
+                            Text {
+                                Layout.fillWidth: true
+                                text: pad.entry.loaded || pad.active ? (pad.entry.loop ? "LOOP" : "ONE-SHOT") + (pad.entry.sync ? " · SYNC " + Number(pad.entry.bpm || 0).toFixed(1) : " · FREE") : ""
+                                elide: Text.ElideRight; color: UiTheme.textSecondary; font.pixelSize: 11
+                            }
+                            Item {
+                                Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 20
+                                clip: true
+                                Canvas {
+                                    anchors.fill: parent
+                                    property var peaks: pad.entry.waveform || []
+                                    property real trimStart: pad.entry.start || 0
+                                    property real trimEnd: pad.entry.end || pad.entry.duration || 0
+                                    property real duration: pad.entry.duration || 0
+                                    property color stroke: pad.active ? (pad.entry.color || UiTheme.orange) : UiTheme.textMuted
+                                    onPeaksChanged: requestPaint()
+                                    onTrimStartChanged: requestPaint()
+                                    onTrimEndChanged: requestPaint()
+                                    onStrokeChanged: requestPaint()
+                                    onWidthChanged: requestPaint()
+                                    onHeightChanged: requestPaint()
+                                    onPaint: {
+                                        const ctx = getContext("2d"); if (!ctx) return
+                                        ctx.reset(); ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.beginPath()
+                                        const first = duration > 0 ? Math.max(0, Math.floor(trimStart / duration * peaks.length)) : 0
+                                        const last = duration > 0 ? Math.min(peaks.length, Math.ceil(trimEnd / duration * peaks.length)) : peaks.length
+                                        for(let i=first;i<last;++i) { const x=(i-first)*width/Math.max(1,last-first), a=Math.min(1,peaks[i])*height*0.45; ctx.moveTo(x,height/2-a); ctx.lineTo(x,height/2+a) }
+                                        ctx.stroke()
+                                    }
                                 }
+                                Rectangle { visible: pad.transportState === "PLAYING"; x: Math.min(parent.width-1, parent.width*(pad.playback.progress || 0)); width: 1; height: parent.height; color: UiTheme.textPrimary }
+                            }
+                            Text {
+                                objectName: "samplerProgressText" + pad.index
+                                Layout.fillWidth: true
+                                text: pad.transportState === "QUEUED" ? "START IN " + Number(pad.playback.remainingBeats || 0).toFixed(1) + " BEATS"
+                                    : pad.entry.loaded || pad.active ? root.seconds(pad.active ? pad.playback.position || 0 : 0) + " / " + root.seconds(pad.playback.duration || Math.max(0, (pad.entry.end || pad.entry.duration || 0) - (pad.entry.start || 0))) + " s" : ""
+                                elide: Text.ElideRight; color: UiTheme.textSecondary; font.pixelSize: 11; font.family: UiTheme.numericFontFamily
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true; spacing: UiTheme.px(4)
+                                Button { touchTarget: true; objectName: "samplerStop" + pad.index; text: "STOP"; enabled: pad.active; Layout.fillWidth: true; Layout.minimumWidth: UiTheme.touchTarget; onClicked: if (root.controller) root.controller.stop(pad.index) }
+                                Button { touchTarget: true; objectName: "samplerEdit" + pad.index; text: "EDIT"; Layout.fillWidth: true; Layout.minimumWidth: UiTheme.touchTarget; onClicked: root.openEditor(pad.index, "") }
                             }
                         }
-                    }
-                }
-                RowLayout {
-                    Text { text: "START / END (s)"; color: UiTheme.textSecondary }
-                    TextField { id: rangeStart; Layout.fillWidth: true; inputMethodHints: Qt.ImhFormattedNumbersOnly }
-                    TextField { id: rangeEnd; Layout.fillWidth: true; inputMethodHints: Qt.ImhFormattedNumbersOnly }
-                }
-                RowLayout {
-                    Text { text: "MODE"; color: UiTheme.textSecondary }
-                    ComboBox { id: mode; model: ["ONE-SHOT", "LOOP"] }
-                    CheckBox { id: syncCheck; text: "SYNC"; enabled: mode.currentIndex === 1 }
-                    TextField { id: sampleBpm; Layout.fillWidth: true; placeholderText: "Source BPM"; inputMethodHints: Qt.ImhFormattedNumbersOnly }
-                }
-                RowLayout {
-                    Text { text: "GAIN"; color: UiTheme.textSecondary }
-                    Slider { id: sampleGain; from: 0; to: 1.5; Layout.fillWidth: true }
-                    TextField { id: sampleColor; Layout.preferredWidth: 110; placeholderText: "#e0a344" }
-                }
-                Text { Layout.fillWidth: true; text: "CAPTURE FROM DECK"; color: UiTheme.textSecondary }
-                RowLayout {
-                    ComboBox { id: captureDeck; model: ["DECK A", "DECK B", "DECK C", "DECK D"] }
-                    ComboBox { id: captureBeats; model: [1, 2, 4, 8, 16, 32]; currentIndex: 2 }
-                    Button {
-                        text: "CAPTURE LOOP / BEATS"
-                        onClicked: {
-                            root.controller.bank = root.editorBank
-                            root.controller.captureDeck(root.editorPad, captureDeck.currentIndex, Number(captureBeats.currentText))
-                            editor.close()
-                        }
-                    }
-                }
-                Text { Layout.fillWidth: true; text: root.editorError; color: UiTheme.error; wrapMode: Text.Wrap; visible: text.length > 0 }
-                Text { Layout.fillWidth: true; text: "Maximum 30 seconds per sample. An active deck loop takes precedence over the beat count."; color: UiTheme.textLabel; wrapMode: Text.Wrap }
-                RowLayout {
-                    Button { text: "CLEAR"; onClicked: { root.controller.bank = root.editorBank; root.controller.clear(root.editorPad); editor.close() } }
-                    Item { Layout.fillWidth: true }
-                    Button { text: "CANCEL"; onClicked: editor.close() }
-                    Button {
-                        text: "SAVE"
-                        enabled: !!root.controller && (!root.editorPath || !root.controller.fileInfo.loading)
-                        onClicked: {
-                            const start = Number(rangeStart.text), end = Number(rangeEnd.text), bpm = Number(sampleBpm.text)
-                            if (!isFinite(start) || !isFinite(end) || start < 0 || end <= start || end - start > 30.0001 || end > root.editorDuration + 0.001) {
-                                root.editorError = "Choose a valid range of at most 30 seconds"; return
-                            }
-                            if (mode.currentIndex === 1 && syncCheck.checked && (!isFinite(bpm) || bpm < 20 || bpm > 400)) {
-                                root.editorError = "Enter source BPM between 20 and 400 for Sync"; return
-                            }
-                            root.controller.bank = root.editorBank
-                            if (root.editorPath) root.controller.loadFile(root.editorPad, root.editorPath, start, end, bpm, mode.currentIndex === 1, syncCheck.checked,
-                                sampleName.text, sampleColor.text, sampleGain.value)
-                            else root.controller.edit(root.editorPad, sampleName.text, sampleColor.text, sampleGain.value,
-                                mode.currentIndex === 1, syncCheck.checked, bpm, start, end)
-                            editor.close()
-                        }
+                        Rectangle { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 3; color: UiTheme.borderSubtle }
+                        Rectangle { objectName: "samplerProgress" + pad.index; anchors.left: parent.left; anchors.bottom: parent.bottom; height: 3; width: parent.width * Math.max(0, Math.min(1, pad.playback.progress || 0)); visible: pad.active; color: pad.entry.color || UiTheme.orange }
                     }
                 }
             }
+            Text { id: samplerError; Layout.fillWidth: true; wrapMode: Text.Wrap; text: root.controller ? root.controller.error : ""; visible: text.length > 0; color: UiTheme.error; font.pixelSize: 12 }
         }
     }
+    SamplerEditor { id: sampleEditor; controller: root.controller }
 }

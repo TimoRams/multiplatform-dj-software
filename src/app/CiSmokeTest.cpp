@@ -105,6 +105,62 @@ bool testLiveDeckFeatures(QString& error)
             require(sampler.slotList().first().toMap().value("loaded").toBool(), "failed import destroyed prior playable sample");
             sampler.edit(0, "Edited loop", "#80b040", 0.7, true, true, 120, 0.1, 0.9);
             require(wait([&] { return sampler.slotList().first().toMap().value("loaded").toBool(); }), "sampler trim edit failed");
+            {
+                const auto initial = sampler.beginEditor(3);
+                const auto session = initial.value("session").toULongLong();
+                require(session != 0, "editor session did not open");
+                sampler.setEditorFile(session, sourceSample);
+                require(wait([&] { return !sampler.editorBusy(); }) && sampler.editorError().isEmpty(), "editor source probe failed");
+                QVariantMap draft {{"name", "Editor loop"}, {"color", "#40a0e0"}, {"gain", 1.0},
+                    {"loop", true}, {"sync", true}, {"bpm", 120.0}, {"start", 0.1}, {"end", 0.8}};
+                AudioEngine::setOutputRouting(1,3,5);
+                sampler.previewEditor(session, draft);
+                require(wait([&] { return !sampler.previewLoading(); }) && sampler.previewPlaying(), "editor headphone preview did not prepare");
+                juce::AudioBuffer<float> previewOutput(6,512);
+                for (int i = 0; i < 4; ++i) bus.getNextAudioBlock({&previewOutput,0,512});
+                require(previewOutput.getMagnitude(4,0,512) > 0.001f
+                    && previewOutput.getMagnitude(0,0,512) == 0 && previewOutput.getMagnitude(2,0,512) == 0,
+                    "editor preview leaks into master/booth or fails to reach headphones");
+                sampler.stopEditorPreview();
+                for (int i = 0; i < 4; ++i) bus.getNextAudioBlock({&previewOutput,0,512});
+                require(!sampler.previewPlaying(), "editor preview did not stop");
+                AudioEngine::setOutputRouting(oldMaster,oldBooth,oldHeadphones);
+                bool saved = false;
+                const auto completion = QObject::connect(&sampler, &SamplerController::editorFinished, &sampler,
+                    [&](qulonglong token, bool success, const QString&) { if (token == session) saved = success; });
+                sampler.applyEditor(session,draft); sampler.setBank(2);
+                require(wait([&] { return !sampler.editorBusy(); }) && saved, "editor save did not complete");
+                QObject::disconnect(completion);
+                require(!sampler.slotList()[3].toMap().value("loaded").toBool(), "bank change redirected editor save");
+                sampler.setBank(0);
+                require(sampler.slotList()[3].toMap().value("name") == "Editor loop", "editor did not save its original absolute slot");
+                const auto cancelled = sampler.beginEditor(3).value("session").toULongLong();
+                draft["name"] = "Discarded edit"; draft["start"] = 0.01; draft["end"] = 0.5;
+                sampler.applyEditor(cancelled,draft); sampler.cancelEditor(cancelled);
+                require(sampler.slotList()[3].toMap().value("name") == "Editor loop", "cancelling a save replaced the old sample");
+                const auto capture = sampler.beginEditor(4).value("session").toULongLong();
+                deck.setManualBpm(120); sampler.captureEditor(capture,0,1);
+                require(wait([&] { return !sampler.editorBusy(); }) && sampler.editorError().isEmpty(), "editor capture preparation failed");
+                sampler.cancelEditor(capture);
+                require(!sampler.slotList()[4].toMap().value("loaded").toBool(), "cancelled capture modified a sampler slot");
+            }
+            {
+                SamplerAudioEngine failedAudio;
+                const auto failedDirectory = directory.filePath("failed-editor");
+                SamplerController failed(failedAudio,clock,failedDirectory);
+                failed.loadFile(0,sourceSample,0,0.5,120,false,false,"Keep this sample");
+                require(wait([&] { return failed.slotList()[0].toMap().value("loaded").toBool(); }), "failed-write fixture did not load");
+                require(QFile::remove(failedDirectory + "/banks.json") && QDir().mkpath(failedDirectory + "/banks.json"), "cannot create failed-write fixture");
+                const auto session = failed.beginEditor(0).value("session").toULongLong();
+                failed.applyEditor(session, {{"name","Do not commit"},{"color","#40a0e0"},{"gain",1.0},
+                    {"loop",false},{"sync",false},{"bpm",120.0},{"start",0.0},{"end",0.5}});
+                require(wait([&] { return !failed.editorBusy(); }) && !failed.editorError().isEmpty()
+                    && failed.slotList()[0].toMap().value("name") == "Keep this sample"
+                    && failed.slotList()[0].toMap().value("loaded").toBool(), "failed editor save destroyed previous sample/draft");
+                failed.clearEditor(session);
+                require(failed.slotList()[0].toMap().value("loaded").toBool(), "failed clear removed a playable sample");
+                failed.cancelEditor(session);
+            }
             sampler.setBank(1); sampler.loadFile(2, sourceSample, 0, 0.5);
             require(wait([&] { return sampler.slotList()[2].toMap().value("loaded").toBool(); }), "second sampler bank did not load");
             sampler.setBank(0); sampler.setGain(0.63); sampler.setQuantize(4);
@@ -117,6 +173,8 @@ bool testLiveDeckFeatures(QString& error)
             require(entry.value("name") == "Edited loop" && std::abs(entry.value("start").toDouble() - 0.1) < 0.001
                 && std::abs(entry.value("end").toDouble() - 0.9) < 0.001 && restored.quantize() == 4
                 && std::abs(restored.gain() - 0.63) < 0.001, "sampler metadata/range/settings did not persist");
+            require(wait([&] { return restored.slotList()[3].toMap().value("loaded").toBool(); })
+                && restored.slotList()[3].toMap().value("name") == "Editor loop", "late cancelled editor result overwrote the persisted slot");
             restored.setBank(1);
             require(wait([&] { return restored.slotList()[2].toMap().value("loaded").toBool(); }), "sampler bank identity did not persist");
             restored.clear(2);
@@ -129,6 +187,38 @@ bool testLiveDeckFeatures(QString& error)
             ParameterStore parameters;
             MidiControllerManager midi(&parameters, clock, nullptr, MidiControllerManager::HardwareAccess::Disabled);
             midi.connectSampler(&restored);
+            midi.selectMapping("Built-in: DDJ-FLX10");
+            QObject::connect(&parameters, &ParameterStore::parameterChanged, &restored, [&](const QString& id, float value) {
+                if (id == "sampler_gain") restored.setMidiGainNormalized(value);
+                if (id == "sampler_cue" && value >= 0.5f) restored.setCue(!restored.cue());
+            });
+            auto sendMidi = [&](const juce::MidiMessage& message) {
+                static_cast<juce::MidiInputCallback&>(midi).handleIncomingMidiMessage(nullptr,message);
+                QCoreApplication::processEvents();
+            };
+            const int midiMaster = AudioEngine::masterFirstChannel(), midiBooth = AudioEngine::boothFirstChannel(), midiHeadphones = AudioEngine::headphonesFirstChannel();
+            AudioEngine::setOutputRouting(1,3,5); restored.setCue(false);
+            sendMidi(juce::MidiMessage::noteOn(7,0x69,static_cast<juce::uint8>(127)));
+            require(restored.cue(), "FLX10 sampler CUE press is unmapped");
+            sendMidi(juce::MidiMessage::noteOn(7,0x69,static_cast<juce::uint8>(127)));
+            require(restored.cue(), "repeated sampler CUE press toggled twice");
+            sendMidi(juce::MidiMessage::noteOff(7,0x69)); require(restored.cue(), "sampler CUE release toggled state");
+            restored.setCue(false); // Touch and MIDI share the actual state.
+            sendMidi(juce::MidiMessage::noteOn(7,0x69,static_cast<juce::uint8>(127)));
+            require(restored.cue(), "sampler CUE did not follow a touch change");
+            sendMidi(juce::MidiMessage::noteOff(7,0x69));
+            restored.setGain(0.75); restored.resetMidiPickup();
+            sendMidi(juce::MidiMessage::controllerEvent(7,0x23,127));
+            sendMidi(juce::MidiMessage::controllerEvent(7,0x03,127));
+            require(std::abs(restored.gain()-0.75) < 0.001 && restored.midiPickupPending(), "FLX10 startup volume jumped before pickup");
+            sendMidi(juce::MidiMessage::controllerEvent(7,0x03,64));
+            sendMidi(juce::MidiMessage::controllerEvent(7,0x23,0));
+            require(std::abs(restored.gain()-1.5*8192/16383.0) < 0.001 && !restored.midiPickupPending(), "FLX10 14-bit sampler volume/pickup failed");
+            AudioEngine::setOutputRouting(1,3,2); restored.setCue(false);
+            sendMidi(juce::MidiMessage::noteOn(7,0x69,static_cast<juce::uint8>(127)));
+            require(!restored.cue(), "hardware sampler CUE bypasses headphone routing validation");
+            sendMidi(juce::MidiMessage::noteOff(7,0x69));
+            AudioEngine::setOutputRouting(midiMaster,midiBooth,midiHeadphones);
             restored.setQuantize(0);
             midi.selectPerformancePadMode("deckA", 3);
             midi.setPerformancePadPressed("deckA", 1, true);

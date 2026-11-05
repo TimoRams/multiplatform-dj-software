@@ -59,7 +59,7 @@ DDJFLX10Controller::DDJFLX10Controller(ControlClock& controlClock, QObject* pare
     };
     m_clockRegistration = controlClock.registerCallbacks(std::move(callbacks));
 
-    setStatus(QStringLiteral("DDJ-FLX10 support disabled"));
+    m_status = QStringLiteral("DDJ-FLX10 support disabled");
 }
 
 DDJFLX10Controller::~DDJFLX10Controller()
@@ -67,16 +67,18 @@ DDJFLX10Controller::~DDJFLX10Controller()
     stop();
 }
 
-bool DDJFLX10Controller::start()
+bool DDJFLX10Controller::start(bool quiet)
 {
-    stop();
+    if (m_connected) return true;
+    stop(false);
+    m_connectionFailure = flx10::ConnectionFailure::Transient;
     m_shuttingDown.store(false, std::memory_order_release);
 
 #if defined(BROCKDJ_FLX10_HAS_HID)
 #if defined(Q_OS_MACOS)
-    setStatus(QStringLiteral("DDJ-FLX10: starting shared macOS HID display"));
+    if (!quiet) setStatus(QStringLiteral("DDJ-FLX10: starting shared macOS HID display"));
 #else
-    setStatus(QStringLiteral("DDJ-FLX10: starting Linux HID activation"));
+    if (!quiet) setStatus(QStringLiteral("DDJ-FLX10: starting Linux HID activation"));
 #endif
 
     if (!initialiseUsb())
@@ -93,7 +95,8 @@ bool DDJFLX10Controller::start()
         m_midiPort = findMidiPort();
 #elif defined(Q_OS_MACOS)
     if (!sequencerMidiReady) {
-        stop();
+        m_connectionFailure = flx10::ConnectionFailure::Ambiguous;
+        stop(false);
         setStatus(QStringLiteral("DDJ-FLX10: CoreMIDI session output unavailable or ambiguous. Connect one FLX10, enable its vendor driver, close other DJ apps and Refresh; audio/MIDI have not been detached."));
         return false;
     }
@@ -108,7 +111,7 @@ bool DDJFLX10Controller::start()
 #if defined(Q_OS_MACOS)
         const QString error = m_status;
 #endif
-        stop();
+        stop(false);
 #if defined(Q_OS_MACOS)
         setStatus(error);
 #else
@@ -125,6 +128,7 @@ bool DDJFLX10Controller::start()
     // thread would run for the whole session without a position source.
     captureDeckPlayheadSinks();
     startDisplayThread();
+    m_connectionFailure = flx10::ConnectionFailure::None;
     setConnected(true);
     m_clockStartMs = QDateTime::currentMSecsSinceEpoch();
     m_hidTrafficClock.restart();
@@ -191,7 +195,7 @@ void DDJFLX10Controller::prepareForShutdown() noexcept
     m_deckB = nullptr;
 }
 
-void DDJFLX10Controller::stop()
+void DDJFLX10Controller::stop(bool announceDisabled)
 {
     m_shuttingDown.store(true, std::memory_order_release);
     disconnectDeckSignals();
@@ -273,7 +277,7 @@ void DDJFLX10Controller::stop()
 #endif
 
     setConnected(false);
-    if (!m_status.contains(QStringLiteral("disabled")))
+    if (announceDisabled && !m_status.contains(QStringLiteral("disabled")))
         setStatus(QStringLiteral("DDJ-FLX10 support disabled"));
 }
 

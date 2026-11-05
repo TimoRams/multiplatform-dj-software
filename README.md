@@ -56,13 +56,22 @@ same button. The saved recording directory applies to this shortcut and MIDI too
 Stopping finalizes the file in the background; wait for “SAVING” to finish before
 starting another recording.
 
-The **Sampler** shortcut opens the bottom panel without stopping the decks.
+The **Sampler** top-bar tab opens its own full page without stopping the decks.
 Banks A–D each contain eight slots; deck SAMPLER pads and FLX10 sampler pads use
 the same selected bank. Use EDIT to load/trim a file or capture a deck loop/beat
 range. The Library context menu and drag-and-drop also open the sample editor.
 Samples are copied into local storage (up to 30 seconds each, 256 MiB total PCM).
 One-shots retrigger; loops toggle. At most eight voices play simultaneously;
 occupied loop voices are never stolen. CUE is independent of the sampler level.
+Pads display waveform/progress and queued-start countdowns; bank buttons show
+activity in other banks. The editor adds frame-accurate trim, zoom and private
+headphone preview, with fixed Save/Cancel actions and errors. FLX10 Sampler CUE
+and 14-bit Sampler Volume use the same state as the UI, with level pickup.
+The **FX** tab provides Touch FX and FX Settings for both existing FX units:
+effect choice, A–D routing, wet/dry, BPM sync, quantization, beat division, Reverb
+room size and Sound Color character. Touch FX uses a momentary XY surface; release,
+page changes and window deactivation restore the unit's previous settings.
+
 Sampler program reaches the master/booth and recorder; headphone-only audio does
 not. Sync uses the active master/Link or a playing deck, then an internal clock.
 
@@ -72,6 +81,7 @@ stored in BrockDJ's local library, leaving the original device database untouche
 
 See [live milestone behavior and tests](docs/architecture/live-features-milestone.md).
 See [sampler implementation and remaining roadmap](docs/architecture/sampler-milestone.md).
+See [live sampler editing and FLX10 recovery](docs/architecture/sampler-live-editing.md).
 
 ## Platform status
 

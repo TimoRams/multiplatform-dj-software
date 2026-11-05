@@ -6211,7 +6211,6 @@ Rectangle {
             enabled: typeof sampler !== "undefined" && !!sampler
             onTriggered: {
                 if (window && window.openSamplerEditor) {
-                    window.samplerPanelOpen = true
                     window.openSamplerEditor(sampler.selectedSlot, libraryRoot.ctxFilePath)
                 }
             }

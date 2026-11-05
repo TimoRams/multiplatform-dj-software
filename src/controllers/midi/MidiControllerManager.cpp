@@ -1,6 +1,7 @@
 #include "MidiControllerManager.h"
 
 #include "ParameterStore.h"
+#include "audio/SamplerController.h"
 #include "app/SettingsManager.h"
 #include "controllers/flx10/Flx10ControllerIdentity.h"
 #include "deck/DjEngine.h"
@@ -224,6 +225,7 @@ bool MidiControllerManager::refreshMidiDevices(bool notifyMappingList)
 
 void MidiControllerManager::resetHighResolutionControlState()
 {
+    if (m_sampler) m_sampler->resetMidiPickup();
     m_14BitFallbackTimer.stop();
     m_pending14BitMsbFallbacks.clear();
     m_14BitAccumulators.clear();
@@ -371,4 +373,5 @@ void MidiControllerManager::forceFlx10FeedbackResync()
     m_lastMidiShortValues.clear();
     m_midiFeedback.refreshAll();
     refreshAllDeckLeds();
+    if (m_sampler) sendMidiNoteLed(0x96, 0x69, m_sampler->cue() ? 0x7F : 0);
 }

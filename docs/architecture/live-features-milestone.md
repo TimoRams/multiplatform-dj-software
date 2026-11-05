@@ -83,10 +83,10 @@ isolation, supplemental loop/cue restoration, automatic loop entry and manual
 exit. Master-bus tests check mono output against both the cue tap and meter,
 including cancellation of opposite-polarity channels.
 
-Known pre-existing validation failures: `deck_audio_graph` reports four envelope
-holes during the +/-16% tempo sweep at 64/256-frame blocks (44.1/48 kHz).
-The unchanged HEAD sweep helper reproduces these without constructing an
-AudioEngine, independently of preview/recording routing. Separately,
+The four previously reproduced envelope holes during the +/-16% tempo sweep at
+64/256-frame blocks (44.1/48 kHz) are resolved by the hop-consistent pitch map and
+denser overlap described in `keylock-stability.md`. Sweep limits remain unchanged.
+Separately,
 `dj_engine_api_contract` expects waveform-invalidation implementation strings in
 LibraryAnalysisManager.cpp that are absent in both HEAD and the working tree.
 Neither test is disabled or relaxed by this milestone.

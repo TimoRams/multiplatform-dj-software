@@ -259,6 +259,7 @@ bool TimeStretchProcessor::preparePipeline(Pipeline& p, const TimeStretchConfigu
     p.smoothedSemitones = p.semitoneTarget = m_keySemitoneOffset.load(std::memory_order_acquire);
     p.tempoRampRemaining = p.semitoneRampRemaining = 0;
     p.appliedTonalityLimit = 0.0f;
+    p.signalsmithHopOffset = 0;
     p.rubberBand.reset();
     p.signalsmith.reset();
     if (c.backend == TimeStretchBackend::RubberBand) {
@@ -510,9 +511,10 @@ bool TimeStretchProcessor::serviceSeedRequest() noexcept
         }
         if (m_seedNeedsReset) {
             if (p.fifo) p.fifo->reset();
-            if (p.signalsmith)
+            if (p.signalsmith) {
                 p.signalsmith->reset();
-            else if (p.rubberBand) {
+                p.signalsmithHopOffset = 0;
+            } else if (p.rubberBand) {
                 p.rubberBand->reset();
                 prewarmPipeline(p);
             }
@@ -537,9 +539,12 @@ bool TimeStretchProcessor::serviceSeedRequest() noexcept
                                    || m_seedTempos[static_cast<std::size_t>(offset + sample + run)] == tempo))
                             ++run;
                     }
+                    run = std::min(run, p.signalsmith->intervalSamples() - p.signalsmithHopOffset);
                     const float* sampleInput[2] { input[0] + sample, input[1] + sample };
                     float* sampleOutput[2] { p.trim.getWritePointer(0), p.trim.getWritePointer(1) };
                     p.signalsmith->process(sampleInput, run, sampleOutput, run);
+                    p.signalsmithHopOffset += run;
+                    if (p.signalsmithHopOffset == p.signalsmith->intervalSamples()) p.signalsmithHopOffset = 0;
                     sample += run;
                 }
             } else if (p.rubberBand) {
@@ -797,9 +802,18 @@ void TimeStretchProcessor::processSignalsmithPipeline(
         m_switchFadeRemaining.store(0, std::memory_order_relaxed);
         int offset = 0;
         while (offset < info.numSamples) {
-            const int count = 1;
-            updateSignalsmithPitch(p, m_readAheadSource->readAheadTempo(
-                p.latency - info.numSamples + offset - stretch->inputLatency()));
+            const int count = std::min(info.numSamples - offset,
+                                       stretch->intervalSamples() - p.signalsmithHopOffset);
+            // The frequency map is constant throughout this run. Keep ramp
+            // time sample-accurate, but submit the audio to Signalsmith once.
+            for (int sample = 0; sample < count; ++sample) {
+                const double tempo = p.signalsmithHopOffset == 0
+                    ? m_readAheadSource->readAheadTempo(
+                        p.latency - info.numSamples + offset + sample - stretch->inputLatency())
+                    : 0.0;
+                updateSignalsmithPitch(p, tempo);
+                if (++p.signalsmithHopOffset == stretch->intervalSamples()) p.signalsmithHopOffset = 0;
+            }
             const float* input[2] { p.input.getReadPointer(0, offset),
                                     p.input.getReadPointer(1, offset) };
             if (channels == 2) {
@@ -843,13 +857,19 @@ void TimeStretchProcessor::processSignalsmithPipeline(
             p.input.getReadPointer(1)
         };
 
-        for (int sample = 0; sample < pull; ++sample) {
-            updateSignalsmithPitch(p, 0.0);
+        for (int sample = 0; sample < pull;) {
+            const int count = std::min(pull - sample,
+                                       stretch->intervalSamples() - p.signalsmithHopOffset);
+            for (int rampSample = 0; rampSample < count; ++rampSample) {
+                updateSignalsmithPitch(p, 0.0);
+                if (++p.signalsmithHopOffset == stretch->intervalSamples()) p.signalsmithHopOffset = 0;
+            }
             const float* sampleInput[2] { input[0] + sample, input[1] + sample };
             float* output[2] { p.trim.getWritePointer(0), p.trim.getWritePointer(1) };
-            stretch->process(sampleInput, 1, output, 1);
+            stretch->process(sampleInput, count, output, count);
             for (int channel = 0; channel < channels; ++channel)
-                info.buffer->setSample(channel, destination + sample, output[channel][0]);
+                info.buffer->copyFrom(channel, destination + sample, p.trim, channel, 0, count);
+            sample += count;
         }
 
         destination += pull;
@@ -891,6 +911,9 @@ void TimeStretchProcessor::updateSignalsmithPitch(Pipeline& pipeline, double tem
         if (--pipeline.semitoneRampRemaining == 0)
             pipeline.smoothedSemitones = pipeline.semitoneTarget;
     }
+    // Signalsmith spreads analysis, mapping and synthesis over one hop. Updating
+    // its map in the middle of that work mixes pitch settings within a spectrum.
+    if (pipeline.signalsmithHopOffset != 0) return;
     const double rate = tempo > 0.0 ? tempo : pipeline.smoothedTempo;
     const bool pitchLocked = m_pitchLockEnabled.load(std::memory_order_acquire);
     const double scale = (pitchLocked ? 1.0 / rate : 1.0)

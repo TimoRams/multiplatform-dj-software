@@ -7,6 +7,7 @@ Item {
     required property var appWindow
     readonly property var window: appWindow
     property alias librarySection: librarySection
+    function openSamplerEditor(pad, path) { samplerPage.openEditor(pad, path) }
 
     component AioActionButton: Button {
         required property var owner
@@ -341,6 +342,27 @@ Item {
             Layout.preferredHeight: visible ? 1 : 0
             Layout.maximumHeight: visible ? 1 : 0
             color: UiTheme.divider
+        }
+
+        SamplerPanel {
+            id: samplerPage
+            pageMode: true
+            visible: window.samplerPageActive === true
+            Layout.fillWidth: true
+            Layout.fillHeight: visible
+            Layout.minimumHeight: visible ? 1 : 0
+            Layout.preferredHeight: 0
+            Layout.maximumHeight: visible ? window.height : 0
+            onCloseRequested: window.openMainPage("performance")
+        }
+
+        EffectsPage {
+            visible: window.fxPageActive === true
+            Layout.fillWidth: true
+            Layout.fillHeight: visible
+            Layout.minimumHeight: visible ? 1 : 0
+            Layout.preferredHeight: 0
+            Layout.maximumHeight: visible ? window.height : 0
         }
 
         Loader {

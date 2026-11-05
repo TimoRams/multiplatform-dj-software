@@ -4,6 +4,7 @@
 #include <QPointer>
 #include <QString>
 #include <QTimer>
+#include <QElapsedTimer>
 
 #include "flx10/DDJFLX10Controller.h"
 #include "deck/DjEngine.h"
@@ -14,6 +15,7 @@ class ControllerIntegrationManager : public QObject
     Q_PROPERTY(bool flx10Enabled READ flx10Enabled WRITE setFlx10Enabled NOTIFY flx10EnabledChanged)
     Q_PROPERTY(bool flx10Available READ flx10Available CONSTANT)
     Q_PROPERTY(bool flx10Connected READ flx10Connected NOTIFY flx10StatusChanged)
+    Q_PROPERTY(QString flx10ConnectionState READ flx10ConnectionState NOTIFY flx10StatusChanged)
     Q_PROPERTY(QString flx10Status READ flx10Status NOTIFY flx10StatusChanged)
 
 public:
@@ -27,6 +29,7 @@ public:
     bool flx10Available() const { return flx10::kHidTransportAvailable; }
     bool flx10Connected() const { return m_flx10.isConnected(); }
     QString flx10Status() const { return m_flx10.status(); }
+    QString flx10ConnectionState() const;
 
 public slots:
     void setFlx10Enabled(bool enabled);
@@ -38,6 +41,11 @@ signals:
 
 private:
     void retryFlx10Connection();
+    void attemptFlx10Connection(bool quiet);
+    void observeFlx10Status();
+    flx10::ConnectionPolicy m_retryPolicy;
+    QElapsedTimer m_retryClock;
+    bool m_attempting = false, m_wasConnected = false;
 
     bool m_flx10Enabled = false;
     bool m_shuttingDown = false;

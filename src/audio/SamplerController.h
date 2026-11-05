@@ -1,5 +1,7 @@
 #pragma once
 #include "SamplerAudioEngine.h"
+#include "SamplerMidiPickup.h"
+#include <QTimer>
 #include "app/ControlClock.h"
 #include <QObject>
 #include <QVariantList>
@@ -23,7 +25,36 @@ class SamplerController final : public QObject {
     Q_PROPERTY(double bpm READ bpm NOTIFY changed)
     Q_PROPERTY(QString error READ error NOTIFY changed)
     Q_PROPERTY(QVariantMap fileInfo READ fileInfo NOTIFY fileInfoChanged)
+    Q_PROPERTY(QVariantList playback READ playback NOTIFY playbackChanged)
+    Q_PROPERTY(QVariantList bankActivity READ bankActivity NOTIFY playbackChanged)
+    Q_PROPERTY(bool midiPickupPending READ midiPickupPending NOTIFY changed)
+    Q_PROPERTY(bool previewAvailable READ previewAvailable NOTIFY previewChanged)
+    Q_PROPERTY(bool previewPlaying READ previewPlaying NOTIFY previewChanged)
+    Q_PROPERTY(bool previewLoading READ previewLoading NOTIFY previewChanged)
+    Q_PROPERTY(QVariantMap previewPlayback READ previewPlayback NOTIFY previewChanged)
+    Q_PROPERTY(bool editorBusy READ editorBusy NOTIFY editorChanged)
+    Q_PROPERTY(QString editorError READ editorError NOTIFY editorChanged)
 public:
+    QVariantList playback() const;
+    QVariantList bankActivity() const;
+    bool midiPickupPending() const { return m_midiGainSeen && m_midiPickup.pending(); }
+    void setMidiGainNormalized(double value);
+    void resetMidiPickup();
+    bool previewAvailable() const;
+    bool previewPlaying() const { return m_audio.previewPlaying(); }
+    bool previewLoading() const { return m_previewLoading; }
+    QVariantMap previewPlayback() const;
+    bool editorBusy() const { return m_editorSaving || m_editorLoading; }
+    QString editorError() const { return m_editorError; }
+    Q_INVOKABLE QVariantMap beginEditor(int pad);
+    Q_INVOKABLE void cancelEditor(qulonglong session);
+    Q_INVOKABLE void setEditorFile(qulonglong session, const QString& path);
+    Q_INVOKABLE void captureEditor(qulonglong session, int deck, int beats);
+    Q_INVOKABLE void applyEditor(qulonglong session, const QVariantMap& draft);
+    Q_INVOKABLE void clearEditor(qulonglong session);
+    Q_INVOKABLE void previewEditor(qulonglong session, const QVariantMap& draft);
+    Q_INVOKABLE void stopEditorPreview();
+    Q_INVOKABLE void requestEditorWaveform(qulonglong session, double start, double end);
     SamplerController(SamplerAudioEngine& audio, ControlClock& clock,
                       const QString& storageDirectory, QObject* parent = nullptr);
     ~SamplerController() override;
@@ -59,6 +90,12 @@ public:
     void shutdown();
 signals:
     void changed();
+    void playbackChanged();
+    void previewChanged();
+    void editorChanged();
+    void editorSourceReady(qulonglong session, const QVariantMap& info);
+    void editorWaveformReady(qulonglong session, double start, double end, const QVariantList& peaks);
+    void editorFinished(qulonglong session, bool success, const QString& error);
     void fileInfoChanged();
 private:
     struct Slot {
@@ -76,13 +113,35 @@ private:
         QVariantList waveform;
     };
     void load(int index, const QString& path, double start, double end,
-              bool imported, Slot desired);
+              bool imported, Slot desired, std::uint64_t editorSession = 0);
+    bool clearSlot(int index);
+    void refreshPlayback();
+    void editorProbeFinished(std::uint64_t probeGeneration);
+    void finishEditorSave(std::uint64_t session, bool success, const QString& error);
+    bool validateEditor(std::uint64_t session, const QVariantMap& draft);
+    bool validEditor(std::uint64_t session) const;
+    void setEditorError(const QString& error);
     bool save();
     void restore();
     void tick();
     void fail(const QString& message);
     static QString localPath(const QString& path);
     SamplerAudioEngine& m_audio;
+    QTimer m_gainSaveTimer;
+    SamplerMidiPickup m_midiPickup;
+    bool m_applyingMidiGain = false, m_midiGainSeen = false;
+    std::array<SamplerAudioEngine::PlaybackSnapshot, 32> m_playbackCache {};
+    std::array<int, 32> m_lastStates {};
+    double m_lastUiBpm = 0;
+    QString m_lastUiClock;
+    std::uint64_t m_nextEditorSession = 0, m_editorSession = 0, m_editorGeneration = 0;
+    std::uint64_t m_editorProbeGeneration = 0, m_previewGeneration = 0, m_waveGeneration = 0;
+    int m_editorSlot = -1;
+    QString m_editorSource, m_editorError;
+    double m_editorSourceDuration = 0, m_editorSourceRate = 44100;
+    bool m_editorSaving = false, m_editorLoading = false, m_previewLoading = false;
+    QVariantMap m_editorCapture;
+    std::shared_ptr<std::atomic<bool>> m_previewCancel, m_waveCancel;
     std::shared_ptr<std::atomic<std::uint64_t>> m_budget = std::make_shared<std::atomic<std::uint64_t>>(0);
     ControlClock::Registration m_registration;
     QString m_directory, m_error, m_clockSource = "INTERNAL";

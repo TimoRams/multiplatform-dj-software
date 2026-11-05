@@ -5,6 +5,7 @@
 #include "Flx10Protocol.h"
 #include "Flx10WaveformRefresh.h"
 #include "Flx10HidSupport.h"
+#include "Flx10ConnectionPolicy.h"
 
 #include <QObject>
 #include <QByteArray>
@@ -44,8 +45,10 @@ public:
     explicit DDJFLX10Controller(ControlClock& controlClock, QObject* parent = nullptr);
     ~DDJFLX10Controller() override;
 
-    bool start();
-    void stop();
+    bool start(bool quiet = false);
+    void stop(bool announceDisabled = true);
+    static QString deviceSignature();
+    flx10::ConnectionFailure connectionFailure() const { return m_connectionFailure; }
     void prepareForShutdown() noexcept;
     void setDecks(DjEngine* deckA, DjEngine* deckB);
 
@@ -64,6 +67,7 @@ private slots:
     void flushTempoWaveformRefresh();
 
 private:
+    flx10::ConnectionFailure m_connectionFailure = flx10::ConnectionFailure::None;
     void setStatus(const QString& status);
     void setConnected(bool connected);
 

@@ -2,8 +2,10 @@
 
 The top pull-down menu contains a recording toggle with HH:MM:SS duration and a
 Sampler shortcut. The fixed header does not resize when the menu opens. The
-sampler docks beneath the workspace, which reserves its height; smaller surfaces
-can scroll sampler controls. New controls retain square corners.
+Sampler and FX have dedicated top-bar tabs and full workspace pages in desktop
+and AIO modes. Opening either page hides the performance/library surface without
+stopping playback; no bottom sampler dock remains. Smaller surfaces scroll their
+page controls. New controls retain square corners.
 
 ## Recording
 
@@ -57,6 +59,9 @@ free-runs internally at the last tempo (120 BPM initially). Link is sampled at t
 current instant rather than using its slower UI polling snapshot. Pending starts
 are placed inside the audio block; a reference change reschedules a pending start.
 Playing loops preserve position and follow phase gradually without a hard seek.
+Their preallocated tempo timeline preserves already scheduled read-ahead positions
+across clock updates. New targets ramp over at least 25 ms; this avoids pitch-map
+and audio-position jumps during rapid tempo moves or master handovers.
 
 Each voice reuses TimeStretchProcessor with a resident read-ahead source for
 pitch-preserving sync. Tempo ratios are bounded to 0.25–4; extreme ratios outside
@@ -71,6 +76,25 @@ are added. Generic mappable IDs: `sampler_pad1`–`sampler_pad8`,
 `sampler_bank1`–`sampler_bank4`, `sampler_bank_next`, `sampler_bank_previous`,
 `sampler_gain` (normalized 0–1 maps to 0–1.5), `sampler_cue`, `sampler_stop_all`.
 Existing recording command IDs remain unchanged.
+
+The live page/editor and documented physical Sampler CUE/Volume mapping are
+extended in [live editing and FLX10 recovery](sampler-live-editing.md), including
+private editor preview, frame trim, audio-derived telemetry and bounded HID retry.
+
+## Effects page
+
+The FX page uses the existing FxManager and the same two units as MIDI/sidebars.
+It never creates a second effect chain or silently changes deck assignments on
+entry. FX Settings exposes effect choice, independent A–D assignment, wet/dry,
+sync, quantization, beat division, Reverb room size and Sound Color character.
+
+Touch FX maps X to wet mix and Y to synchronized beat division (timing effects)
+or room size (Reverb). Timing effects require an assigned deck with BPM. It is
+momentary: press snapshots enabled/mix/parameter/division/sync/quantize, and release
+or cancellation restores them. Page/unit/section/manager changes, effect selection,
+window deactivation and destruction cancel the gesture. Sampler voices and deck
+transport are independent of page navigation. The editor's library/drop shortcuts
+open the sampler page; the selected main page restores on restart.
 
 ## Validation and remaining roadmap
 
@@ -92,8 +116,9 @@ startup messages. The same early-close and full runtime/package/startup checks
 passed through CLion's Debug run configuration. The precise cause of those
 environment-sensitive startup stalls is not established or claimed fixed here.
 
-The previous live milestone documents the pre-existing tempo-sweep and API source
-contract failures; those tests remain enabled. Real-interface/USB testing and
+The previous tempo-sweep defects are resolved; `keylock-stability.md` documents
+the fix and unchanged acceptance limits. The API source contract failure remains
+enabled and unresolved. Real-interface/USB testing and
 extended four-deck/eight-voice recording stress remain hardware acceptance work.
 
 Still open after this milestone:
@@ -101,10 +126,10 @@ Still open after this milestone:
 - Touch Cue and Slicer.
 - Further touch browser/search/filter/sort and large-library preparation workflows.
 - Stems separation, cache/preparation, pad and mixer control.
-- Touch FX and expanded dedicated effect assignments (including sampler-specific FX).
+- Additional Touch FX mappings and dedicated effect assignments (including sampler-specific FX).
 - Streaming service integrations and cloud library/availability handling.
 - Music-synchronized lighting.
 - Independent zone output, microphone processing and talkover.
-- Existing tempo-sweep defects, obsolete API source assertion, USB-removal and
+- Obsolete API source assertion, USB-removal and
   long-duration recording acceptance, environment-sensitive startup stalls,
   and measured target hardware audio load.

@@ -22,10 +22,9 @@ ApplicationWindow {
     font.hintingPreference: Font.PreferFullHinting
     font.family: interFont.status === FontLoader.Ready ? UiTheme.uiFontFamily : font.family
     property bool libraryExpanded: false
-    property bool samplerPanelOpen: false
     function openSamplerEditor(pad, path) {
-        samplerPanelOpen = true
-        Qt.callLater(function() { samplerDock.openEditor(pad, path || "") })
+        openMainPage("sampler")
+        Qt.callLater(function() { performanceWorkspace.openSamplerEditor(pad, path || "") })
     }
     property string linkedDeckName: ""
     property bool exitPromptVisible: false
@@ -64,14 +63,23 @@ ApplicationWindow {
     property bool _desktopShowMixer: true
     property bool _desktopShowFxBar: true
     property bool _uiStateRestoring: false
-    readonly property bool allInOnePanelActive: window.allInOneMode && window.activeMainTab !== "performance"
+    readonly property bool samplerPageActive: activeMainTab === "sampler"
+    readonly property bool fxPageActive: activeMainTab === "fx"
+    readonly property bool utilityPageActive: samplerPageActive || fxPageActive
+    readonly property bool allInOnePanelActive: (window.allInOneMode && window.activeMainTab !== "performance") || utilityPageActive
     readonly property bool libraryPanelActive: window.allInOneMode && window.activeMainTab === "library"
     readonly property bool settingsPanelActive: window.allInOneMode && window.activeMainTab === "settings"
     readonly property bool sourcePageActive: window.activeMainTab === "source"
-    readonly property bool effectiveLibraryVisible: window.allInOneMode ? window.libraryPanelActive : window.showLibrary
+    readonly property bool effectiveLibraryVisible: !utilityPageActive && (window.allInOneMode ? window.libraryPanelActive : window.showLibrary)
     readonly property bool sourcePanelActive: window.sourcePageActive
     readonly property bool aioTwoDeckWaveformSlots:
         window.allInOneMode && !window.fourDeckMode && !window.allInOnePanelActive
+
+    function openMainPage(tab) {
+        activeMainTab = tab
+        libraryExpanded = false
+        closeTopBarPullDown()
+    }
 
     function closeTopBarPullDown() {
         if (topBarPullProgress !== 0.0)
@@ -205,10 +213,10 @@ ApplicationWindow {
         if (b("allInOneMode", false)) {
             // Stashes the desktop mixer/FX prefs set above, then enters AIO.
             window.setAllInOneMode(true)
-            var tab = settingsManager.getUiState("activeMainTab", "performance")
-            if (tab === "library" || tab === "settings" || tab === "source" || tab === "performance")
-                window.activeMainTab = tab
         }
+        var tab = settingsManager.getUiState("activeMainTab", "performance")
+        if (tab === "library" || tab === "settings" || tab === "source" || tab === "performance" || tab === "sampler" || tab === "fx")
+            window.activeMainTab = tab === "settings" && !window.allInOneMode ? "performance" : tab
         _uiStateRestoring = false
     }
 
@@ -557,8 +565,7 @@ ApplicationWindow {
     // Keep the established reference size; only shrink when the window needs it.
     // Above the reference height, additional desktop space belongs to the library.
     readonly property bool desktopLibraryLayout: !allInOneMode && effectiveLibraryVisible && !sourcePageActive
-    readonly property real samplerDockHeight: samplerPanelOpen ? Math.min(UiTheme.px(244), height * 0.43) : 0
-    readonly property real performanceSizingHeight: (desktopLibraryLayout ? Math.min(height, Math.max(minimumHeight, _refHeight)) : height) - samplerDockHeight
+    readonly property real performanceSizingHeight: desktopLibraryLayout ? Math.min(height, Math.max(minimumHeight, _refHeight)) : height
     readonly property real baseUiWidth: 1600
     // Width stretches the content columns; only height sizes the controls.
     function performanceScaleForHeight(viewportHeight, userScale, deckRows) {
@@ -645,14 +652,6 @@ ApplicationWindow {
             Layout.fillHeight: true
             appWindow: window
         }
-        SamplerPanel {
-            id: samplerDock
-            visible: window.samplerPanelOpen
-            Layout.fillWidth: true
-            Layout.preferredHeight: window.samplerDockHeight
-            Layout.minimumHeight: 0
-            Layout.maximumHeight: Layout.preferredHeight
-            onCloseRequested: window.samplerPanelOpen = false
-        }
+
     }
 }

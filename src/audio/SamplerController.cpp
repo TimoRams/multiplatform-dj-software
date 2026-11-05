@@ -50,14 +50,19 @@ SamplerController::SamplerController(SamplerAudioEngine& audio, ControlClock& cl
     m_audio.publishClock(m_clock);
     ControlClock::Callbacks callbacks;
     callbacks.syncApply = [this](const ControlTickContext&) { tick(); };
-    callbacks.statistics = [this](const ControlTickContext&) { emit changed(); };
+    callbacks.statistics = [this](const ControlTickContext&) { refreshPlayback(); };
+    m_lastStates.fill(-1);
+    m_gainSaveTimer.setSingleShot(true); m_gainSaveTimer.setInterval(250);
+    connect(&m_gainSaveTimer, &QTimer::timeout, this, [this] { save(); });
     m_registration = clock.registerCallbacks(std::move(callbacks));
     restore();
 }
 SamplerController::~SamplerController() { shutdown(); }
 void SamplerController::shutdown() {
     if (m_stopped) return;
-    m_stopped = true; m_registration.reset(); m_audio.stopAll();
+    cancelEditor(m_editorSession);
+    if (m_gainSaveTimer.isActive()) { m_gainSaveTimer.stop(); save(); }
+    m_stopped = true; m_registration.reset(); m_audio.stopAll(); m_audio.stopPreview();
     for (auto* job : m_jobs) {
         disconnect(job, nullptr, this, nullptr);
         job->waitForFinished();
@@ -89,6 +94,7 @@ QVariantList SamplerController::slotList() const {
             default: break;
         }
         result.append(QVariantMap{{"name",s.name},{"color",s.color},{"state",state},{"error",s.error},
+            {"transportState", QStringList {"EMPTY", "READY", "QUEUED", "PLAYING", "BUSY"}.value(m_audio.state(index))},
             {"loaded",!s.asset.isEmpty() && !s.loading && s.error.isEmpty()}, {"duration",s.duration},
             {"bpm",s.bpm},{"gain",s.gain},{"loop",s.loop},{"sync",s.sync},
             {"start",s.start},{"end",s.end},{"waveform",s.waveform}});
@@ -97,12 +103,16 @@ QVariantList SamplerController::slotList() const {
 }
 void SamplerController::setBank(int bank) {
     bank = std::clamp(bank, 0, 3); if (bank == m_bank) return;
-    m_bank = bank; save(); emit changed();
+    m_bank = bank; save(); emit changed(); emit playbackChanged();
 }
 void SamplerController::setSelectedSlot(int index) { if (index >= 0 && index < 8) { m_selectedSlot = index; emit changed(); } }
 void SamplerController::setGain(double gain) {
     if (!std::isfinite(gain)) return;
-    m_gain = std::clamp(gain, 0.0, 1.5); m_audio.setGain(static_cast<float>(m_gain)); save(); emit changed();
+    gain = std::clamp(gain, 0.0, 1.5);
+    if (gain == m_gain) return;
+    m_gain = gain;
+    if (!m_applyingMidiGain) m_midiPickup.arm();
+    m_audio.setGain(static_cast<float>(m_gain)); m_gainSaveTimer.start(); emit changed();
 }
 void SamplerController::setCue(bool enabled) {
     const int headphones = AudioEngine::headphonesFirstChannel();
@@ -127,30 +137,32 @@ void SamplerController::trigger(int pad) {
 void SamplerController::stop(int pad) { if (pad >= 0 && pad < 8) m_audio.stop(m_bank * 8 + pad); }
 void SamplerController::stopAll() { m_audio.stopAll(); }
 void SamplerController::clear(int pad) {
-    if (pad < 0 || pad >= 8) return;
-    const int index = m_bank * 8 + pad;
+    if (pad >= 0 && pad < 8) (void) clearSlot(m_bank * 8 + pad);
+}
+bool SamplerController::clearSlot(int index) {
     const Slot previousSlot = m_slots[index];
     const auto generation = previousSlot.generation + 1;
     const QString previous = previousSlot.asset;
     m_slots[index] = {}; m_slots[index].generation = generation;
-    if (!save()) { m_slots[index] = previousSlot; m_slots[index].generation = generation; m_slots[index].loading = false; emit changed(); return; }
+    if (!save()) { m_slots[index] = previousSlot; m_slots[index].generation = generation; m_slots[index].loading = false; emit changed(); return false; }
     m_audio.install(index, {});
     if (!previous.isEmpty()) QFile::remove(QDir(m_directory).filePath(previous));
     emit changed();
+    return true;
 }
 void SamplerController::probeFile(const QString& path) {
     const auto generation = ++m_probeGeneration;
     m_fileInfo = {{"loading", true}}; emit fileInfoChanged();
     auto* job = new QFutureWatcher<QVariantMap>(this); m_probes.push_back(job);
     connect(job, &QFutureWatcherBase::finished, this, [this, job, generation] {
-        if (generation == m_probeGeneration) { m_fileInfo = job->result(); emit fileInfoChanged(); }
+        if (generation == m_probeGeneration) { m_fileInfo = job->result(); emit fileInfoChanged(); editorProbeFinished(generation); }
         std::erase(m_probes, job); job->deleteLater();
     });
     job->setFuture(QtConcurrent::run([path = localPath(path)]() -> QVariantMap {
         juce::AudioFormatManager formats; formats.registerBasicFormats();
         std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(juce::File(path.toStdString())));
-        if (!reader || reader->numChannels < 1 || reader->numChannels > 2 || !std::isfinite(reader->sampleRate) || reader->sampleRate <= 0) return {{"error", "Select a supported mono/stereo audio file"}};
-        return {{"duration", reader->lengthInSamples / reader->sampleRate}, {"name", QFileInfo(path).completeBaseName()}, {"waveform",sourceOverview(*reader)}};
+        if (!reader || reader->numChannels < 1 || reader->numChannels > 2 || !std::isfinite(reader->sampleRate) || reader->sampleRate < 8000 || reader->sampleRate > 384000) return {{"error", "Select a supported mono/stereo audio file"}};
+        return {{"duration", reader->lengthInSamples / reader->sampleRate}, {"name", QFileInfo(path).completeBaseName()}, {"waveform",sourceOverview(*reader)}, {"sampleRate", reader->sampleRate}};
     }));
 }
 void SamplerController::loadFile(int pad, const QString& path, double start, double end, double bpm, bool loop, bool sync,
@@ -165,32 +177,35 @@ void SamplerController::loadFile(int pad, const QString& path, double start, dou
     desired.bpm = std::isfinite(bpm) && bpm >= 20 && bpm <= 400 ? bpm : 0;
     load(m_bank * 8 + pad, localPath(path), start, end, true, desired);
 }
-void SamplerController::load(int index, const QString& path, double start, double end, bool imported, Slot desired) {
+void SamplerController::load(int index, const QString& path, double start, double end, bool imported, Slot desired, std::uint64_t editorSession) {
     if (!std::isfinite(start) || !std::isfinite(end) || start < 0 || (end >= 0 && end <= start)) { fail("Choose a valid sample range"); return; }
     auto& old = m_slots[index]; old.loading = true; old.error.clear();
     const auto generation = ++old.generation;
     const QString directory = m_directory;
     auto* job = new QFutureWatcher<std::shared_ptr<Loaded>>(this);
     m_jobs.push_back(job);
-    connect(job, &QFutureWatcherBase::finished, this, [this, job, index, generation, desired, imported, start, end]() mutable {
+    connect(job, &QFutureWatcherBase::finished, this, [this, job, index, generation, desired, imported, start, end, editorSession]() mutable {
         auto result = job->result();
         std::erase(m_jobs, job); job->deleteLater();
         auto& old = m_slots[index];
-        if (old.generation != generation || m_stopped) {
+        if (old.generation != generation || m_stopped || (editorSession && m_editorSession != editorSession)) {
             if (imported && !result->asset.isEmpty()) QFile::remove(result->asset);
+            finishEditorSave(editorSession, false, "This sample has changed. Close and reopen the editor.");
             return;
         }
         old.loading = false;
         if (!result->error.isEmpty() || !result->sample) {
             m_error = result->error;
             if (m_audio.state(index) == SamplerAudioEngine::Empty) old.error = result->error;
+            finishEditorSave(editorSession, false, m_error);
             emit changed(); return;
         }
         const auto oldBytes = old.pcmBytes;
         const auto newBytes = static_cast<std::uint64_t>(result->sample->pcm.getNumSamples()) * 8;
         if (m_audio.residentBytes() - std::min(oldBytes, m_audio.residentBytes()) + newBytes > 256ull * 1024 * 1024) {
             if (imported) QFile::remove(result->asset);
-            fail("Sampler RAM limit reached (256 MiB). Clear another slot first."); return;
+            fail("Sampler RAM limit reached (256 MiB). Clear another slot first.");
+            finishEditorSave(editorSession, false, m_error); return;
         }
         const QString previous = old.asset;
         desired.generation = generation; desired.duration = imported ? result->duration : result->assetDuration;
@@ -203,10 +218,11 @@ void SamplerController::load(int index, const QString& path, double start, doubl
         result->sample->loop = desired.loop; result->sample->sync = desired.sync;
         result->sample->gain = static_cast<float>(desired.gain); result->sample->bpm = desired.bpm;
         const Slot previousSlot = old; old = desired;
-        if (!save()) { old = previousSlot; old.loading = false; if (imported) QFile::remove(result->asset); return; }
+        if (!save()) { old = previousSlot; old.loading = false; if (imported) QFile::remove(result->asset); finishEditorSave(editorSession, false, m_error); return; }
         m_audio.install(index, std::move(result->sample)); m_error.clear();
         if (imported && !previous.isEmpty() && previous != old.asset) QFile::remove(QDir(m_directory).filePath(previous));
         emit changed();
+        finishEditorSave(editorSession, true, {});
     });
     job->setFuture(QtConcurrent::run([path, directory, start, end, imported, budget = m_budget] {
         auto r = std::make_shared<Loaded>();

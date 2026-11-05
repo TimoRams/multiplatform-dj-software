@@ -47,7 +47,8 @@ inline bool isFlx10JogInputParam(const QString& paramId)
 
 inline MidiInteractionType defaultInteractionTypeForParam(const QString& paramId)
 {
-    if (paramId == QStringLiteral("deckA_cue")
+    if (paramId == QStringLiteral("sampler_cue")
+        || paramId == QStringLiteral("deckA_cue")
         || paramId == QStringLiteral("deckB_cue")
         || paramId == QStringLiteral("deckA_jog_touch")
         || paramId == QStringLiteral("deckB_jog_touch")

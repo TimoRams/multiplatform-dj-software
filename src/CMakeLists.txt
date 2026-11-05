@@ -45,7 +45,9 @@ target_sources(${PROJECT_NAME} PRIVATE
     audio/SamplerAudioEngine.cpp
     audio/SamplerAudioEngine.h
     audio/SamplerController.cpp
+    audio/SamplerEditor.cpp
     audio/SamplerController.h
+    audio/SamplerMidiPickup.h
     audio/AudioBusMixer.h
     audio/AudioBusMixer.cpp
     audio/TimeStretchProcessor.cpp
@@ -81,6 +83,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     controllers/flx10/DDJFLX10Controller.cpp
     controllers/flx10/Flx10HidTransport.cpp
     controllers/flx10/Flx10HidSupport.h
+    controllers/flx10/Flx10ConnectionPolicy.h
     controllers/flx10/Flx10HidReport.h
     controllers/flx10/Flx10MacHidTransport.h
     controllers/flx10/Flx10Display.cpp
@@ -209,6 +212,8 @@ set(BROCKDJ_QML_FILES
     src/qml/performance/PerformanceBackdrop.qml
     src/qml/performance/PerformancePads.qml
     src/qml/performance/SamplerPanel.qml
+    src/qml/performance/SamplerEditor.qml
+    src/qml/performance/EffectsPage.qml
     src/qml/library/Library.qml
     src/qml/library/SourcePage.qml
     src/qml/settings/SettingsPanel.qml

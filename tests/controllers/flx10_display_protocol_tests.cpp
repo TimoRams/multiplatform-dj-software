@@ -1,4 +1,5 @@
 #include "controllers/flx10/Flx10Protocol.h"
+#include "controllers/flx10/Flx10ConnectionPolicy.h"
 #include "controllers/flx10/Flx10WaveformRefresh.h"
 #include <QCoreApplication>
 #include <QEventLoop>
@@ -36,6 +37,37 @@ using flx10_protocol::jogPhaseBytes;
 using flx10_protocol::kJogPhaseTicksPerRevolution;
 using flx10_protocol::kJogPhaseTicksPerSecond;
 using flx10_protocol::kJogRevolutionSeconds;
+
+void connectionRetriesRequireAReason()
+{
+    using flx10::ConnectionFailure;
+    flx10::ConnectionPolicy policy;
+    int opened = 0;
+    auto poll = [&](const QString& identity, int now) { if (policy.shouldAttempt(identity, now)) ++opened; };
+    for (const auto failure : {ConnectionFailure::Absent, ConnectionFailure::Incompatible,
+                               ConnectionFailure::Denied, ConnectionFailure::Ambiguous}) {
+        policy.enable("device-1"); policy.failed(failure, 0);
+        for (int tick = 0; tick < 1000; ++tick) poll("device-1", tick * 5000);
+        assert(opened == 0); // Stable errors must never reopen the transport.
+    }
+    poll("device-2", 5000000); assert(opened == 1);
+    policy.connected(); poll("device-2", 6000000); assert(opened == 1);
+    policy.failed(ConnectionFailure::Transient, 6000000);
+    poll("device-2", 6004999); assert(opened == 1);
+    poll("device-2", 6005000); assert(opened == 2);
+    policy.failed(ConnectionFailure::Transient, 6005000);
+    poll("device-2", 6019999); assert(opened == 2);
+    poll("device-2", 6020000); assert(opened == 3);
+    policy.failed(ConnectionFailure::Transient, 6020000);
+    for (int tick = 0; tick < 1000; ++tick) poll("device-2", 6020000 + tick * 5000);
+    assert(opened == 3);
+    policy.reset("device-2"); // Manual refresh gets a new retry budget.
+    policy.failed(ConnectionFailure::Transient, 0); poll("device-2", 5000); assert(opened == 4);
+    policy.disable(); poll("device-3", 10000000); assert(opened == 4);
+    policy.enable(""); policy.failed(ConnectionFailure::Absent, 0);
+    poll("", 10000000); assert(opened == 4);
+    poll("replugged", 10000001); assert(opened == 5);
+}
 
 void waveformRefreshDeliversTheFinalPublication()
 {
@@ -330,6 +362,7 @@ void beatgridTintsWithoutInventingTransients()
 int main(int argc, char** argv)
 {
     QCoreApplication app(argc, argv);
+    connectionRetriesRequireAReason();
     waveformRefreshDeliversTheFinalPublication();
     nativeHidReportLayout();
     basicEncoding();

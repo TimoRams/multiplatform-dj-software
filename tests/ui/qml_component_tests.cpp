@@ -259,7 +259,6 @@ bool desktopLibraryHeightTests(const std::string& main, const std::string& works
             property bool allInOneMode: false
             property bool fourDeckMode: false
             property bool libraryExpanded: false
-            property bool samplerPanelOpen: false
             property bool showDeckA: true
             property bool showDeckB: true
             property bool showWaveforms: true
@@ -3586,11 +3585,178 @@ bool squareControlsRuntimeTests()
     return ok;
 }
 
+bool mainNavigationRuntimeTests()
+{
+    const QString directory = QString::fromUtf8(BROCKDJ_SOURCE_DIR) + "/src/qml/";
+    for (const auto& type : {std::pair{"settings/SettingsPanel.qml","SettingsPanel"},
+                             std::pair{"settings/MappingEditorWindow.qml","MappingEditorWindow"},
+                             std::pair{"shell/TopHeader.qml","TopHeader"}})
+        qmlRegisterType(QUrl::fromLocalFile(directory + type.first),"DJSoftware",1,0,type.second);
+    QQmlEngine engine;
+    for (const char* name : {"deckA","deckB","deckC","deckD","settingsManager","mixerControl","linkManager","parameterStore"})
+        engine.rootContext()->setContextProperty(name,static_cast<QObject*>(nullptr));
+    auto scale = createQmlObject(engine,"import QtQml; QtObject { property real scale: 1 }","navigation scale fixture instantiates");
+    engine.rootContext()->setContextProperty("uiScaleController",scale.get());
+    auto host = createQmlObject(engine,QStringLiteral(R"(
+        import QtQuick
+        import QtQuick.Controls
+        import DJSoftware
+        ApplicationWindow {
+            width: 1280; height: 150; visible: true
+            color: UiTheme.panel
+            property string activeMainTab: "performance"
+            property bool allInOneMode: true
+            property bool showLibrary: true
+            property real topBarPullProgress: 0
+            property bool topBarPullDragging: false
+            readonly property bool sourcePageActive: activeMainTab === "source"
+            readonly property bool samplerPageActive: activeMainTab === "sampler"
+            readonly property bool fxPageActive: activeMainTab === "fx"
+            readonly property bool utilityPageActive: samplerPageActive || fxPageActive
+            readonly property bool libraryPanelActive: activeMainTab === "library"
+            readonly property bool settingsPanelActive: activeMainTab === "settings"
+            function closeTopBarPullDown() { topBarPullProgress = 0 }
+            function toggleTopBarPullDown() { topBarPullProgress = 1 - topBarPullProgress }
+            function openTopBarPullDown() { topBarPullProgress = 1 }
+            function openMainPage(tab) { activeMainTab = tab }
+            function toggleAllInOneLibrary() { activeMainTab = "library" }
+            function toggleAllInOneSettings() { activeMainTab = "settings"; return true }
+            function toggleLibrarySourceView() { activeMainTab = "source" }
+            TopHeader { objectName: "testTopHeader"; width: parent.width; height: UiTheme.toolbarHeight }
+        }
+    )"),"complete production header instantiates");
+    if (!host) return false;
+    auto* window = qobject_cast<QQuickWindow*>(host.get());
+    bool ok = true;
+    for (const bool aio : {true,false}) for (const int width : {800,1280,1920}) for (const double factor : {1.0,1.4}) {
+        host->setProperty("allInOneMode",aio); scale->setProperty("scale",factor); window->resize(width,150);
+        QCoreApplication::processEvents();
+        for (const char* name : {"performanceNavigation","libraryNavigation","samplerNavigation","effectsNavigation","settingsNavigation"}) {
+            auto* button = findVisualItem(window->contentItem(),QString::fromUtf8(name));
+            const auto bounds = button ? button->mapRectToScene(button->boundingRect()) : QRectF();
+            ok &= require(button && button->isVisible() && bounds.left() >= -1 && bounds.right() <= width + 1 && bounds.width() >= 40,
+                "all five top navigation tabs remain visible within desktop/AIO viewports at each UI scale");
+        }
+        auto* sampler = findVisualItem(window->contentItem(),"samplerNavigation");
+        auto* effects = findVisualItem(window->contentItem(),"effectsNavigation");
+        auto* library = findVisualItem(window->contentItem(),"libraryNavigation");
+        ok &= clickItem(*window,sampler,"sampler has a clickable top-level navigation tab");
+        ok &= require(host->property("activeMainTab") == "sampler" && sampler->property("checked").toBool()
+            && !library->property("checked").toBool(),"sampler page selection clears the Library tab highlight in both modes");
+        ok &= clickItem(*window,effects,"FX has a clickable top-level navigation tab");
+        ok &= require(host->property("activeMainTab") == "fx" && effects->property("checked").toBool()
+            && !sampler->property("checked").toBool(),"FX and Sampler tabs track their own main-page state");
+        ok &= clickItem(*window,findVisualItem(window->contentItem(),"performanceNavigation"),"Live remains reachable from either new page");
+        if (aio && width == 1280 && factor == 1 && !qEnvironmentVariableIsEmpty("BROCKDJ_TEST_CAPTURE_DIR")) {
+            QTest::qWait(40);
+            window->grabWindow().save(QDir(qEnvironmentVariable("BROCKDJ_TEST_CAPTURE_DIR")).filePath("header-navigation.png"));
+        }
+    }
+    return ok;
+}
+
+bool effectsPageRuntimeTests(const std::string& main)
+{
+    QQmlEngine engine;
+    auto manager = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property string effectType1: "Echo"
+            property string effectType2: "Reverb"
+            property bool enabled1: false
+            property bool enabled2: true
+            property real wetDry1: 0.2
+            property real wetDry2: 0.3
+            property real primaryParam1: 0.5
+            property real primaryParam2: 0.7
+            property real beatDiv1: 0.5
+            property real beatDiv2: 1
+            property real displayBpm1: 128
+            property real displayBpm2: 128
+            property bool syncEnabled1: false
+            property bool syncEnabled2: true
+            property bool quantizeEnabled1: false
+            property bool quantizeEnabled2: true
+            property bool deck1A: true
+            property bool deck1B: false
+            property bool deck1C: false
+            property bool deck1D: false
+            property bool deck2A: false
+            property bool deck2B: true
+            property bool deck2C: false
+            property bool deck2D: false
+            property string soundColorMode: "Filter"
+            property bool soundColorAdjustEnabled: false
+            property real soundColorParam: 0.5
+            function setWetDry(unit, value) { this["wetDry" + unit] = value }
+            function setPrimaryParam(unit, value) { this["primaryParam" + unit] = value }
+            function setBeatDivision(unit, value) { this["beatDiv" + unit] = value }
+            function setSyncEnabled(unit, value) { this["syncEnabled" + unit] = value }
+            function setQuantizeEnabled(unit, value) { this["quantizeEnabled" + unit] = value }
+            function setUnitEnabled(unit, value) { this["enabled" + unit] = value }
+            function setDeckAssignment(unit, deck, value) { this["deck" + unit + "ABCD"[deck-1]] = value }
+            function setEffectType(unit, value) { this["effectType" + unit] = value }
+            function setSoundColorMode(value) { soundColorMode = value }
+        }
+    )"), "FX page control fixture instantiates");
+    if (!manager) return false;
+    engine.rootContext()->setContextProperty("fxManager",manager.get());
+    const QString directory = QString::fromUtf8(BROCKDJ_SOURCE_DIR) + "/src/qml/";
+    QQmlComponent component(&engine,QUrl::fromLocalFile(directory + "performance/EffectsPage.qml"));
+    std::unique_ptr<QObject> page(component.create());
+    if (!require(page != nullptr,"full effects page instantiates")) { std::cerr << component.errorString().toStdString(); return false; }
+    auto* item = qobject_cast<QQuickItem*>(page.get());
+    QQuickWindow window; window.resize(1280,800); item->setParentItem(window.contentItem()); item->setSize(QSizeF(1280,740));
+    window.show(); QCoreApplication::processEvents();
+    auto* pad = findVisualItem(item,"touchFxPad");
+    bool ok = require(pad && pad->width() > 500 && pad->height() >= 220,"Touch FX provides a real full-page XY surface");
+    if (!pad) return false;
+    const QPoint point = pad->mapToScene(QPointF(pad->width()*0.7,pad->height()*0.25)).toPoint();
+    QTest::mousePress(&window,Qt::LeftButton,Qt::NoModifier,point);
+    ok &= require(page->property("touching").toBool() && manager->property("enabled1").toBool()
+        && std::abs(manager->property("wetDry1").toDouble()-0.7) < 0.02 && manager->property("syncEnabled1").toBool(),
+        "Touch FX enables the selected unit and maps horizontal movement to wet mix");
+    QTest::mouseRelease(&window,Qt::LeftButton,Qt::NoModifier,point);
+    ok &= require(!page->property("touching").toBool() && !manager->property("enabled1").toBool()
+        && std::abs(manager->property("wetDry1").toDouble()-0.2) < 0.001
+        && !manager->property("syncEnabled1").toBool() && manager->property("beatDiv1").toDouble() == 0.5,
+        "Touch FX release restores mix, beat timing, sync and prior on/off state");
+    page->setProperty("selectedUnit",2);
+    QMetaObject::invokeMethod(page.get(),"beginTouch",Q_ARG(QVariant,0.8),Q_ARG(QVariant,0.4));
+    ok &= require(manager->property("primaryParam2").toDouble() == 0.4,"Reverb Touch FX maps its second axis to room size");
+    item->setVisible(false);
+    ok &= require(!page->property("touching").toBool() && manager->property("enabled2").toBool()
+        && manager->property("primaryParam2").toDouble() == 0.7 && manager->property("wetDry2").toDouble() == 0.3,
+        "leaving the FX page restores a pre-existing active unit instead of leaving touch latched");
+    item->setVisible(true); page->setProperty("section",1); QCoreApplication::processEvents();
+    ok &= clickItem(window,findVisualItem(item,"fxPageDeck2"),"FX settings expose independent C/D routing");
+    ok &= require(manager->property("deck2C").toBool() && manager->property("deck2B").toBool(),"FX page preserves existing routing while adding another deck");
+    page->setProperty("section",0); manager->setProperty("deck2B",false); manager->setProperty("deck2C",false);
+    QMetaObject::invokeMethod(page.get(),"beginTouch",Q_ARG(QVariant,0.8),Q_ARG(QVariant,0.4));
+    ok &= require(!page->property("touching").toBool(),"unrouted Touch FX does not silently choose a deck");
+    if (!qEnvironmentVariableIsEmpty("BROCKDJ_TEST_CAPTURE_DIR")) {
+        manager->setProperty("deck2B",true); QTest::qWait(40);
+        window.grabWindow().save(QDir(qEnvironmentVariable("BROCKDJ_TEST_CAPTURE_DIR")).filePath("effects-page.png"));
+    }
+    QString methods;
+    if (!extractFunctions(main,{"openMainPage"},methods)) return false;
+    auto navigation = createQmlObject(engine,QStringLiteral("import QtQml; QtObject { property string activeMainTab: 'performance'; property bool libraryExpanded: true; function closeTopBarPullDown() {}\n")
+        + methods + "\n}","shared main-page navigation instantiates");
+    if (!navigation) return false;
+    for (const QString name : {QStringLiteral("sampler"),QStringLiteral("fx"),QStringLiteral("performance")}) {
+        QMetaObject::invokeMethod(navigation.get(),"openMainPage",Q_ARG(QVariant,name));
+        ok &= require(navigation->property("activeMainTab").toString() == name && !navigation->property("libraryExpanded").toBool(),
+            "Sampler and FX navigation use full main pages and clear the library expansion");
+    }
+    return ok;
+}
+
 bool samplerAndRecordingRuntimeTests(const std::string& header)
 {
     const QString directory = QString::fromUtf8(BROCKDJ_SOURCE_DIR) + "/src/qml/";
     for (const QString& name : {QStringLiteral("Button"), QStringLiteral("Slider"), QStringLiteral("ComboBox")})
         qmlRegisterType(QUrl::fromLocalFile(directory + "components/" + name + ".qml"), "DJSoftware", 1, 0, name.toUtf8());
+    qmlRegisterType(QUrl::fromLocalFile(directory + "performance/SamplerEditor.qml"), "DJSoftware", 1, 0, "SamplerEditor");
     QQmlEngine engine;
     auto recorder = createQmlObject(engine, QStringLiteral(R"(
         import QtQml
@@ -3640,9 +3806,48 @@ bool samplerAndRecordingRuntimeTests(const std::string& header)
             property var fileInfo: ({})
             property int triggers: 0
             property int stops: 0
+            property int padStops: 0
+            property int editsSaved: 0
+            property int editSlot: -1
+            property int lastSavedSlot: -1
+            property int nextSession: 0
+            property bool midiPickupPending: false
+            property bool previewAvailable: true
+            property bool previewPlaying: false
+            property bool previewLoading: false
+            property bool editorBusy: false
+            property bool failSave: false
+            property string editorError: ""
+            property var previewPlayback: ({position:0, progress:0})
+            property var playback: [{position:0.5,duration:2,progress:0.25,remainingBeats:1.5}]
+            property var bankActivity: [{playing:1,queued:0},{playing:0,queued:1},{playing:0,queued:0},{playing:0,queued:0}]
+            signal editorChanged()
+            signal editorSourceReady(double session, var info)
+            signal editorWaveformReady(double session, double start, double end, var peaks)
+            signal editorFinished(double session, bool success, string error)
             property var slots: [{name:"Airhorn", color:"#e0a344", loaded:true, state:"READY", duration:2, start:0, end:2, gain:1, waveform:[0.2,0.5,0.8]}, {}, {}, {}, {}, {}, {}, {}]
             function trigger(pad) { triggers++ }
             function stopAll() { stops++ }
+            function stop(pad) { padStops++ }
+            function playFixture() { const next=slots.slice(); next[0]=Object.assign({},slots[0],{state:"PLAYING",transportState:"PLAYING"}); slots=next }
+            function queueFixture() { const next=slots.slice(); next[0]=Object.assign({},slots[0],{state:"QUEUED",transportState:"QUEUED"}); slots=next }
+            function beginEditor(pad) {
+                editSlot = bank*8 + pad; editorError = ""
+                return {session:++nextSession, slot:editSlot, source:"stored.wav", duration:2, sampleRate:48000,
+                    name:"Airhorn", color:"#e0a344", gain:1, loop:false, sync:false, bpm:120,
+                    start:0, end:2, waveform:[0.2,0.5,0.8], loaded:true}
+            }
+            function cancelEditor(session) { previewPlaying = false }
+            function stopEditorPreview() { previewPlaying = false; previewLoading = false }
+            function requestEditorWaveform(session, start, end) { const peaks=[]; for(let i=0;i<1024;i++) peaks.push(0.12+0.7*Math.abs(Math.sin(i*0.071))*Math.exp(-(i%128)/100)); editorWaveformReady(session,start,end,peaks) }
+            function setEditorFile(session,path) { editorSourceReady(session,{source:path,duration:2,sampleRate:48000,name:"Imported",waveform:[0.2,0.5,0.8]}) }
+            function captureEditor(session,deck,beats) { editorSourceReady(session,{source:"deck.wav",duration:2,sampleRate:48000,name:"Capture",waveform:[0.4],start:0,end:1,bpm:120,loop:true,sync:true}) }
+            function previewEditor(session,draft) { previewPlaying = true }
+            function applyEditor(session,draft) {
+                if (failSave) { editorError = "Storage full"; editorFinished(session,false,editorError); return }
+                editsSaved++; lastSavedSlot = editSlot; previewPlaying = false; editorFinished(session,true,"")
+            }
+            function clearEditor(session) { editorFinished(session,true,"") }
             function probeFile(path) {}
             function captureDeck(pad, deck, beats) {}
             function clear(pad) {}
@@ -3675,6 +3880,71 @@ bool samplerAndRecordingRuntimeTests(const std::string& header)
     }
     ok &= clickItem(window, findVisualItem(panelItem, "samplerStopAll"), "sampler stop-all is directly reachable");
     ok &= require(controller->property("stops").toInt() == 1, "sampler stop-all reaches controller");
+    panel->setProperty("pageMode",true);
+    for (const QSize size : {QSize(800,600),QSize(1280,800),QSize(1920,1080)}) {
+        window.resize(size); panelItem->setSize(QSizeF(size.width(),size.height()-48)); QCoreApplication::processEvents();
+        auto* pad = findVisualItem(panelItem,"samplerPad0");
+        ok &= require(pad && pad->height() >= 100 && pad->mapRectToScene(pad->boundingRect()).right() <= size.width(),
+            "dedicated sampler page expands pads and fits its full workspace");
+        if (size.width() == 1280 && !qEnvironmentVariableIsEmpty("BROCKDJ_TEST_CAPTURE_DIR")) {
+            QTest::qWait(40);
+            window.grabWindow().save(QDir(qEnvironmentVariable("BROCKDJ_TEST_CAPTURE_DIR")).filePath("sampler-page.png"));
+        }
+    }
+    QMetaObject::invokeMethod(controller.get(),"playFixture"); QCoreApplication::processEvents();
+    const int beforeStop = controller->property("triggers").toInt();
+    ok &= clickItem(window,findVisualItem(panelItem,"samplerStop0"),"a running pad has a dedicated stop action");
+    ok &= require(controller->property("padStops").toInt() == 1 && controller->property("triggers").toInt() == beforeStop,
+        "pad stop never sends an additional trigger");
+    QMetaObject::invokeMethod(controller.get(),"queueFixture"); QCoreApplication::processEvents();
+    auto* countdown = findVisualItem(panelItem,"samplerProgressText0");
+    ok &= require(countdown && countdown->property("text").toString().contains("START IN 1.5"),"queued pads display the audio-clock countdown");
+    for (const QSize size : {QSize(800,600), QSize(1280,800), QSize(1920,1080)}) {
+        window.resize(size); panelItem->setSize(QSizeF(size.width(),size.height()-48));
+        controller->setProperty("bank",0); QCoreApplication::processEvents();
+        const int triggersBeforeEdit = controller->property("triggers").toInt();
+        ok &= clickItem(window,findVisualItem(panelItem,"samplerEdit0"),"dedicated pad edit action responds to touch");
+        auto* editorObject = panel->findChild<QObject*>("samplerEditor");
+        if (!require(editorObject && editorObject->property("visible").toBool(),"sampler editor opens")) return false;
+        ok &= require(controller->property("triggers").toInt() == triggersBeforeEdit,"editing a pad never triggers its sample");
+        auto* save = findVisualItem(window.contentItem(),"samplerEditorSave");
+        auto* cancel = findVisualItem(window.contentItem(),"samplerEditorCancel");
+        ok &= require(save && cancel && save->height() >= 44 && cancel->height() >= 44,
+            "editor completion actions retain touch targets at every viewport size");
+        auto* handle = findVisualItem(window.contentItem(),"samplerTrimHandle0");
+        if (handle) {
+            const QPoint origin = handle->mapToScene(QPointF(handle->width()/2,handle->height()/2)).toPoint();
+            QTest::mousePress(&window,Qt::LeftButton,Qt::NoModifier,origin);
+            QTest::mouseMove(&window,origin+QPoint(35,0),20);
+            QTest::mouseRelease(&window,Qt::LeftButton,Qt::NoModifier,origin+QPoint(35,0));
+            auto* start = panel->findChild<QObject*>("samplerEditorStart");
+            ok &= require(start && start->property("text").toString().toDouble() > 0,"trim handle changes the sample-accurate start boundary");
+        } else ok &= require(false,"trim start handle exists");
+        ok &= clickItem(window,findVisualItem(window.contentItem(),"samplerEditorPreview"),"editor headphone preview action is reachable");
+        ok &= require(controller->property("previewPlaying").toBool(),"preview uses its dedicated controller action");
+        controller->setProperty("bank",2); QCoreApplication::processEvents();
+        ok &= clickItem(window,save,"editor save remains reachable without scrolling");
+        ok &= require(controller->property("lastSavedSlot").toInt() == 0,"bank changes never redirect the open editor");
+        ok &= require(!editorObject->property("visible").toBool(),"successful save closes the editor");
+        controller->setProperty("bank",0);
+        ok &= clickItem(window,findVisualItem(panelItem,"samplerEdit0"),"editor reopens for error handling");
+        controller->setProperty("failSave",true);
+        ok &= clickItem(window,findVisualItem(window.contentItem(),"samplerEditorSave"),"editor save reports a failed write");
+        ok &= require(editorObject->property("visible").toBool() && controller->property("editorError") == "Storage full",
+            "a failed save retains the draft and keeps the editor open");
+        auto* footerError = findVisualItem(window.contentItem(),"samplerEditorError");
+        ok &= require(footerError && footerError->isVisible() && footerError->mapRectToScene(footerError->boundingRect()).bottom() <= size.height(),
+            "editor errors stay visible beside the completion actions without scrolling");
+        controller->setProperty("failSave",false);
+        if (size.width() == 1280 && !qEnvironmentVariableIsEmpty("BROCKDJ_TEST_CAPTURE_DIR")) {
+            QTest::qWait(140);
+            window.grabWindow().save(QDir(qEnvironmentVariable("BROCKDJ_TEST_CAPTURE_DIR")).filePath("sampler-editor.png"));
+        }
+        ok &= clickItem(window,findVisualItem(window.contentItem(),"samplerEditorCancel"),"cancel remains reachable on the fixed footer");
+        ok &= require(!controller->property("previewPlaying").toBool(),"closing an editor stops its headphone preview");
+    }
+    panelItem->setVisible(false); QCoreApplication::processEvents();
+    ok &= require(controller->property("stops").toInt() == 1,"leaving the sampler page never issues a stop-all command");
     return ok;
 }
 
@@ -3712,6 +3982,8 @@ int main(int argc, char** argv)
     const auto performancePads = read("src/qml/performance/PerformancePads.qml");
     ok &= appOverlaysRuntimeTests(appOverlays);
     ok &= samplerAndRecordingRuntimeTests(topHeader);
+    ok &= effectsPageRuntimeTests(main);
+    ok &= mainNavigationRuntimeTests();
     ok &= shortcutRuntimeTests(main);
     ok &= deckCueFlatButtonRuntimeTests(deckControl);
     ok &= aioDeckControlTests(workspace);
@@ -3867,9 +4139,10 @@ int main(int argc, char** argv)
                       && occurrences(fxUnit, "accent: root.accentColor") == 2,
                   "merged QML components remain local, independently scoped, and non-nested");
     ok &= require(!qmlManifest.empty()
-                      && occurrences(qmlManifest, "src/qml/") == 24
+                      && occurrences(qmlManifest, "src/qml/") == 26
                       && qmlManifest.find("src/qml/performance/PerformanceBackdrop.qml") != std::string::npos
                       && qmlManifest.find("src/qml/performance/SamplerPanel.qml") != std::string::npos
+                      && qmlManifest.find("src/qml/performance/SamplerEditor.qml") != std::string::npos
                       && qmlManifest.find("src/qml/shell/AppOverlays.qml") != std::string::npos
                       && qmlManifest.find("PerformanceBeatgridPanel.qml") == std::string::npos
                       && qmlManifest.find("PerformanceDeckQuickPanel.qml") == std::string::npos
@@ -3882,7 +4155,7 @@ int main(int argc, char** argv)
                       && qmlManifest.find("UiShortcutManager.qml") == std::string::npos
                       && qmlManifest.find("TurntableIndicator.qml") == std::string::npos
                       && qmlManifest.find("CrossfaderBar.qml") == std::string::npos,
-                  "central manifest packages 24 QML resources including shared icons and backdrop and excludes merged components");
+                  "central manifest packages 26 QML resources including shared icons and backdrop and excludes merged components");
     ok &= require(deckQuickPanel.find("property real beatJumpBeats") == std::string::npos
                       && deckQuickPanel.find("root.engine.beatJumpBeats") != std::string::npos
                       && engineHeader.find("Q_PROPERTY(double beatJumpBeats") != std::string::npos,

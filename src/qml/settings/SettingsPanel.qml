@@ -1362,7 +1362,7 @@ Item {
                             }
 
                             Button {
-                                text: "Refresh jog displays"
+                                text: "Retry jog display connection"
                                 enabled: controllerManager
                                          ? controllerManager.flx10Available && controllerManager.flx10Enabled
                                          : false
@@ -1403,7 +1403,7 @@ Item {
                             }
 
                             Text {
-                                text: controllerManager ? controllerManager.flx10Status : ""
+                                text: controllerManager ? "DISPLAY · " + controllerManager.flx10ConnectionState.replace(/_/g, " ") + "\n" + controllerManager.flx10Status : ""
                                 color: controllerManager && controllerManager.flx10Connected ? UiTheme.green : UiTheme.textLabel
                                 font.family: UiTheme.uiFontFamily
                                 font.pixelSize: 11

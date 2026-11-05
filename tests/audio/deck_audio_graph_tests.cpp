@@ -479,10 +479,10 @@ int main(int argc, char** argv)
     ok &= require(writeWave(spinPath, 48'000.0, 2, 220.0, 576'000), "spin fixture");
     if (std::getenv("BROCKDJ_SPIN_HANDOFF_ONLY") != nullptr)
         return ok && testSpinHandoffs(spinPath) ? 0 : 1;
+    if (std::getenv("BROCKDJ_KEYLOCK_SWEEP_ONLY") != nullptr)
+        return ok && testTempoSweeps(sweepPath) ? 0 : 1;
     ok &= testSpinHandoffs(spinPath);
     ok &= testTempoSweeps(sweepPath);
-    if (std::getenv("BROCKDJ_KEYLOCK_SWEEP_ONLY") != nullptr)
-        return ok ? 0 : 1;
 
     {
         AudioPageCache transientCache(4 * 1024 * 1024);
@@ -1345,6 +1345,14 @@ int main(int argc, char** argv)
         ok &= require(privateEngine.masterTap().getMagnitude(0,512) == 0 && outputs.getMagnitude(2,0,512) == 0
             && std::abs(outputs.getMagnitude(4,0,512) - 0.175f) < 0.002f,
             "library preview and pre-fader sampler cue coexist privately with silent master and booth");
+        auto editorSample = std::make_unique<SamplerSample>();
+        editorSample->pcm.setSize(2,48000); editorSample->sampleRate = 48000; editorSample->loop = true;
+        for (int ch = 0; ch < 2; ++ch) juce::FloatVectorOperations::fill(editorSample->pcm.getWritePointer(ch),0.1f,48000);
+        privateEngine.sampler().installPreview(std::move(editorSample));
+        for (int i = 0; i < 8; ++i) privateEngine.getNextAudioBlock({&outputs,0,512});
+        ok &= require(privateEngine.masterTap().getMagnitude(0,512) == 0 && outputs.getMagnitude(2,0,512) == 0
+            && outputs.getMagnitude(4,0,512) > 0.20f,
+            "editor preview, library preview and sampler cue coexist only on the headphone bus");
         privateEngine.sampler().setGain(1);
         ok &= require(privateEngine.recorder().startRecording(directory.filePath("sampler-routing")), "sampler integration recorder starts");
         for (int i = 0; i < 8; ++i) privateEngine.getNextAudioBlock({&outputs, 0, 512});
@@ -1357,10 +1365,14 @@ int main(int argc, char** argv)
         juce::AudioBuffer<float> recordedBlock(2,512);
         const bool readRecording = recorded && recorded->read(&recordedBlock,0,512,3072,true,true);
         ok &= require(readRecording && std::abs(recordedBlock.getMagnitude(0,512) - 0.1f) < 0.002f,
-            "actual WAV contains sampler program and excludes simultaneous preview and sampler cue");
+            "actual WAV contains sampler program and excludes library/editor preview and sampler cue");
         privateEngine.sampler().setGain(0); AudioEngine::setOutputRouting(1,3,2);
         for (int i = 0; i < 8; ++i) privateEngine.getNextAudioBlock({&outputs,0,512});
         ok &= require(outputs.getMagnitude(0,512) == 0, "overlapping headphones cannot leak sampler cue onto program outputs");
+        registration.reset(); privateEngine.sampler().setCue(false); AudioEngine::setOutputRouting(1,3,5);
+        privateEngine.sampler().stopPreview();
+        for (int i = 0; i < 8; ++i) privateEngine.getNextAudioBlock({&outputs,0,512});
+        ok &= require(outputs.getMagnitude(4,0,512) == 0, "stopping the editor preview clears its private tail");
         AudioEngine::setHeadphoneGain(1.0f);
         AudioEngine::setMasterCueEnabled(false);
         AudioEngine::setHeadphoneMix(0.5f);

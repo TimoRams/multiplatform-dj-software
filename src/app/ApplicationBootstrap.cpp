@@ -817,7 +817,7 @@ int runApplication(int argc, char *argv[])
                              [&runtime](const QString& id, float value) {
                 if (runtime.sampler) {
                     auto& sampler = *runtime.sampler;
-                    if (id == "sampler_gain") { sampler.setGain(value * 1.5); return; }
+                    if (id == "sampler_gain") { sampler.setMidiGainNormalized(value); return; }
                     if (value >= 0.5f) {
                         if (id == "sampler_stop_all") sampler.stopAll();
                         else if (id == "sampler_cue") sampler.setCue(!sampler.cue());

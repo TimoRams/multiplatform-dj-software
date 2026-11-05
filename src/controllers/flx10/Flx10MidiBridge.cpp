@@ -1216,9 +1216,11 @@ void MidiControllerManager::connectSampler(SamplerController* sampler)
 {
     if (m_sampler) disconnect(m_sampler, nullptr, this, nullptr);
     m_sampler = sampler;
+    if (m_sampler) m_sampler->resetMidiPickup();
     if (sampler) connect(sampler, &SamplerController::changed, this,
         [this, previous = std::array<int, 8>{-1,-1,-1,-1,-1,-1,-1,-1}]() mutable {
         if (!m_sampler) return;
+        sendMidiNoteLed(0x96, 0x69, m_sampler->cue() ? 0x7F : 0);
         const auto entries = m_sampler->slotList();
         for (int i = 0; i < 8; ++i) {
             const auto entry = entries[i].toMap();

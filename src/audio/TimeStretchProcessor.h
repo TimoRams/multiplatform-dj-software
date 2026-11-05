@@ -70,11 +70,11 @@ public:
 
     // ── Keylock analysis settings ────────────────────────────────────────────
     // Prioritise bass resolution over the former 32 ms low-latency window.
-    // Split computation adds one hop: about 135 ms total at 44.1/48/96 kHz.
+    // Split computation adds one hop: about 130 ms total at 44.1/48/96 kHz.
     static constexpr double kKeylockWindowSeconds = 0.120;
     // Denser overlap reduces steady-tone modulation and stereo error compared
     // with the library's four-hop default, at the cost of more FFT work.
-    static constexpr int kKeylockOverlap = 8;
+    static constexpr int kKeylockOverlap = 12;
     // This timbre-preserving roll-off is only for manual Key Shift with
     // keylock off. Keylock must undo the reader's pitch change across the
     // entire band; using this limit there leaves high notes detuned.
@@ -147,6 +147,8 @@ private:
         double semitoneStep = 0.0;
         int semitoneRampRemaining = 0;
         float appliedTonalityLimit = 0.0f;
+        // Split FFT work must use one frequency map for its complete hop.
+        int signalsmithHopOffset = 0;
         // Normalised tonality limit for this pipeline's sample rate. Kept here
         // because setTransposeFactor() resets the limit whenever it is called
         // without one, so every later pitch update has to pass it again.

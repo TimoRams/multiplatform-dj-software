@@ -431,6 +431,10 @@
     <!-- Monitoring and library. -->
     <!-- The FLX10 Master Level knob controls its hardware output directly.
          Keep it out of the software mixer to avoid applying gain twice. -->
+    <!-- Global sampler controls, MIDI list M19/M20 (channel 7). -->
+    <Entry paramId="sampler_cue" status="0x96" control="0x69" type="momentary"/>
+    <Entry paramId="sampler_gain" status="0xB6" control="0x03" type="fader"/>
+    <Entry paramId="sampler_gain" status="0xB6" control="0x23" type="fader"/>
     <Entry paramId="master_cue" status="0x96" control="0x63" type="toggle"/>
     <Entry paramId="headphone_mix" status="0xB6" control="0x0C" type="fader"/>
     <Entry paramId="headphone_mix" status="0xB6" control="0x2C" type="fader"/>

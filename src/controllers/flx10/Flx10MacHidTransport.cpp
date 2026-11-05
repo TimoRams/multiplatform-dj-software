@@ -9,6 +9,7 @@
 
 #include <chrono>
 #include <vector>
+#include <QStringList>
 
 namespace {
 
@@ -91,9 +92,48 @@ struct Flx10MacHidTransport::Impl {
 Flx10MacHidTransport::Flx10MacHidTransport() : m_impl(std::make_unique<Impl>()) {}
 Flx10MacHidTransport::~Flx10MacHidTransport() { close(); }
 
-bool Flx10MacHidTransport::open(QString& error)
+QString Flx10MacHidTransport::deviceSignature()
+{
+    auto manager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
+    if (!manager) {
+        return {};
+    }
+    int vendor = flx10_protocol::kVid;
+    int product = flx10_protocol::kPid;
+    auto vid = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &vendor);
+    auto pid = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &product);
+    const void* keys[] = {CFSTR(kIOHIDVendorIDKey), CFSTR(kIOHIDProductIDKey)};
+    const void* values[] = {vid, pid};
+    auto matching = CFDictionaryCreate(kCFAllocatorDefault, keys, values, 2,
+                                       &kCFTypeDictionaryKeyCallBacks,
+                                       &kCFTypeDictionaryValueCallBacks);
+    IOHIDManagerSetDeviceMatching(manager, matching);
+    CFRelease(matching);
+    CFRelease(vid);
+    CFRelease(pid);
+    // Do not open the manager: that would open every matching HID interface.
+    auto devices = IOHIDManagerCopyDevices(manager);
+    QStringList identities;
+    if (devices) {
+        std::vector<const void*> entries(static_cast<std::size_t>(CFSetGetCount(devices)));
+        CFSetGetValues(devices, entries.data());
+        for (auto entry : entries) {
+            auto device = static_cast<IOHIDDeviceRef>(const_cast<void*>(entry));
+            uint64_t identity = 0;
+            if (IORegistryEntryGetRegistryEntryID(IOHIDDeviceGetService(device), &identity) == KERN_SUCCESS)
+                identities.append(QString::number(identity) + (screenInterface(device) ? ":screen" : ":other"));
+        }
+        CFRelease(devices);
+    }
+    CFRelease(manager);
+    identities.sort();
+    return identities.join(QLatin1Char(','));
+}
+
+bool Flx10MacHidTransport::open(QString& error, flx10::ConnectionFailure* failure)
 {
     close();
+    if (failure) *failure = flx10::ConnectionFailure::Transient;
     auto manager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
     if (!manager) {
         error = QStringLiteral("DDJ-FLX10: cannot create macOS IOHID manager");
@@ -115,6 +155,7 @@ bool Flx10MacHidTransport::open(QString& error)
     // Do not open the manager: that would open every matching HID interface.
     auto devices = IOHIDManagerCopyDevices(manager);
     int matches = 0;
+    const int deviceCount = devices ? static_cast<int>(CFSetGetCount(devices)) : 0;
     if (devices) {
         std::vector<const void*> entries(static_cast<std::size_t>(CFSetGetCount(devices)));
         CFSetGetValues(devices, entries.data());
@@ -132,6 +173,8 @@ bool Flx10MacHidTransport::open(QString& error)
     }
     CFRelease(manager);
     if (matches != 1) {
+        if (failure) *failure = matches > 1 ? flx10::ConnectionFailure::Ambiguous
+            : deviceCount ? flx10::ConnectionFailure::Incompatible : flx10::ConnectionFailure::Absent;
         error = matches > 1
             ? QStringLiteral("DDJ-FLX10: multiple screen interfaces found; connect only one FLX10 and Refresh")
             : QStringLiteral("DDJ-FLX10: no compatible macOS HID screen (2B73:0041, interface 5, unnumbered 128-byte output). Reconnect the controller, close other DJ apps, then Refresh. If the vendor driver hides HID, this driver configuration is unsupported; audio/MIDI are left untouched.");
@@ -140,11 +183,14 @@ bool Flx10MacHidTransport::open(QString& error)
     }
     const IOReturn result = IOHIDDeviceOpen(m_impl->device, kIOHIDOptionsTypeNone);
     if (result != kIOReturnSuccess) {
+        if (failure && (result == kIOReturnNotPermitted || result == kIOReturnNotPrivileged
+                        || result == kIOReturnExclusiveAccess)) *failure = flx10::ConnectionFailure::Denied;
         error = QStringLiteral("DDJ-FLX10: shared HID open failed (0x%1). Close other DJ apps, reconnect and Refresh; check macOS Privacy & Security permissions if access is denied. The audio/MIDI driver will not be detached.")
                     .arg(static_cast<quint32>(result), 8, 16, QLatin1Char('0'));
         close();
         return false;
     }
+    if (failure) *failure = flx10::ConnectionFailure::None;
     m_impl->opened = true;
     m_impl->removed = false;
     m_impl->expired = false;

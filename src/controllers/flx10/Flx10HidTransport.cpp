@@ -9,6 +9,7 @@
 
 #include <QDebug>
 #include <QThread>
+#include <QStringList>
 
 #include <algorithm>
 #include <chrono>
@@ -43,6 +44,32 @@ bool transientTransfer(int result, int transferred, qsizetype expected)
 #endif
 }
 
+QString DDJFLX10Controller::deviceSignature()
+{
+#if defined(Q_OS_MACOS)
+    return Flx10MacHidTransport::deviceSignature();
+#elif defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
+    libusb_context* context = nullptr;
+    if (libusb_init(&context) != 0) return {};
+    libusb_device** devices = nullptr;
+    const auto count = libusb_get_device_list(context, &devices);
+    QStringList identities;
+    for (ssize_t i = 0; i < count; ++i) {
+        libusb_device_descriptor descriptor {};
+        if (libusb_get_device_descriptor(devices[i], &descriptor) == 0
+            && descriptor.idVendor == kVid && descriptor.idProduct == kPid)
+            identities.append(QString::number(libusb_get_bus_number(devices[i])) + ":"
+                              + QString::number(libusb_get_device_address(devices[i])));
+    }
+    if (devices) libusb_free_device_list(devices, 1);
+    libusb_exit(context);
+    identities.sort();
+    return identities.join(QLatin1Char(','));
+#else
+    return {};
+#endif
+}
+
 bool DDJFLX10Controller::initialiseUsb()
 {
 #if defined(BROCKDJ_HAS_LIBUSB) && defined(Q_OS_LINUX)
@@ -55,17 +82,19 @@ bool DDJFLX10Controller::initialiseUsb()
     libusb_device** devices = nullptr;
     const ssize_t deviceCount = libusb_get_device_list(m_usbContext, &devices);
     libusb_device* flx10Device = nullptr;
+    int matchingDevices = 0;
     for (ssize_t i = 0; i < deviceCount; ++i) {
         libusb_device_descriptor descriptor {};
         if (libusb_get_device_descriptor(devices[i], &descriptor) != 0)
             continue;
         if (descriptor.idVendor == kVid && descriptor.idProduct == kPid) {
             flx10Device = devices[i];
-            break;
+            ++matchingDevices;
         }
     }
 
     if (!flx10Device) {
+        m_connectionFailure = flx10::ConnectionFailure::Absent;
         setStatus(QStringLiteral("DDJ-FLX10: USB device 2B73:0041 not found"));
         if (devices)
             libusb_free_device_list(devices, 1);
@@ -74,9 +103,17 @@ bool DDJFLX10Controller::initialiseUsb()
         return false;
     }
 
+    if (matchingDevices > 1) {
+        m_connectionFailure = flx10::ConnectionFailure::Ambiguous;
+        setStatus(QStringLiteral("DDJ-FLX10: multiple devices found; connect one controller and Retry"));
+        libusb_free_device_list(devices, 1); libusb_exit(m_usbContext); m_usbContext = nullptr;
+        return false;
+    }
+
     const int openResult = libusb_open(flx10Device, &m_handle);
     libusb_free_device_list(devices, 1);
     if (openResult != 0 || !m_handle) {
+        m_connectionFailure = flx10::ConnectionFailure::Denied;
         setStatus(QStringLiteral("DDJ-FLX10: USB device found, but access was denied (%1). Install the BrockDJ udev rule, then reconnect the controller.")
                       .arg(openResult));
         libusb_exit(m_usbContext);
@@ -90,7 +127,7 @@ bool DDJFLX10Controller::initialiseUsb()
 #elif defined(Q_OS_MACOS)
     m_nativeHid = std::make_unique<Flx10MacHidTransport>();
     QString error;
-    if (!m_nativeHid->open(error)) {
+    if (!m_nativeHid->open(error, &m_connectionFailure)) {
         m_nativeHid.reset();
         setStatus(error);
         return false;
@@ -423,7 +460,8 @@ void DDJFLX10Controller::reportHidWriteFailure()
     const int result = m_hidWriteError.load(std::memory_order_acquire);
     const int transferred = m_hidWriteTransferred.load(std::memory_order_acquire);
     qWarning() << "[DDJ-FLX10] HID writer stopped after transfer failure" << result << transferred;
-    stop();
+    m_connectionFailure = flx10::ConnectionFailure::Transient;
+    stop(false);
 #if defined(Q_OS_MACOS)
     setStatus(QStringLiteral("DDJ-FLX10: macOS HID output stopped (0x%1, %2 bytes). Reconnect, close other DJ apps and Refresh; verify the vendor driver is active. Driver-hidden HID or firmware requiring additional activation is unsupported. Audio/MIDI were not detached.")
                   .arg(static_cast<quint32>(result), 8, 16, QLatin1Char('0'))

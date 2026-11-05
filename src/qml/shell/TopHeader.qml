@@ -16,6 +16,8 @@ Rectangle {
     readonly property int collapsedHeight: UiTheme.toolbarHeight
 
     readonly property bool compactBar: width / UiTheme.scale < 1100
+    readonly property bool veryCompactBar: width / UiTheme.scale < 1000
+    readonly property bool tinyBar: width / UiTheme.scale < 760
     readonly property bool compactHardwareBar: compactBar && !!root.Window.window && root.Window.window.allInOneMode === true
     readonly property color barHover: UiTheme.controlHover
     signal searchRequested()
@@ -650,7 +652,7 @@ Rectangle {
 
         // ── Branding ─────────────────────────────────────────────────────────
         Item {
-            visible: !root.compactHardwareBar
+            visible: !root.compactBar
             Layout.preferredWidth: brandRow.implicitWidth + root.padH * 2
             Layout.fillHeight: true
 
@@ -679,7 +681,8 @@ Rectangle {
 
         Button {
             objectName: "performanceNavigation"
-            Layout.preferredWidth: root.compactBar ? 64 : 100
+            Layout.preferredWidth: UiTheme.px(root.veryCompactBar ? 48 : root.compactBar ? 64 : 100)
+            leftPadding: 6; rightPadding: 6
             Layout.fillHeight: true
             text: root.compactBar ? "Live" : "Performance"
             labelSize: 11
@@ -694,10 +697,11 @@ Rectangle {
         Button {
             id: libraryButton
             objectName: "libraryNavigation"
-            Layout.preferredWidth: root.compactBar ? 64 : 88
+            Layout.preferredWidth: UiTheme.px(root.veryCompactBar ? 60 : root.compactBar ? 64 : 88)
+            leftPadding: 6; rightPadding: 6
             Layout.fillHeight: true
             readonly property bool active: root.Window.window
-                ? (root.Window.window.allInOneMode ? root.Window.window.libraryPanelActive : root.Window.window.showLibrary)
+                ? (!root.Window.window.utilityPageActive && (root.Window.window.allInOneMode ? root.Window.window.libraryPanelActive : root.Window.window.showLibrary))
                 : false
             checked: active
             text: "Library"
@@ -705,10 +709,31 @@ Rectangle {
             onClicked: if (root.Window.window) root.Window.window.toggleAllInOneLibrary()
         }
 
+        Button {
+            objectName: "samplerNavigation"
+            Layout.preferredWidth: UiTheme.px(root.veryCompactBar ? 64 : 88)
+            Layout.fillHeight: true
+            leftPadding: 6; rightPadding: 6
+            text: "Sampler"; labelSize: 11
+            checked: root.Window.window && root.Window.window.samplerPageActive === true
+            onClicked: if (root.Window.window) root.Window.window.openMainPage("sampler")
+        }
+
+        Button {
+            objectName: "effectsNavigation"
+            Layout.preferredWidth: UiTheme.px(root.veryCompactBar ? 44 : 60)
+            Layout.fillHeight: true
+            leftPadding: 6; rightPadding: 6
+            text: "FX"; labelSize: 11
+            checked: root.Window.window && root.Window.window.fxPageActive === true
+            onClicked: if (root.Window.window) root.Window.window.openMainPage("fx")
+        }
+
         Rectangle { Layout.preferredWidth: 1; Layout.preferredHeight: 22; Layout.alignment: Qt.AlignVCenter; color: UiTheme.separatorSubtle }
 
         Rectangle {
             id: searchButton
+            visible: !root.veryCompactBar
             Layout.preferredWidth: root.compactBar ? 38 : 88
             Layout.fillHeight: true
             color: searchMouse.containsMouse ? root.barHover : "transparent"
@@ -723,7 +748,8 @@ Rectangle {
 
         Button {
             objectName: "settingsNavigation"
-            Layout.preferredWidth: root.compactBar ? 68 : 88
+            Layout.preferredWidth: UiTheme.px(root.veryCompactBar ? 64 : root.compactBar ? 68 : 88)
+            leftPadding: 6; rightPadding: 6
             Layout.fillHeight: true
             text: "Settings"
             labelSize: 11
@@ -749,7 +775,7 @@ Rectangle {
 
         // ── Master volume ─────────────────────────────────────────────────────
         Rectangle {
-            visible: !root.compactHardwareBar
+            visible: !root.compactBar
             Layout.preferredWidth: root.compactBar ? 58 : 100
             Layout.fillHeight: true
             color: "transparent"
@@ -848,7 +874,7 @@ Rectangle {
         // ── Headphone cue ────────────────────────────────────────────────────
         Rectangle {
             id: headphoneCueBlock
-            visible: !root.compactHardwareBar
+            visible: !root.compactBar
             Layout.preferredWidth: root.compactBar ? 88 : 112
             Layout.fillHeight: true
             color: "transparent"
@@ -992,6 +1018,7 @@ Rectangle {
         // ── System monitor — LAT + CPU + RAM ─────────────────────────────────
         Rectangle {
             id: monitorBlock
+            visible: !root.tinyBar
             Layout.preferredWidth: root.compactBar ? 112 : 128 // fixed to prevent value jitter
             Layout.fillHeight: true
             color: latMouse.containsMouse ? root.barHover : "transparent"
@@ -1133,6 +1160,7 @@ Rectangle {
 
         Row {
             Layout.preferredWidth: 58
+            visible: !root.veryCompactBar
             Layout.alignment: Qt.AlignVCenter
             spacing: 8
             readonly property var monitor: typeof sysMonitor !== "undefined" ? sysMonitor : null
@@ -1280,8 +1308,7 @@ Rectangle {
                 MouseArea {
                     anchors.fill: parent
                     onClicked: if (root.Window.window) {
-                        root.Window.window.samplerPanelOpen = !root.Window.window.samplerPanelOpen
-                        root.Window.window.closeTopBarPullDown()
+                        root.Window.window.openMainPage("sampler")
                     }
                 }
             }
