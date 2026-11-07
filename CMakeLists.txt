@@ -117,8 +117,33 @@ if(PkgConfig_FOUND)
     pkg_check_modules(SQLCIPHER QUIET IMPORTED_TARGET sqlcipher)
     if(TARGET PkgConfig::SQLCIPHER)
         message(STATUS "Enabling read-only Rekordbox OneLibrary support via SQLCipher")
-        target_link_libraries(ThirdParty::SQLCipher INTERFACE PkgConfig::SQLCIPHER)
         target_compile_definitions(ThirdParty::SQLCipher INTERFACE BROCKDJ_HAVE_SQLCIPHER=1)
+        if(UNIX AND NOT APPLE)
+            # SQLCipher exports the same sqlite3_* symbols as the system SQLite
+            # used by Qt's QSQLITE driver. Linking it would put those symbols in
+            # the global scope and make libsqlite3 call into SQLCipher, crashing
+            # at startup. Linux therefore loads SQLCipher privately via dlopen().
+            find_library(BROCKDJ_SQLCIPHER_LIBRARY NAMES sqlcipher
+                HINTS ${SQLCIPHER_LIBRARY_DIRS} NO_CACHE)
+            set(_sqlcipher_soname "")
+            if(BROCKDJ_SQLCIPHER_LIBRARY AND CMAKE_OBJDUMP)
+                execute_process(COMMAND "${CMAKE_OBJDUMP}" -p "${BROCKDJ_SQLCIPHER_LIBRARY}"
+                    OUTPUT_VARIABLE _sqlcipher_objdump ERROR_QUIET)
+                if(_sqlcipher_objdump MATCHES "SONAME[ \t]+([^ \t\r\n]+)")
+                    set(_sqlcipher_soname "${CMAKE_MATCH_1}")
+                endif()
+            endif()
+            if(NOT _sqlcipher_soname)
+                set(_sqlcipher_soname "libsqlcipher.so.0")
+            endif()
+            message(STATUS "Loading SQLCipher at runtime as ${_sqlcipher_soname}")
+            target_include_directories(ThirdParty::SQLCipher INTERFACE ${SQLCIPHER_INCLUDE_DIRS})
+            target_compile_definitions(ThirdParty::SQLCipher INTERFACE
+                BROCKDJ_SQLCIPHER_RUNTIME_LIBRARY="${_sqlcipher_soname}")
+            target_link_libraries(ThirdParty::SQLCipher INTERFACE ${CMAKE_DL_LIBS})
+        else()
+            target_link_libraries(ThirdParty::SQLCipher INTERFACE PkgConfig::SQLCIPHER)
+        endif()
     endif()
 endif()
 if((UNIX OR APPLE) AND NOT TARGET PkgConfig::SQLCIPHER)
@@ -955,6 +980,10 @@ target_compile_definitions(BrockDJ_rekordbox_read_only_tests PRIVATE
     SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_include_directories(BrockDJ_rekordbox_read_only_tests PRIVATE src)
 target_link_libraries(BrockDJ_rekordbox_read_only_tests PRIVATE Qt6::Core ThirdParty::SQLCipher)
+if(TARGET PkgConfig::SQLCIPHER)
+    # The test fixtures call SQLCipher directly to create encrypted databases.
+    target_link_libraries(BrockDJ_rekordbox_read_only_tests PRIVATE PkgConfig::SQLCIPHER)
+endif()
 if(UNIX AND NOT APPLE)
     target_link_libraries(BrockDJ_rekordbox_read_only_tests PRIVATE Qt6::DBus)
     target_compile_definitions(BrockDJ_rekordbox_read_only_tests PRIVATE

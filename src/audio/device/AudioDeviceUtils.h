@@ -58,3 +58,17 @@ bool probeJackServer(QString& message);
 // Read the server-owned timing without changing the JACK/PipeWire graph.
 bool readJackServerConfiguration(int& bufferFrames, int& sampleRate, QString& message);
 #endif
+
+#if JUCE_LINUX || JUCE_BSD
+#include <QSet>
+#include <optional>
+
+// JUCE lists every JACK client with input ports as an output device, including
+// MIDI-only clients. Returns the clients that own audio playback ports, or
+// nullopt when the JACK server cannot be queried.
+std::optional<QSet<QString>> readJackAudioPlaybackClients();
+// JUCE deliberately lists ALSA hardware PCMs even when another sound server
+// (PipeWire/PulseAudio) holds them exclusively. Returns the JUCE output names
+// whose hardware PCM is currently busy.
+QSet<QString> readBusyAlsaOutputNames();
+#endif

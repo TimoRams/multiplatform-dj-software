@@ -11,6 +11,11 @@
 #include <jack/jack.h>
 #endif
 
+#if JUCE_ALSA && (JUCE_LINUX || JUCE_BSD)
+#include <alsa/asoundlib.h>
+#include <cerrno>
+#endif
+
 juce::String toJuceString(const QString& text)
 {
     return juce::String::fromUTF8(text.toUtf8().constData());
@@ -329,6 +334,79 @@ bool readJackServerConfiguration(int& bufferFrames, int& sampleRate, QString& me
     message = QStringLiteral("JACK server: %1 Hz, %2 frames/period.")
         .arg(sampleRate).arg(bufferFrames);
     return bufferFrames > 0 && sampleRate > 0;
+}
+
+#endif
+
+#if JUCE_LINUX || JUCE_BSD
+
+std::optional<QSet<QString>> readJackAudioPlaybackClients()
+{
+#if JUCE_JACK
+    jack_status_t status = JackFailure;
+    jack_client_t* client = jack_client_open("BrockDJPortProbe", JackNoStartServer, &status);
+    if (client == nullptr)
+        return std::nullopt;
+
+    QSet<QString> clients;
+    if (const char** ports = jack_get_ports(client, nullptr, JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput)) {
+        for (const char** port = ports; *port != nullptr; ++port) {
+            const QString portName = QString::fromUtf8(*port);
+            const qsizetype separator = portName.indexOf(QLatin1Char(':'));
+            clients.insert(separator >= 0 ? portName.left(separator) : portName);
+        }
+        jack_free(ports);
+    }
+    jack_client_close(client);
+    return clients;
+#else
+    return std::nullopt;
+#endif
+}
+
+QSet<QString> readBusyAlsaOutputNames()
+{
+    QSet<QString> busy;
+#if JUCE_ALSA
+    void** hints = nullptr;
+    if (snd_device_name_hint(-1, "pcm", &hints) != 0 || hints == nullptr)
+        return busy;
+
+    const auto hintValue = [](void* hint, const char* key) {
+        char* raw = snd_device_name_get_hint(hint, key);
+        const QString value = raw != nullptr ? QString::fromUtf8(raw) : QString();
+        std::free(raw);
+        return value;
+    };
+
+    for (void** hint = hints; *hint != nullptr; ++hint) {
+        const QString id = hintValue(*hint, "NAME");
+        // Only hardware PCMs can be held exclusively; probing plugin PCMs such
+        // as "pipewire" or "default" would needlessly create server streams.
+        if (id.isEmpty() || !id.contains(QStringLiteral("CARD="))
+            || id.startsWith(QStringLiteral("default:")) || id.startsWith(QStringLiteral("sysdefault:"))
+            || id.startsWith(QStringLiteral("plughw:")) || id.startsWith(QStringLiteral("dsnoop"))
+            || hintValue(*hint, "IOID") == QStringLiteral("Input")) {
+            continue;
+        }
+
+        snd_pcm_t* pcm = nullptr;
+        const int result = snd_pcm_open(&pcm, id.toUtf8().constData(),
+                                        SND_PCM_STREAM_PLAYBACK, SND_PCM_NONBLOCK);
+        if (result >= 0) {
+            snd_pcm_close(pcm);
+            continue;
+        }
+        if (result != -EBUSY)
+            continue;
+
+        // Mirror JUCE's ALSA naming so the result matches getDeviceNames().
+        QString name = hintValue(*hint, "DESC").replace(QLatin1Char('\n'), QStringLiteral("; "));
+        busy.insert(name.isEmpty() ? id : name);
+    }
+    snd_device_name_free_hint(hints);
+#endif
+    return busy;
 }
 
 #endif

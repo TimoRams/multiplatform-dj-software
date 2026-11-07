@@ -76,6 +76,7 @@ struct SamplerAudioEngine::Voice {
     juce::AudioBuffer<float> scratch;
     int slot = -1;
     bool pending = false, stopping = false;
+    bool sequenced = false;
     int quantize = 0;
     double targetBeat = 0;
     std::uint64_t clockGeneration = 0, order = 0;
@@ -197,10 +198,13 @@ void SamplerAudioEngine::release() {
             m_playback[v->slot].publish(Ready, m_generations[v->slot].load(), 0, 0, 0);
         }
         v->slot = -1; v->source.sample.store(nullptr); v->tailRemaining = 0;
+        v->sequenced = false;
     }
     m_previewRequested.store(false); m_previewActive.store(false); m_previewSample.reset();
     m_previewEnvelope = 0; m_previewTailRemaining = 0;
     m_previewPlayback.publish(Empty, ++m_previewGeneration, 0, 0, 0);
+    m_sequenceWasEnabled = false;
+    m_lastSequenceStep = -1;
     m_prepared = false; openGate();
     // A seed worker can itself be a reader. Join only after reopening the gate.
     for (auto& v : m_voices) v->stretch.releaseResources();
@@ -235,6 +239,19 @@ bool SamplerAudioEngine::trigger(int slot, int quantize) {
 }
 void SamplerAudioEngine::stop(int slot) { if (!enqueue({slot, 0, true})) m_panic.store(true); }
 void SamplerAudioEngine::stopAll() { if (!enqueue({-1, 0, true})) m_panic.store(true, std::memory_order_release); }
+void SamplerAudioEngine::setSequencerPattern(int bank, int track, std::uint16_t steps) noexcept {
+    if (bank < 0 || bank >= 4 || track < 0 || track >= 8) return;
+    m_sequencePatterns[bank * 8 + track].store(steps, std::memory_order_release);
+}
+void SamplerAudioEngine::setSequencerBank(int bank) noexcept {
+    if (bank >= 0 && bank < 4) m_sequenceBank.store(bank, std::memory_order_release);
+}
+void SamplerAudioEngine::setSequencerEnabled(bool enabled) noexcept {
+    m_sequencerEnabled.store(enabled, std::memory_order_release);
+}
+void SamplerAudioEngine::setSequencerSwing(float swing) noexcept {
+    if (std::isfinite(swing)) m_sequencerSwing.store(std::clamp(swing, 0.0f, 0.5f), std::memory_order_release);
+}
 TimeStretchRealtimeStats SamplerAudioEngine::realtimeStats() const noexcept {
     TimeStretchRealtimeStats result;
     for (const auto& v : m_voices) {
@@ -273,14 +290,22 @@ void SamplerAudioEngine::retire(Voice& v) noexcept {
     v.tail = v.last; v.tailRemaining = std::max(1, static_cast<int>(m_rate * 0.005));
     v.source.sample.store(nullptr); v.source.generation.fetch_add(1);
     v.stretch.setInputPlaybackActive(false);
-    v.slot = -1; v.pending = false; v.envelope = 0;
+    v.slot = -1; v.pending = false; v.sequenced = false; v.envelope = 0;
 }
-void SamplerAudioEngine::start(int slot, int quantize, double beat, const SamplerBeatClock& clock) noexcept {
+void SamplerAudioEngine::start(int slot, int quantize, double beat, const SamplerBeatClock& clock,
+                               bool sequenced, double scheduledBeat) noexcept {
     auto* sample = m_samples[slot].get();
     if (!sample) return;
     Voice* voice = nullptr;
+    bool retiredExisting = false;
     for (auto& v : m_voices) if (v->slot == slot) {
-        if ((sample->loop || v->pending) && !v->stopping) { v->stopping = true; return; }
+        if ((sample->loop || v->pending) && !v->stopping) {
+            if (!sequenced) { v->stopping = true; return; }
+            retire(*v);
+            voice = v.get();
+            retiredExisting = true;
+            break;
+        }
         voice = v.get(); break;
     }
     if (!voice) for (auto& v : m_voices) if (v->slot < 0) { voice = v.get(); break; }
@@ -293,11 +318,13 @@ void SamplerAudioEngine::start(int slot, int quantize, double beat, const Sample
             sample->pcm.getNumSamples() / sample->sampleRate, 0);
         return;
     }
-    retire(*voice);
+    if (!retiredExisting) retire(*voice);
     voice->slot = slot; voice->stopping = false; voice->order = ++m_order;
+    voice->sequenced = sequenced;
     voice->quantize = quantize;
-    voice->targetBeat = quantize > 0 ? std::ceil((beat + 1e-8) / quantize) * quantize : beat;
-    voice->pending = quantize > 0;
+    voice->targetBeat = sequenced ? scheduledBeat
+        : quantize > 0 ? std::ceil((beat + 1e-8) / quantize) * quantize : beat;
+    voice->pending = quantize > 0 || (sequenced && scheduledBeat > beat + 1e-8);
     voice->clockGeneration = clock.generation;
     voice->source.position.store(0); voice->source.sample.store(sample);
     const double ratio = sample->sync && sample->bpm > 0 ? std::clamp(clock.bpm / sample->bpm, 0.25, 4.0) : 1;
@@ -314,6 +341,51 @@ void SamplerAudioEngine::render(juce::AudioBuffer<float>& program, juce::AudioBu
     if (!guard.valid || !m_prepared) return;
     const auto clock = clockSnapshot();
     const double beat = clock.beat + (startTime - clock.timestamp) * clock.bpm / 60;
+    const double endBeat = beat + samples / m_rate * clock.bpm / 60;
+    const auto currentStep = static_cast<std::int64_t>(std::floor(beat * 4 + 1e-8));
+    const auto finalStep = static_cast<std::int64_t>(std::floor(endBeat * 4 + 1e-8));
+    m_sequencerStep.store(static_cast<int>((currentStep % kSequenceSteps + kSequenceSteps) % kSequenceSteps),
+                          std::memory_order_relaxed);
+    const bool sequencerEnabled = m_sequencerEnabled.load(std::memory_order_acquire);
+    const int sequenceBank = m_sequenceBank.load(std::memory_order_acquire);
+    if (sequencerEnabled && (!m_sequenceWasEnabled || sequenceBank != m_lastSequenceBank)) {
+        if (m_sequenceWasEnabled) {
+            for (auto& voice : m_voices) {
+                const auto* sample = voice->source.sample.load();
+                if (voice->sequenced && (voice->pending || (sample && sample->loop)))
+                    voice->stopping = true;
+            }
+        }
+        m_lastSequenceStep = static_cast<std::int64_t>(std::ceil(beat * 4 - 1e-8)) - 1;
+        m_sequenceWasEnabled = true;
+        m_lastSequenceBank = sequenceBank;
+    } else if (!sequencerEnabled && m_sequenceWasEnabled) {
+        for (auto& voice : m_voices) {
+            const auto* sample = voice->source.sample.load();
+            if (voice->sequenced && (voice->pending || (sample && sample->loop)))
+                voice->stopping = true;
+        }
+        m_sequenceWasEnabled = false;
+        m_lastSequenceStep = finalStep;
+    }
+    if (sequencerEnabled) {
+        const float swing = m_sequencerSwing.load(std::memory_order_relaxed);
+        const auto firstStep = std::max(m_lastSequenceStep + 1, currentStep);
+        for (auto step = firstStep; step <= finalStep; ++step) {
+            const int patternStep = static_cast<int>((step % kSequenceSteps + kSequenceSteps) % kSequenceSteps);
+            const double scheduledBeat = step * 0.25 + ((step & 1) ? swing * 0.25 : 0.0);
+            const auto bit = static_cast<std::uint16_t>(1u << patternStep);
+            for (int track = 0; track < 8; ++track) {
+                const int slot = sequenceBank * 8 + track;
+                if ((m_sequencePatterns[slot].load(std::memory_order_acquire) & bit)
+                    && m_samples[slot])
+                    start(slot, 0, beat, clock, true, scheduledBeat);
+            }
+        }
+        m_lastSequenceStep = finalStep;
+    } else {
+        m_lastSequenceStep = finalStep;
+    }
     if (m_panic.exchange(false)) {
         m_read.store(m_write.load(std::memory_order_acquire));
         for (auto& v : m_voices) v->stopping = true;
@@ -342,7 +414,13 @@ void SamplerAudioEngine::render(juce::AudioBuffer<float>& program, juce::AudioBu
             if (v.stopping) { retire(v); sample = nullptr; }
             else {
                 if (clock.generation != v.clockGeneration) {
-                    v.targetBeat = std::ceil((beat + 1e-8) / v.quantize) * v.quantize;
+                    if (v.sequenced) {
+                        const auto nextStep = static_cast<std::int64_t>(std::floor(beat * 4 + 1e-8)) + 1;
+                        const float swing = m_sequencerSwing.load(std::memory_order_relaxed);
+                        v.targetBeat = nextStep * 0.25 + ((nextStep & 1) ? swing * 0.25 : 0.0);
+                    } else {
+                        v.targetBeat = std::ceil((beat + 1e-8) / v.quantize) * v.quantize;
+                    }
                     v.clockGeneration = clock.generation;
                 }
                 offset = static_cast<int>(std::clamp(std::ceil((v.targetBeat - beat) * 60 / clock.bpm * m_rate), 0.0, static_cast<double>(samples)));

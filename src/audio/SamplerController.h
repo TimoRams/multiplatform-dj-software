@@ -21,6 +21,10 @@ class SamplerController final : public QObject {
     Q_PROPERTY(double gain READ gain WRITE setGain NOTIFY changed)
     Q_PROPERTY(bool cue READ cue WRITE setCue NOTIFY changed)
     Q_PROPERTY(int quantize READ quantize WRITE setQuantize NOTIFY changed)
+    Q_PROPERTY(bool sequencerEnabled READ sequencerEnabled WRITE setSequencerEnabled NOTIFY changed)
+    Q_PROPERTY(int sequencerStep READ sequencerStep NOTIFY playbackChanged)
+    Q_PROPERTY(double sequencerSwing READ sequencerSwing WRITE setSequencerSwing NOTIFY changed)
+    Q_PROPERTY(QVariantList sequencerPattern READ sequencerPattern NOTIFY changed)
     Q_PROPERTY(QString clockSource READ clockSource NOTIFY changed)
     Q_PROPERTY(double bpm READ bpm NOTIFY changed)
     Q_PROPERTY(QString error READ error NOTIFY changed)
@@ -63,6 +67,10 @@ public:
     double gain() const { return m_gain; }
     bool cue() const { return m_cue; }
     int quantize() const { return m_quantize; }
+    bool sequencerEnabled() const { return m_sequencerEnabled; }
+    int sequencerStep() const { return m_audio.sequencerStep(); }
+    double sequencerSwing() const { return m_sequencerSwing; }
+    QVariantList sequencerPattern() const;
     QString clockSource() const { return m_clockSource; }
     double bpm() const { return m_clock.bpm; }
     QString error() const { return m_error; }
@@ -73,6 +81,8 @@ public:
     void setGain(double gain);
     void setCue(bool enabled);
     void setQuantize(int beats);
+    void setSequencerEnabled(bool enabled);
+    void setSequencerSwing(double swing);
     void attachDecks(const std::array<DjEngine*, 4>& decks,
                      engine::sync::SyncCoordinator* sync, LinkManager* link);
     Q_INVOKABLE void trigger(int pad);
@@ -83,6 +93,8 @@ public:
                              double endSec = -1, double sourceBpm = 0, bool loop = false, bool sync = false,
                              const QString& name = {}, const QString& color = {}, double gain = 1);
     Q_INVOKABLE void captureDeck(int pad, int deck, int beats = 4);
+    Q_INVOKABLE void setSequencerStep(int pad, int step, bool enabled);
+    Q_INVOKABLE void clearSequencerPattern();
     Q_INVOKABLE void edit(int pad, const QString& name, const QString& color,
                           double gain, bool loop, bool sync, double bpm,
                           double startSec, double endSec);
@@ -146,6 +158,7 @@ private:
     ControlClock::Registration m_registration;
     QString m_directory, m_error, m_clockSource = "INTERNAL";
     std::array<Slot, 32> m_slots;
+    std::array<std::uint16_t, 32> m_patterns {};
     std::array<DjEngine*, 4> m_decks {};
     engine::sync::SyncCoordinator* m_sync = nullptr;
     LinkManager* m_link = nullptr;
@@ -154,7 +167,8 @@ private:
     std::vector<QFutureWatcher<QVariantMap>*> m_probes;
     std::uint64_t m_probeGeneration = 0;
     int m_bank = 0, m_selectedSlot = 0, m_quantize = 1;
-    double m_gain = 0.72;
+    double m_gain = 0.72, m_sequencerSwing = 0;
+    bool m_sequencerEnabled = false;
     bool m_cue = false, m_stopped = false;
     SamplerBeatClock m_clock;
 };

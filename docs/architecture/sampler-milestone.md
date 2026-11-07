@@ -28,6 +28,15 @@ reject another start with BUSY state. Bank changes and closing the panel preserv
 playback. One-shots retrigger and loops toggle; STOP ALL preserves command order.
 Slot generation checks discard presses queued for a replaced/cleared asset.
 
+The sampler page also has a 16-step sequencer view. Each bank stores an independent
+pattern for its eight sample slots; enabled steps trigger against the same active
+Link/deck/internal clock as quantized sampler starts. Swing delays alternating
+sixteenth-note steps, and patterns plus swing are committed with the bank manifest.
+Step scheduling and sample starts happen in the audio callback; pattern masks,
+transport, swing and playhead are exchanged through atomics, with no UI timer
+triggering audio. Playback follows the clock's absolute bar phase rather than
+resetting the shared DJ clock when the sequencer starts.
+
 All samples are immutable resident stereo float PCM. Imports reserve from a
 shared 256 MiB budget before decoding (including concurrent import buffers), with
 a 30-second limit and mono duplication. QtConcurrent performs decoding, waveforms
@@ -99,9 +108,10 @@ open the sampler page; the selected main page restores on restart.
 ## Validation and remaining roadmap
 
 `sampler_audio` checks PCM output, pre-fader cue, retrigger/stop, voice limits,
-sample-rate conversion, sample-position quantization and pitch preservation at
-device callback cadence. It checks DSP realtime counters for forbidden callback
-preparation, growth, locks and inline seeds. `deck_audio_graph` checks simultaneous
+sample-rate conversion, sample-position quantization, swung sequencer triggers
+and pitch preservation at device callback cadence. It checks DSP realtime counters
+for forbidden callback preparation, growth, locks and inline seeds.
+`deck_audio_graph` checks simultaneous
 preview/sampler routing and reads actual recorded PCM, then runs four decks,
 eight sampler voices, preview and recording together across mixed callback sizes.
 `ci_runtime_smoke` exercises

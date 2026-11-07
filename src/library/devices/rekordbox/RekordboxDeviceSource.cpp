@@ -7,15 +7,73 @@
 
 #include <limits>
 #include <memory>
+#include <optional>
 
 #ifdef BROCKDJ_HAVE_SQLCIPHER
 #include <sqlite3.h>
+#ifdef BROCKDJ_SQLCIPHER_RUNTIME_LIBRARY
+#include <dlfcn.h>
+#endif
 #endif
 
 namespace rekordbox {
 namespace {
 
 #ifdef BROCKDJ_HAVE_SQLCIPHER
+
+#define BROCKDJ_SQLCIPHER_FUNCTIONS(X) \
+    X(sqlite3_open_v2) X(sqlite3_close) X(sqlite3_exec) X(sqlite3_prepare_v2) \
+    X(sqlite3_finalize) X(sqlite3_step) X(sqlite3_errmsg) X(sqlite3_column_text) \
+    X(sqlite3_column_bytes) X(sqlite3_column_int) X(sqlite3_column_int64) \
+    X(sqlite3_column_double) X(sqlite3_column_type)
+
+struct SqlCipherApi {
+#define BROCKDJ_DECLARE_SQLCIPHER_FUNCTION(name) decltype(&::name) name = nullptr;
+    BROCKDJ_SQLCIPHER_FUNCTIONS(BROCKDJ_DECLARE_SQLCIPHER_FUNCTION)
+#undef BROCKDJ_DECLARE_SQLCIPHER_FUNCTION
+};
+
+// On Linux, SQLCipher and the system SQLite (used by Qt's QSQLITE driver)
+// export the same sqlite3_* symbols. Linking SQLCipher into the executable
+// puts its symbols into the global scope, where libsqlite3 then binds to them
+// and mixes two incompatible SQLite implementations (crashing the library
+// database at startup). SQLCipher is therefore loaded privately at runtime.
+const SqlCipherApi* sqlCipherApi()
+{
+    static const std::optional<SqlCipherApi> api = []() -> std::optional<SqlCipherApi> {
+        SqlCipherApi loaded;
+#ifdef BROCKDJ_SQLCIPHER_RUNTIME_LIBRARY
+        int flags = RTLD_NOW | RTLD_LOCAL;
+#if defined(RTLD_DEEPBIND) && !defined(__SANITIZE_ADDRESS__)
+        // Keep SQLCipher's own internal calls inside SQLCipher even when a
+        // system libsqlite3 is already present in the global scope.
+        flags |= RTLD_DEEPBIND;
+#endif
+        void* handle = dlopen(BROCKDJ_SQLCIPHER_RUNTIME_LIBRARY, flags);
+        if (!handle) {
+            qWarning("[Rekordbox] Cannot load SQLCipher (%s): %s",
+                     BROCKDJ_SQLCIPHER_RUNTIME_LIBRARY, dlerror());
+            return std::nullopt;
+        }
+#define BROCKDJ_RESOLVE_SQLCIPHER_FUNCTION(name)                                   \
+        loaded.name = reinterpret_cast<decltype(loaded.name)>(dlsym(handle, #name)); \
+        if (!loaded.name) {                                                          \
+            qWarning("[Rekordbox] SQLCipher is missing symbol %s", #name);           \
+            return std::nullopt;                                                     \
+        }
+        BROCKDJ_SQLCIPHER_FUNCTIONS(BROCKDJ_RESOLVE_SQLCIPHER_FUNCTION)
+#undef BROCKDJ_RESOLVE_SQLCIPHER_FUNCTION
+#else
+#define BROCKDJ_BIND_SQLCIPHER_FUNCTION(name) loaded.name = &::name;
+        BROCKDJ_SQLCIPHER_FUNCTIONS(BROCKDJ_BIND_SQLCIPHER_FUNCTION)
+#undef BROCKDJ_BIND_SQLCIPHER_FUNCTION
+#endif
+        return loaded;
+    }();
+    return api ? &*api : nullptr;
+}
+
+#undef BROCKDJ_SQLCIPHER_FUNCTIONS
 
 // The device database of the modern export format (the one the exporting
 // software calls OneLibrary; older releases and parts of this codebase still
@@ -53,13 +111,13 @@ QString readOnlyUri(const QString& path)
          + QStringLiteral("?mode=ro&immutable=1");
 }
 
-bool applyKey(sqlite3* db)
+bool applyKey(const SqlCipherApi& api, sqlite3* db)
 {
-    if (sqlite3_exec(db, kCipherKeyPragma, nullptr, nullptr, nullptr) != SQLITE_OK)
+    if (api.sqlite3_exec(db, kCipherKeyPragma, nullptr, nullptr, nullptr) != SQLITE_OK)
         return false;
     // Belt and braces: even a mode=ro handle is told explicitly that no
     // statement may modify the database.
-    return sqlite3_exec(db, "PRAGMA query_only = 1; PRAGMA temp_store = MEMORY;",
+    return api.sqlite3_exec(db, "PRAGMA query_only = 1; PRAGMA temp_store = MEMORY;",
                         nullptr, nullptr, nullptr) == SQLITE_OK;
 }
 
@@ -75,34 +133,40 @@ PdbReader::Result readModernIndex(const QString& path)
             return result;
         }
     }
+    const SqlCipherApi* const loadedApi = sqlCipherApi();
+    if (!loadedApi) {
+        result.error = QStringLiteral("OneLibrary browsing requires the SQLCipher library");
+        return result;
+    }
+    const SqlCipherApi& api = *loadedApi;
     sqlite3* rawDb = nullptr;
     const int flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI | SQLITE_OPEN_NOMUTEX;
-    const int opened = sqlite3_open_v2(readOnlyUri(path).toUtf8().constData(),
+    const int opened = api.sqlite3_open_v2(readOnlyUri(path).toUtf8().constData(),
                                      &rawDb, flags, nullptr);
-    const std::unique_ptr<sqlite3, decltype(&sqlite3_close)> db(rawDb, sqlite3_close);
-    if (opened != SQLITE_OK || !applyKey(db.get())) {
+    const std::unique_ptr<sqlite3, decltype(&::sqlite3_close)> db(rawDb, api.sqlite3_close);
+    if (opened != SQLITE_OK || !applyKey(api, db.get())) {
         result.error = QStringLiteral("Cannot open OneLibrary exportLibrary.db read-only");
         return result;
     }
 
-    using Statement = std::unique_ptr<sqlite3_stmt, decltype(&sqlite3_finalize)>;
+    using Statement = std::unique_ptr<sqlite3_stmt, decltype(&::sqlite3_finalize)>;
     auto prepare = [&](const char* sql) {
         sqlite3_stmt* statement = nullptr;
-        if (sqlite3_prepare_v2(db.get(), sql, -1, &statement, nullptr) != SQLITE_OK) {
+        if (api.sqlite3_prepare_v2(db.get(), sql, -1, &statement, nullptr) != SQLITE_OK) {
             result.error = QStringLiteral("Unsupported or unreadable OneLibrary schema: %1")
-                               .arg(QString::fromUtf8(sqlite3_errmsg(db.get())));
+                               .arg(QString::fromUtf8(api.sqlite3_errmsg(db.get())));
         }
-        return Statement(statement, sqlite3_finalize);
+        return Statement(statement, api.sqlite3_finalize);
     };
-    auto text = [](sqlite3_stmt* row, int column) {
-        const auto* value = sqlite3_column_text(row, column);
+    auto text = [&api](sqlite3_stmt* row, int column) {
+        const auto* value = api.sqlite3_column_text(row, column);
         return value ? QString::fromUtf8(reinterpret_cast<const char*>(value),
-                                         sqlite3_column_bytes(row, column)) : QString{};
+                                         api.sqlite3_column_bytes(row, column)) : QString{};
     };
     auto id = [&](sqlite3_stmt* row, int column, quint32& value, bool allowZero = false) {
-        const sqlite3_int64 number = sqlite3_column_int64(row, column);
-        if ((sqlite3_column_type(row, column) != SQLITE_INTEGER
-             && !(allowZero && sqlite3_column_type(row, column) == SQLITE_NULL))
+        const sqlite3_int64 number = api.sqlite3_column_int64(row, column);
+        if ((api.sqlite3_column_type(row, column) != SQLITE_INTEGER
+             && !(allowZero && api.sqlite3_column_type(row, column) == SQLITE_NULL))
             || number < (allowZero ? 0 : 1)
             || number > std::numeric_limits<quint32>::max()) {
             result.error = QStringLiteral("Invalid OneLibrary identifier or sequence number");
@@ -115,7 +179,7 @@ PdbReader::Result readModernIndex(const QString& path)
         if (status == SQLITE_DONE)
             return true;
         result.error = QStringLiteral("Error reading OneLibrary: %1")
-                           .arg(QString::fromUtf8(sqlite3_errmsg(db.get())));
+                           .arg(QString::fromUtf8(api.sqlite3_errmsg(db.get())));
         return false;
     };
 
@@ -143,7 +207,7 @@ PdbReader::Result readModernIndex(const QString& path)
     constexpr qsizetype maxRows = 1'000'000;
     QSet<quint32> trackIds;
     int status = SQLITE_OK;
-    while ((status = sqlite3_step(tracks.get())) == SQLITE_ROW) {
+    while ((status = api.sqlite3_step(tracks.get())) == SQLITE_ROW) {
         Track track;
         if (!id(tracks.get(), 0, track.id))
             return result;
@@ -158,10 +222,10 @@ PdbReader::Result readModernIndex(const QString& path)
         track.genre = text(tracks.get(), 4);
         track.key = text(tracks.get(), 5);
         track.comment = text(tracks.get(), 6);
-        track.bpm = sqlite3_column_double(tracks.get(), 7) / 100.0;
-        track.durationSec = sqlite3_column_double(tracks.get(), 8) / 1000.0;
-        track.bitrateKbps = sqlite3_column_int(tracks.get(), 9);
-        track.rating = sqlite3_column_int(tracks.get(), 10);
+        track.bpm = api.sqlite3_column_double(tracks.get(), 7) / 100.0;
+        track.durationSec = api.sqlite3_column_double(tracks.get(), 8) / 1000.0;
+        track.bitrateKbps = api.sqlite3_column_int(tracks.get(), 9);
+        track.rating = api.sqlite3_column_int(tracks.get(), 10);
         track.color = text(tracks.get(), 11);
         track.relativeAudioPath = text(tracks.get(), 12);
         track.relativeAnalysisPath = text(tracks.get(), 13);
@@ -176,7 +240,7 @@ PdbReader::Result readModernIndex(const QString& path)
         return result;
 
     QHash<quint32, qsizetype> playlistById;
-    while ((status = sqlite3_step(playlists.get())) == SQLITE_ROW) {
+    while ((status = api.sqlite3_step(playlists.get())) == SQLITE_ROW) {
         Playlist playlist;
         quint32 attribute = 0;
         if (!id(playlists.get(), 0, playlist.id)
@@ -202,7 +266,7 @@ PdbReader::Result readModernIndex(const QString& path)
     if (!completed(status))
         return result;
     qsizetype entryCount = 0;
-    while ((status = sqlite3_step(entries.get())) == SQLITE_ROW) {
+    while ((status = api.sqlite3_step(entries.get())) == SQLITE_ROW) {
         quint32 playlistId = 0, trackId = 0, sequence = 0;
         if (!id(entries.get(), 0, playlistId) || !id(entries.get(), 1, trackId)
             || !id(entries.get(), 2, sequence, true))
@@ -370,7 +434,7 @@ AnalysisReader::Result DeviceSource::readAnalysisReadOnly(
 bool DeviceIdentityReader::isSupported()
 {
 #ifdef BROCKDJ_HAVE_SQLCIPHER
-    return true;
+    return sqlCipherApi() != nullptr;
 #else
     return false;
 #endif
@@ -422,30 +486,34 @@ DeviceIdentity DeviceIdentityReader::readReadOnly(const QString& mountPath) cons
         DeviceSource::resolveContainedPath(mountPath, identityDatabaseRelativePath());
     if (path.isEmpty() || !QFileInfo(path).isFile())
         return identity;
+    const SqlCipherApi* const loadedApi = sqlCipherApi();
+    if (!loadedApi)
+        return identity;
+    const SqlCipherApi& api = *loadedApi;
 
     sqlite3* db = nullptr;
     const int flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_URI | SQLITE_OPEN_NOMUTEX;
-    if (sqlite3_open_v2(readOnlyUri(path).toUtf8().constData(), &db, flags, nullptr)
+    if (api.sqlite3_open_v2(readOnlyUri(path).toUtf8().constData(), &db, flags, nullptr)
         != SQLITE_OK) {
-        sqlite3_close(db);
+        api.sqlite3_close(db);
         return identity;
     }
 
-    if (applyKey(db)) {
+    if (applyKey(api, db)) {
         sqlite3_stmt* statement = nullptr;
         // A wrong key or an unexpected schema fails right here at prepare time,
         // which is exactly the "not a device database we understand" case.
-        if (sqlite3_prepare_v2(db, kIdentityQuery, -1, &statement, nullptr) == SQLITE_OK) {
-            if (sqlite3_step(statement) == SQLITE_ROW) {
-                if (const unsigned char* name = sqlite3_column_text(statement, 0))
+        if (api.sqlite3_prepare_v2(db, kIdentityQuery, -1, &statement, nullptr) == SQLITE_OK) {
+            if (api.sqlite3_step(statement) == SQLITE_ROW) {
+                if (const unsigned char* name = api.sqlite3_column_text(statement, 0))
                     identity.name = QString::fromUtf8(reinterpret_cast<const char*>(name)).trimmed();
-                identity.rawColorType = sqlite3_column_int(statement, 1);
+                identity.rawColorType = api.sqlite3_column_int(statement, 1);
                 identity.color = colorFromType(identity.rawColorType);
             }
         }
-        sqlite3_finalize(statement);
+        api.sqlite3_finalize(statement);
     }
-    sqlite3_close(db);
+    api.sqlite3_close(db);
 #else
     Q_UNUSED(mountPath);
 #endif

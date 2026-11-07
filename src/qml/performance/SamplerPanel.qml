@@ -8,6 +8,7 @@ Rectangle {
     objectName: "samplerPanel"
     property var controller: typeof sampler !== "undefined" ? sampler : null
     property bool pageMode: false
+    property bool sequencerMode: false
     signal closeRequested()
     color: UiTheme.panel
     radius: 0
@@ -36,6 +37,12 @@ Rectangle {
                 Layout.fillWidth: true
                 spacing: UiTheme.px(6)
                 Text { text: "SAMPLER"; color: UiTheme.textPrimary; font.bold: true; font.pixelSize: root.pageMode ? 20 : 14 }
+                Button {
+                    touchTarget: true
+                    objectName: "samplerSequencerView"
+                    text: root.sequencerMode ? "PADS" : "SEQUENCER"
+                    onClicked: root.sequencerMode = !root.sequencerMode
+                }
                 Repeater {
                     model: 4
                     Button { touchTarget: true;
@@ -65,6 +72,7 @@ Rectangle {
             RowLayout {
                 id: samplerControls
                 Layout.fillWidth: true
+                visible: !root.sequencerMode
                 spacing: UiTheme.px(10)
                 Text { text: "LEVEL"; color: UiTheme.textSecondary; font.pixelSize: 12 }
                 Slider {
@@ -94,9 +102,112 @@ Rectangle {
                 Item { Layout.fillWidth: true }
             }
             Rectangle { id: samplerDivider; Layout.fillWidth: true; implicitHeight: 1; color: UiTheme.separatorSubtle }
+            ColumnLayout {
+                id: sequencerControls
+                Layout.fillWidth: true
+                visible: root.sequencerMode
+                spacing: UiTheme.px(12)
+                RowLayout {
+                    Layout.fillWidth: true
+                    Button {
+                        objectName: "samplerSequencerTransport"
+                        touchTarget: true
+                        checked: root.controller ? root.controller.sequencerEnabled : false
+                        text: checked ? "STOP" : "PLAY"
+                        accentColor: checked ? UiTheme.error : UiTheme.orange
+                        onClicked: if (root.controller) root.controller.sequencerEnabled = !root.controller.sequencerEnabled
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: root.controller
+                            ? root.controller.clockSource + " · " + root.controller.bpm.toFixed(1) + " BPM · 16 STEPS"
+                            : "INTERNAL · 120 BPM · 16 STEPS"
+                        color: UiTheme.textSecondary
+                        font.pixelSize: 12
+                        elide: Text.ElideRight
+                    }
+                    Text { text: "SWING"; color: UiTheme.textSecondary; font.pixelSize: 12 }
+                    Slider {
+                        objectName: "samplerSequencerSwing"
+                        Layout.preferredWidth: UiTheme.px(140)
+                        Layout.minimumWidth: UiTheme.px(60)
+                        from: 0; to: 0.5; stepSize: 0.01
+                        value: root.controller ? root.controller.sequencerSwing : 0
+                        onMoved: if (root.controller) root.controller.sequencerSwing = value
+                    }
+                    Text {
+                        text: Math.round((root.controller ? root.controller.sequencerSwing : 0) * 100) + "%"
+                        color: UiTheme.textPrimary
+                        font.family: UiTheme.numericFontFamily
+                        Layout.preferredWidth: UiTheme.px(36)
+                    }
+                    Button {
+                        objectName: "samplerSequencerClear"
+                        touchTarget: true
+                        text: "CLEAR"
+                        onClicked: if (root.controller) root.controller.clearSequencerPattern()
+                    }
+                }
+                Repeater {
+                    model: 8
+                    RowLayout {
+                        id: sequenceTrack
+                        required property int index
+                        Layout.fillWidth: true
+                        spacing: UiTheme.px(3)
+                        readonly property int mask: Number(root.controller && root.controller.sequencerPattern
+                            ? root.controller.sequencerPattern[index] : 0)
+                        Text {
+                            Layout.preferredWidth: UiTheme.px(90)
+                            Layout.minimumWidth: UiTheme.px(48)
+                            text: {
+                                const entry = root.entries[sequenceTrack.index] || ({})
+                                return entry.loaded ? entry.name : "PAD " + (sequenceTrack.index + 1)
+                            }
+                            color: UiTheme.textPrimary
+                            font.pixelSize: 11
+                            elide: Text.ElideRight
+                        }
+                        Repeater {
+                            model: 16
+                            Button {
+                                required property int index
+                                objectName: "samplerSequencerStep" + sequenceTrack.index + "_" + index
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: UiTheme.px(22)
+                                Layout.preferredWidth: UiTheme.px(34)
+                                Layout.minimumHeight: UiTheme.touchTarget
+                                checkable: true
+                                checked: !!(sequenceTrack.mask & (1 << index))
+                                text: index % 4 === 0 ? (index + 1).toString() : ""
+                                font.pixelSize: 10
+                                background: Rectangle {
+                                    color: parent.checked ? UiTheme.orange
+                                        : (root.controller && root.controller.sequencerStep === index
+                                            ? UiTheme.panelRaised : UiTheme.panelDeep)
+                                    border.width: parent.checked || (root.controller && root.controller.sequencerStep === index) ? 2 : 1
+                                    border.color: parent.checked ? UiTheme.orange : UiTheme.borderSubtle
+                                    radius: 0
+                                }
+                                onClicked: if (root.controller)
+                                    root.controller.setSequencerStep(sequenceTrack.index, index,
+                                        !(sequenceTrack.mask & (1 << index)))
+                            }
+                        }
+                    }
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: "Each bank has its own 8-track, 16-step pattern. Sample hits follow the active deck or Link clock."
+                    color: UiTheme.textMuted
+                    font.pixelSize: 11
+                    wrapMode: Text.Wrap
+                }
+            }
             GridLayout {
                 id: samplerPads
                 Layout.fillWidth: true
+                visible: !root.sequencerMode
                 columns: 4
                 columnSpacing: UiTheme.px(8); rowSpacing: UiTheme.px(8)
                 Repeater {

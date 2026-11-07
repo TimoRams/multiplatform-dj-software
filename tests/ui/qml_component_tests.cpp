@@ -3800,6 +3800,10 @@ bool samplerAndRecordingRuntimeTests(const std::string& header)
             property real gain: 0.72
             property bool cue: false
             property int quantize: 1
+            property bool sequencerEnabled: false
+            property int sequencerStep: 0
+            property real sequencerSwing: 0
+            property var sequencerPattern: [0,0,0,0,0,0,0,0]
             property string clockSource: "INTERNAL"
             property real bpm: 120
             property string error: ""
@@ -3827,6 +3831,12 @@ bool samplerAndRecordingRuntimeTests(const std::string& header)
             signal editorFinished(double session, bool success, string error)
             property var slots: [{name:"Airhorn", color:"#e0a344", loaded:true, state:"READY", duration:2, start:0, end:2, gain:1, waveform:[0.2,0.5,0.8]}, {}, {}, {}, {}, {}, {}, {}]
             function trigger(pad) { triggers++ }
+            function setSequencerStep(pad,step,enabled) {
+                const next=sequencerPattern.slice()
+                next[pad] = enabled ? (next[pad] | (1 << step)) : (next[pad] & ~(1 << step))
+                sequencerPattern=next
+            }
+            function clearSequencerPattern() { sequencerPattern=[0,0,0,0,0,0,0,0] }
             function stopAll() { stops++ }
             function stop(pad) { padStops++ }
             function playFixture() { const next=slots.slice(); next[0]=Object.assign({},slots[0],{state:"PLAYING",transportState:"PLAYING"}); slots=next }
@@ -3891,6 +3901,19 @@ bool samplerAndRecordingRuntimeTests(const std::string& header)
             window.grabWindow().save(QDir(qEnvironmentVariable("BROCKDJ_TEST_CAPTURE_DIR")).filePath("sampler-page.png"));
         }
     }
+    ok &= clickItem(window,findVisualItem(panelItem,"samplerSequencerView"),"sampler opens its dedicated step-sequencer view");
+    for (const QSize size : {QSize(800,600),QSize(1280,800),QSize(1920,1080)}) {
+        window.resize(size); panelItem->setSize(QSizeF(size.width(),size.height()-48)); QCoreApplication::processEvents();
+        auto* step = findVisualItem(panelItem,"samplerSequencerStep0_0");
+        ok &= require(step && step->height() >= 44 && step->mapRectToScene(step->boundingRect()).right() <= size.width(),
+            "sequencer steps retain touch targets and fit the sampler workspace");
+        if (step && size.width() == 800) ok &= clickItem(window,step,"sequencer step toggles from the grid");
+        ok &= require(controller->property("sequencerPattern").toList().first().toInt() == 1,
+            "sequencer step control updates the active sampler pattern");
+    }
+    ok &= clickItem(window,findVisualItem(panelItem,"samplerSequencerTransport"),"sampler sequencer transport is reachable");
+    ok &= require(controller->property("sequencerEnabled").toBool(), "sequencer play button starts the pattern");
+    ok &= clickItem(window,findVisualItem(panelItem,"samplerSequencerView"),"sampler returns from sequencer to pads");
     QMetaObject::invokeMethod(controller.get(),"playFixture"); QCoreApplication::processEvents();
     const int beforeStop = controller->property("triggers").toInt();
     ok &= clickItem(window,findVisualItem(panelItem,"samplerStop0"),"a running pad has a dedicated stop action");

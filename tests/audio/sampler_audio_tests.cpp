@@ -136,6 +136,47 @@ int main() {
             "stopping a queued pad removes its countdown");
     }
 
+    {
+        SamplerAudioEngine sequencer;
+        sequencer.prepare(128, 48000);
+        auto kick = sample(false), hat = sample(false);
+        for (int ch = 0; ch < 2; ++ch) {
+            juce::FloatVectorOperations::fill(kick->pcm.getWritePointer(ch), 0.2f, kick->pcm.getNumSamples());
+            juce::FloatVectorOperations::fill(hat->pcm.getWritePointer(ch), 0.1f, hat->pcm.getNumSamples());
+        }
+        sequencer.install(0, std::move(kick));
+        sequencer.install(1, std::move(hat));
+        sequencer.publishClock({120, 0, 0, 20});
+        sequencer.setSequencerPattern(0, 0, 1u << 0);
+        sequencer.setSequencerPattern(0, 1, 1u << 1);
+        sequencer.setSequencerSwing(0.5f);
+        sequencer.setSequencerEnabled(true);
+        juce::AudioBuffer<float> bus(2, 128), phones(2, 128);
+        double callbackTime = 0;
+        auto renderSequence = [&] {
+            bus.clear(); phones.clear(); sequencer.render(bus, phones, 128, callbackTime);
+            callbackTime += 128.0 / 48000;
+        };
+        renderSequence();
+        require(sequencer.state(0) == SamplerAudioEngine::Playing,
+            "sequencer starts the first enabled sample step on the audio thread");
+        for (int i = 0; i < 56; ++i) renderSequence();
+        require(sequencer.state(1) == SamplerAudioEngine::Pending,
+            "swing delays an odd sixteenth step while it waits on the audio clock");
+        for (int i = 0; i < 20; ++i) renderSequence();
+        require(sequencer.state(1) == SamplerAudioEngine::Playing,
+            "swing-timed sample step starts at its scheduled beat");
+        require(sequencer.sequencerStep() == 1,
+            "sequencer publishes its current 16-step playhead");
+        sequencer.setSequencerEnabled(false);
+        sequencer.stopAll();
+        for (int i = 0; i < 4; ++i) renderSequence();
+        require(sequencer.state(0) == SamplerAudioEngine::Ready
+            && sequencer.state(1) == SamplerAudioEngine::Ready,
+            "sequencer stop and stop-all retire triggered voices");
+        sequencer.release();
+    }
+
     // Exercise the actual shared pitch-preserving pipeline with resident PCM.
     engine.install(0, sample(true, true, 44100));
     const double syncStartTime = time;

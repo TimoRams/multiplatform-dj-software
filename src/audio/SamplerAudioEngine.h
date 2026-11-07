@@ -29,7 +29,7 @@ struct SamplerBeatClock {
 
 class SamplerAudioEngine final {
 public:
-    static constexpr int kSlots = 32, kVoices = 8;
+    static constexpr int kSlots = 32, kVoices = 8, kSequenceSteps = 16;
     enum State { Empty, Ready, Pending, Playing, Busy };
     struct PlaybackSnapshot {
         bool valid = false;
@@ -54,6 +54,11 @@ public:
     bool trigger(int slot, int quantizeBeats);
     void stop(int slot);
     void stopAll();
+    void setSequencerPattern(int bank, int track, std::uint16_t steps) noexcept;
+    void setSequencerBank(int bank) noexcept;
+    void setSequencerEnabled(bool enabled) noexcept;
+    void setSequencerSwing(float swing) noexcept;
+    int sequencerStep() const noexcept { return m_sequencerStep.load(std::memory_order_relaxed); }
     void publishClock(const SamplerBeatClock& clock) noexcept;
     void setGain(float gain) noexcept;
     void setCue(bool cue) noexcept { m_cue.store(cue); }
@@ -83,7 +88,8 @@ private:
     void openGate() noexcept;
     SamplerBeatClock clockSnapshot() noexcept;
     void retire(Voice& voice) noexcept;
-    void start(int slot, int quantize, double beat, const SamplerBeatClock& clock) noexcept;
+    void start(int slot, int quantize, double beat, const SamplerBeatClock& clock,
+               bool sequenced = false, double scheduledBeat = 0) noexcept;
     std::array<std::unique_ptr<SamplerSample>, kSlots> m_samples;
     std::array<std::unique_ptr<Voice>, kVoices> m_voices;
     std::array<std::atomic<int>, kSlots> m_states {};
@@ -97,6 +103,13 @@ private:
     int m_previewTailRemaining = 0;
     std::uint64_t m_previewGeneration = 0;
     std::array<std::atomic<std::uint64_t>, kSlots> m_generations {};
+    std::array<std::atomic<std::uint16_t>, kSlots> m_sequencePatterns {};
+    std::atomic<int> m_sequenceBank {0}, m_sequencerStep {0};
+    std::atomic<bool> m_sequencerEnabled {false};
+    std::atomic<float> m_sequencerSwing {0};
+    std::int64_t m_lastSequenceStep = -1;
+    int m_lastSequenceBank = 0;
+    bool m_sequenceWasEnabled = false;
     std::atomic<bool> m_gate {false};
     std::atomic<unsigned> m_readers {0};
     std::array<Command, 256> m_commands {};

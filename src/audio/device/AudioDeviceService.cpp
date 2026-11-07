@@ -158,6 +158,21 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
         return {};
     }
 
+#if JUCE_LINUX || JUCE_BSD
+    const std::optional<QSet<QString>> jackAudioClients = jackBackendRequested
+        ? readJackAudioPlaybackClients()
+        : std::nullopt;
+    if (jackAudioClients.has_value() && !sanitizedOutput.isEmpty()
+        && !jackAudioClients->contains(sanitizedOutput)) {
+        manager.closeAudioDevice();
+        const QString message = QStringLiteral(
+            "JACK client \"%1\" has no audio playback ports. Choose an audio output instead.")
+            .arg(sanitizedOutput);
+        qWarning() << "[AudioDeviceService]" << message;
+        return std::unexpected(message);
+    }
+#endif
+
     if (!jackBackendRequested && !sanitizedOutput.isEmpty() && type != nullptr) {
         type->scanForDevices();
         const auto names = type->getDeviceNames(false);
@@ -216,8 +231,16 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
             if (type != nullptr) {
                 type->scanForDevices();
                 const auto names = type->getDeviceNames(false);
-                if (names.size() > 0)
-                    setup.outputDeviceName = names[0];
+                for (const auto& name : names) {
+#if JUCE_LINUX || JUCE_BSD
+                    if (jackAudioClients.has_value()
+                        && !jackAudioClients->contains(QString::fromUtf8(name.toRawUTF8()))) {
+                        continue;
+                    }
+#endif
+                    setup.outputDeviceName = name;
+                    break;
+                }
             }
 
             if (setup.outputDeviceName.isEmpty()) {
@@ -318,6 +341,15 @@ std::expected<void, QString> AudioDeviceService::applySettingsExpected(const QSt
             errorText = QStringLiteral("Audio device setup failed. Output is silent; no fallback was used.");
         if (jackBackendRequested && !errorText.contains(QStringLiteral("JACK"), Qt::CaseInsensitive))
             errorText = QStringLiteral("JACK device failed to open. Is the JACK server running?");
+#if JUCE_LINUX || JUCE_BSD
+        if (!jackBackendRequested && requestedType.contains(QStringLiteral("alsa"), Qt::CaseInsensitive)
+            && readBusyAlsaOutputNames().contains(sanitizedOutput)) {
+            errorText = QStringLiteral(
+                "ALSA device \"%1\" is busy (in use by PipeWire/PulseAudio). "
+                "Select \"PipeWire Sound Server\" / the default ALSA output, or use the JACK backend.")
+                .arg(sanitizedOutput);
+        }
+#endif
         return std::unexpected(errorText);
     }
 
@@ -475,12 +507,32 @@ QStringList AudioDeviceService::availableOutputDevices(const QString& deviceType
     const QString selectedTypeLower = selectedType.toLower();
     QSet<QString> seen;
 
+#if JUCE_LINUX || JUCE_BSD
+    const bool alsaType = selectedTypeLower.contains(QStringLiteral("alsa"));
+    const bool jackType = selectedTypeLower.contains(QStringLiteral("jack"));
+    const QSet<QString> busyAlsaOutputs = alsaType ? readBusyAlsaOutputNames() : QSet<QString>{};
+    const std::optional<QSet<QString>> jackAudioClients = jackType
+        ? readJackAudioPlaybackClients()
+        : std::nullopt;
+#endif
+
     for (const auto& name : type->getDeviceNames(false)) {
         const QString outputName = QString::fromUtf8(name.toRawUTF8()).trimmed();
         if (outputName.isEmpty() || seen.contains(outputName))
             continue;
 
         seen.insert(outputName);
+
+#if JUCE_LINUX || JUCE_BSD
+        // Unusable endpoints are excluded even from the unfiltered fallback
+        // list. The device this service currently holds is busy because of us,
+        // so it stays selectable.
+        if (alsaType && outputName != currentOutput && busyAlsaOutputs.contains(outputName))
+            continue;
+        if (jackType && jackAudioClients.has_value() && !jackAudioClients->contains(outputName))
+            continue;
+#endif
+
         allDevices.push_back(outputName);
 
         bool keep = true;
@@ -499,7 +551,7 @@ QStringList AudioDeviceService::availableOutputDevices(const QString& deviceType
                  || lowerName.contains(QStringLiteral("internal"))
                  || lowerName.contains(QStringLiteral("loopback"))
                  || lowerName.startsWith(QStringLiteral("lavaplayer"))
-                 || lowerName.startsWith(QStringLiteral("Combined"))
+                 || lowerName.startsWith(QStringLiteral("combined"))
                  || lowerName == QStringLiteral("null"));
 
         if (!keep && (lowerName == QStringLiteral("default")
@@ -513,9 +565,10 @@ QStringList AudioDeviceService::availableOutputDevices(const QString& deviceType
                      || selectedTypeLower.contains(QStringLiteral("pulse")))) {
             keep = !lowerName.contains(QStringLiteral("@"))
                 && !lowerName.startsWith(QStringLiteral("builtin_"))
-                && !lowerName.contains(QStringLiteral(":CARD="))
-                && !lowerName.contains(QStringLiteral(":DEV="));
+                && !lowerName.contains(QStringLiteral(":card="))
+                && !lowerName.contains(QStringLiteral(":dev="));
         }
+
 #endif
 
         if (keep)

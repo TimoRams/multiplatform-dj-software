@@ -164,6 +164,9 @@ bool testLiveDeckFeatures(QString& error)
             sampler.setBank(1); sampler.loadFile(2, sourceSample, 0, 0.5);
             require(wait([&] { return sampler.slotList()[2].toMap().value("loaded").toBool(); }), "second sampler bank did not load");
             sampler.setBank(0); sampler.setGain(0.63); sampler.setQuantize(4);
+            sampler.setSequencerStep(0,0,true);
+            sampler.setSequencerStep(0,4,true);
+            sampler.setSequencerSwing(0.23);
             require(QFile::remove(sourceSample), "cannot remove original sample fixture");
         }
         {
@@ -172,7 +175,10 @@ bool testLiveDeckFeatures(QString& error)
             const auto entry = restored.slotList().first().toMap();
             require(entry.value("name") == "Edited loop" && std::abs(entry.value("start").toDouble() - 0.1) < 0.001
                 && std::abs(entry.value("end").toDouble() - 0.9) < 0.001 && restored.quantize() == 4
-                && std::abs(restored.gain() - 0.63) < 0.001, "sampler metadata/range/settings did not persist");
+                && std::abs(restored.gain() - 0.63) < 0.001
+                && restored.sequencerPattern().first().toInt() == 17
+                && std::abs(restored.sequencerSwing() - 0.23) < 0.001,
+                "sampler metadata/range/settings/sequencer pattern did not persist");
             require(wait([&] { return restored.slotList()[3].toMap().value("loaded").toBool(); })
                 && restored.slotList()[3].toMap().value("name") == "Editor loop", "late cancelled editor result overwrote the persisted slot");
             restored.setBank(1);

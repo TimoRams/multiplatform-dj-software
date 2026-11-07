@@ -31,6 +31,8 @@ The project is still under active development, so bugs, unfinished features, exp
 * Stereo 24-bit WAV set recording with track marks and bounded background writing
 * Independent sampler: four banks of eight slots, one-shots, quantized sync loops,
   deck-loop/beat capture, local sample storage and pre-fader headphone cue
+* Sample sequencer: 16 beat-synced steps across eight sample tracks per bank, with
+  adjustable swing and persistent patterns
 
 The interface uses angular controls and subdued, translucent slate panels.
 In **Settings > DJ / Sync > Playhead position**, the white scrolling-waveform

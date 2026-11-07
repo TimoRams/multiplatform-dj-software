@@ -56,6 +56,10 @@ SamplerController::SamplerController(SamplerAudioEngine& audio, ControlClock& cl
     connect(&m_gainSaveTimer, &QTimer::timeout, this, [this] { save(); });
     m_registration = clock.registerCallbacks(std::move(callbacks));
     restore();
+    m_audio.setSequencerBank(m_bank);
+    m_audio.setSequencerSwing(static_cast<float>(m_sequencerSwing));
+    for (int slot = 0; slot < static_cast<int>(m_patterns.size()); ++slot)
+        m_audio.setSequencerPattern(slot / 8, slot % 8, m_patterns[slot]);
 }
 SamplerController::~SamplerController() { shutdown(); }
 void SamplerController::shutdown() {
@@ -101,9 +105,15 @@ QVariantList SamplerController::slotList() const {
     }
     return result;
 }
+QVariantList SamplerController::sequencerPattern() const {
+    QVariantList result;
+    for (int track = 0; track < 8; ++track)
+        result.append(static_cast<int>(m_patterns[m_bank * 8 + track]));
+    return result;
+}
 void SamplerController::setBank(int bank) {
     bank = std::clamp(bank, 0, 3); if (bank == m_bank) return;
-    m_bank = bank; save(); emit changed(); emit playbackChanged();
+    m_bank = bank; m_audio.setSequencerBank(bank); save(); emit changed(); emit playbackChanged();
 }
 void SamplerController::setSelectedSlot(int index) { if (index >= 0 && index < 8) { m_selectedSlot = index; emit changed(); } }
 void SamplerController::setGain(double gain) {
@@ -127,6 +137,45 @@ void SamplerController::setCue(bool enabled) {
 void SamplerController::setQuantize(int beats) {
     if (beats != 0 && beats != 1 && beats != 4) return;
     m_quantize = beats; save(); emit changed();
+}
+void SamplerController::setSequencerEnabled(bool enabled) {
+    if (m_sequencerEnabled == enabled) return;
+    m_sequencerEnabled = enabled;
+    m_audio.setSequencerEnabled(enabled);
+    emit changed();
+}
+void SamplerController::setSequencerSwing(double swing) {
+    if (!std::isfinite(swing)) return;
+    swing = std::clamp(swing, 0.0, 0.5);
+    if (m_sequencerSwing == swing) return;
+    const double previous = m_sequencerSwing;
+    m_sequencerSwing = swing;
+    m_audio.setSequencerSwing(static_cast<float>(swing));
+    if (!save()) {
+        m_sequencerSwing = previous;
+        m_audio.setSequencerSwing(static_cast<float>(previous));
+        return;
+    }
+    emit changed();
+}
+void SamplerController::setSequencerStep(int pad, int step, bool enabled) {
+    if (pad < 0 || pad >= 8 || step < 0 || step >= SamplerAudioEngine::kSequenceSteps) return;
+    const int slot = m_bank * 8 + pad;
+    const auto previous = m_patterns[slot];
+    const auto bit = static_cast<std::uint16_t>(1u << step);
+    m_patterns[slot] = enabled ? static_cast<std::uint16_t>(previous | bit)
+                               : static_cast<std::uint16_t>(previous & ~bit);
+    if (!save()) { m_patterns[slot] = previous; return; }
+    m_audio.setSequencerPattern(m_bank, pad, m_patterns[slot]);
+    emit changed();
+}
+void SamplerController::clearSequencerPattern() {
+    const auto previous = m_patterns;
+    for (int track = 0; track < 8; ++track) m_patterns[m_bank * 8 + track] = 0;
+    if (!save()) { m_patterns = previous; return; }
+    for (int track = 0; track < 8; ++track)
+        m_audio.setSequencerPattern(m_bank, track, 0);
+    emit changed();
 }
 void SamplerController::trigger(int pad) {
     if (pad < 0 || pad >= 8) return;
@@ -307,7 +356,10 @@ bool SamplerController::save() {
         {"gain",s.gain},{"bpm",s.bpm},{"loop",s.loop},{"sync",s.sync},{"start",s.start},{"end",s.end}});
     if (!QDir().mkpath(m_directory)) { fail("Cannot create sampler storage"); return false; }
     QSaveFile file(QDir(m_directory).filePath("banks.json"));
-    const auto data = QJsonDocument(QJsonObject{{"version",1},{"bank",m_bank},{"gain",m_gain},{"quantize",m_quantize},{"slots",entries}}).toJson();
+    QJsonArray patterns;
+    for (const auto mask : m_patterns) patterns.append(static_cast<int>(mask));
+    const auto data = QJsonDocument(QJsonObject{{"version",1},{"bank",m_bank},{"gain",m_gain},
+        {"quantize",m_quantize},{"swing",m_sequencerSwing},{"patterns",patterns},{"slots",entries}}).toJson();
     if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit()) { fail("Cannot save sampler banks"); return false; }
     return true;
 }
@@ -320,6 +372,10 @@ void SamplerController::restore() {
     m_bank = std::clamp(root["bank"].toInt(), 0, 3);
     m_gain = std::clamp(root["gain"].toDouble(0.72), 0.0, 1.5); m_audio.setGain(static_cast<float>(m_gain));
     m_quantize = root["quantize"].toInt(1); if (m_quantize != 0 && m_quantize != 1 && m_quantize != 4) m_quantize = 1;
+    m_sequencerSwing = std::clamp(root["swing"].toDouble(0), 0.0, 0.5);
+    const auto patterns = root["patterns"].toArray();
+    for (int i = 0; i < std::min(static_cast<int>(m_patterns.size()), static_cast<int>(patterns.size())); ++i)
+        m_patterns[i] = static_cast<std::uint16_t>(std::clamp(patterns[i].toInt(), 0, 65535));
     const auto entries = root["slots"].toArray();
     for (int i = 0; i < std::min(32, static_cast<int>(entries.size())); ++i) {
         const auto object = entries[i].toObject(); Slot s;
