@@ -58,15 +58,14 @@ SamplerController::SamplerController(SamplerAudioEngine& audio, ControlClock& cl
     restore();
     m_audio.setSequencerBank(m_bank);
     m_audio.setSequencerSwing(static_cast<float>(m_sequencerSwing));
-    for (int slot = 0; slot < static_cast<int>(m_patterns.size()); ++slot)
-        m_audio.setSequencerPattern(slot / 8, slot % 8, m_patterns[slot]);
+    for (int bank = 0; bank < 4; ++bank) publishSequencerBank(bank);
 }
 SamplerController::~SamplerController() { shutdown(); }
 void SamplerController::shutdown() {
     if (m_stopped) return;
     cancelEditor(m_editorSession);
     if (m_gainSaveTimer.isActive()) { m_gainSaveTimer.stop(); save(); }
-    m_stopped = true; m_registration.reset(); m_audio.stopAll(); m_audio.stopPreview();
+    m_stopped = true; m_registration.reset(); m_audio.setSequencerEnabled(false); m_audio.stopAll(); m_audio.stopPreview();
     for (auto* job : m_jobs) {
         disconnect(job, nullptr, this, nullptr);
         job->waitForFinished();
@@ -107,13 +106,43 @@ QVariantList SamplerController::slotList() const {
 }
 QVariantList SamplerController::sequencerPattern() const {
     QVariantList result;
-    for (int track = 0; track < 8; ++track)
-        result.append(static_cast<int>(m_patterns[m_bank * 8 + track]));
+    for (int track = 0; track < 8; ++track) {
+        int mask = 0;
+        for (int step = 0; step < 16; ++step)
+            if (m_patterns[m_bank * 8 + track][step]) mask |= 1 << step;
+        result.append(mask);
+    }
     return result;
+}
+QVariantList SamplerController::sequencerSteps() const {
+    QVariantList result;
+    for (int track = 0; track < 8; ++track) {
+        QVariantList steps;
+        for (auto velocity : m_patterns[m_bank * 8 + track]) steps.append(velocity);
+        result.append(QVariant(steps));
+    }
+    return result;
+}
+QVariantList SamplerController::sequencerTracks() const {
+    QVariantList result;
+    for (int track = 0; track < 8; ++track)
+        result.append(QVariantMap{{"muted", bool(m_patternMuted[m_bank] & (1 << track))},
+                                 {"solo", bool(m_patternSolo[m_bank] & (1 << track))}});
+    return result;
+}
+void SamplerController::publishSequencerBank(int bank) {
+    m_audio.setSequencerLength(bank, m_patternLengths[bank]);
+    m_audio.setSequencerTracks(bank, m_patternMuted[bank], m_patternSolo[bank]);
+    for (int track = 0; track < 8; ++track)
+        for (int step = 0; step < SamplerAudioEngine::kSequenceSteps; ++step)
+            m_audio.setSequencerVelocity(bank, track, step, m_patterns[bank * 8 + track][step]);
 }
 void SamplerController::setBank(int bank) {
     bank = std::clamp(bank, 0, 3); if (bank == m_bank) return;
-    m_bank = bank; m_audio.setSequencerBank(bank); save(); emit changed(); emit playbackChanged();
+    const int previous = m_bank;
+    m_bank = bank;
+    if (!save()) { m_bank = previous; emit changed(); emit playbackChanged(); return; }
+    m_audio.setSequencerBank(bank); emit changed(); emit playbackChanged();
 }
 void SamplerController::setSelectedSlot(int index) { if (index >= 0 && index < 8) { m_selectedSlot = index; emit changed(); } }
 void SamplerController::setGain(double gain) {
@@ -154,27 +183,76 @@ void SamplerController::setSequencerSwing(double swing) {
     if (!save()) {
         m_sequencerSwing = previous;
         m_audio.setSequencerSwing(static_cast<float>(previous));
+        emit changed();
         return;
     }
     emit changed();
 }
 void SamplerController::setSequencerStep(int pad, int step, bool enabled) {
-    if (pad < 0 || pad >= 8 || step < 0 || step >= SamplerAudioEngine::kSequenceSteps) return;
-    const int slot = m_bank * 8 + pad;
-    const auto previous = m_patterns[slot];
-    const auto bit = static_cast<std::uint16_t>(1u << step);
-    m_patterns[slot] = enabled ? static_cast<std::uint16_t>(previous | bit)
-                               : static_cast<std::uint16_t>(previous & ~bit);
-    if (!save()) { m_patterns[slot] = previous; return; }
-    m_audio.setSequencerPattern(m_bank, pad, m_patterns[slot]);
+    setSequencerVelocity(pad, step, enabled ? 127 : 0);
+}
+void SamplerController::setSequencerVelocity(int pad, int step, int velocity) {
+    if (pad < 0 || pad >= 8 || step < 0 || step >= SamplerAudioEngine::kSequenceSteps
+        || velocity < 0 || velocity > 127) { fail("Invalid sequencer step or velocity"); return; }
+    auto& stored = m_patterns[m_bank * 8 + pad][step];
+    const auto previous = stored;
+    stored = static_cast<std::uint8_t>(velocity);
+    if (stored == previous) return;
+    if (!save()) { stored = previous; emit changed(); return; }
+    m_audio.setSequencerVelocity(m_bank, pad, step, velocity);
+    emit changed();
+}
+void SamplerController::setSequencerLength(int steps) {
+    if (steps < 16 || steps > 64 || steps % 16 != 0) { fail("Pattern length must be 16, 32, 48 or 64 steps"); return; }
+    const int previous = m_patternLengths[m_bank];
+    m_patternLengths[m_bank] = steps;
+    if (!save()) { m_patternLengths[m_bank] = previous; emit changed(); return; }
+    m_audio.setSequencerLength(m_bank, steps);
+    emit changed();
+}
+void SamplerController::setSequencerTrackFlag(int pad, bool enabled, bool solo) {
+    if (pad < 0 || pad >= 8) { fail("Invalid sequencer track"); return; }
+    auto& mask = solo ? m_patternSolo[m_bank] : m_patternMuted[m_bank];
+    const auto previous = mask;
+    mask = static_cast<std::uint8_t>(enabled ? mask | (1 << pad) : mask & ~(1 << pad));
+    if (!save()) { mask = previous; emit changed(); return; }
+    m_audio.setSequencerTracks(m_bank, m_patternMuted[m_bank], m_patternSolo[m_bank]);
+    emit changed();
+}
+void SamplerController::setSequencerMuted(int pad, bool muted) { setSequencerTrackFlag(pad, muted, false); }
+void SamplerController::setSequencerSolo(int pad, bool solo) { setSequencerTrackFlag(pad, solo, true); }
+void SamplerController::setInternalBpm(double bpm) {
+    if (!std::isfinite(bpm) || bpm < 20 || bpm > 400) { fail("Internal tempo must be between 20 and 400 BPM"); return; }
+    const double previous = m_internalBpm;
+    m_internalBpm = bpm;
+    if (!save()) { m_internalBpm = previous; emit changed(); return; }
+    tick();
+    emit changed();
+}
+void SamplerController::copySequencerPattern(int destination) {
+    if (destination < 0 || destination >= 4 || destination == m_bank) { fail("Choose a different destination pattern"); return; }
+    const auto previous = m_patterns;
+    const int length = m_patternLengths[destination];
+    const auto muted = m_patternMuted[destination], solo = m_patternSolo[destination];
+    for (int track = 0; track < 8; ++track)
+        m_patterns[destination * 8 + track] = m_patterns[m_bank * 8 + track];
+    m_patternLengths[destination] = sequencerLength();
+    m_patternMuted[destination] = m_patternMuted[m_bank];
+    m_patternSolo[destination] = m_patternSolo[m_bank];
+    if (!save()) {
+        m_patterns = previous; m_patternLengths[destination] = length;
+        m_patternMuted[destination] = muted; m_patternSolo[destination] = solo;
+        emit changed();
+        return;
+    }
+    publishSequencerBank(destination);
     emit changed();
 }
 void SamplerController::clearSequencerPattern() {
     const auto previous = m_patterns;
-    for (int track = 0; track < 8; ++track) m_patterns[m_bank * 8 + track] = 0;
-    if (!save()) { m_patterns = previous; return; }
-    for (int track = 0; track < 8; ++track)
-        m_audio.setSequencerPattern(m_bank, track, 0);
+    for (int track = 0; track < 8; ++track) m_patterns[m_bank * 8 + track].fill(0);
+    if (!save()) { m_patterns = previous; emit changed(); return; }
+    publishSequencerBank(m_bank);
     emit changed();
 }
 void SamplerController::trigger(int pad) {
@@ -184,7 +262,7 @@ void SamplerController::trigger(int pad) {
     if (!m_audio.trigger(index, s.loop && s.sync ? m_quantize : 0)) fail("Sampler command queue full; try again");
 }
 void SamplerController::stop(int pad) { if (pad >= 0 && pad < 8) m_audio.stop(m_bank * 8 + pad); }
-void SamplerController::stopAll() { m_audio.stopAll(); }
+void SamplerController::stopAll() { setSequencerEnabled(false); m_audio.stopAll(); }
 void SamplerController::clear(int pad) {
     if (pad >= 0 && pad < 8) (void) clearSlot(m_bank * 8 + pad);
 }
@@ -357,9 +435,18 @@ bool SamplerController::save() {
     if (!QDir().mkpath(m_directory)) { fail("Cannot create sampler storage"); return false; }
     QSaveFile file(QDir(m_directory).filePath("banks.json"));
     QJsonArray patterns;
-    for (const auto mask : m_patterns) patterns.append(static_cast<int>(mask));
-    const auto data = QJsonDocument(QJsonObject{{"version",1},{"bank",m_bank},{"gain",m_gain},
-        {"quantize",m_quantize},{"swing",m_sequencerSwing},{"patterns",patterns},{"slots",entries}}).toJson();
+    for (const auto& track : m_patterns) {
+        QJsonArray steps;
+        for (auto velocity : track) steps.append(velocity);
+        patterns.append(steps);
+    }
+    QJsonArray lengths, muted, solo;
+    for (int bank = 0; bank < 4; ++bank) {
+        lengths.append(m_patternLengths[bank]); muted.append(m_patternMuted[bank]); solo.append(m_patternSolo[bank]);
+    }
+    const auto data = QJsonDocument(QJsonObject{{"version",2},{"bank",m_bank},{"gain",m_gain},
+        {"quantize",m_quantize},{"swing",m_sequencerSwing},{"patterns",patterns},{"slots",entries},
+        {"lengths",lengths},{"muted",muted},{"solo",solo},{"internalBpm",m_internalBpm}}).toJson();
     if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit()) { fail("Cannot save sampler banks"); return false; }
     return true;
 }
@@ -368,14 +455,58 @@ void SamplerController::restore() {
     if (!file.exists()) return;
     if (!file.open(QIODevice::ReadOnly)) { fail("Cannot read sampler banks"); return; }
     const auto root = QJsonDocument::fromJson(file.readAll()).object();
-    if (root["version"].toInt() != 1) { fail("Unsupported sampler bank format"); return; }
+    const int version = root["version"].toInt();
+    if (version != 1 && version != 2) { fail("Unsupported sampler bank format"); return; }
+    if (version == 2) {
+        const auto patterns = root["patterns"].toArray();
+        const auto lengths = root["lengths"].toArray(), muted = root["muted"].toArray(), solo = root["solo"].toArray();
+        bool valid = patterns.size() == 32 && lengths.size() == 4 && muted.size() == 4 && solo.size() == 4;
+        for (const auto& row : patterns) {
+            const auto steps = row.toArray();
+            valid &= steps.size() == 64;
+            for (const auto& value : steps)
+                valid &= value.isDouble() && value.toInt(-1) >= 0 && value.toInt(-1) <= 127
+                    && value.toDouble() == value.toInt(-1);
+        }
+        if (valid) {
+            for (int bank = 0; bank < 4; ++bank) {
+                const int length = lengths[bank].toInt(-1);
+                valid &= lengths[bank].isDouble() && lengths[bank].toDouble() == length
+                    && length >= 16 && length <= 64 && length % 16 == 0;
+                for (const auto value : {muted[bank], solo[bank]})
+                    valid &= value.isDouble() && value.toInt(-1) >= 0 && value.toInt(-1) <= 255
+                        && value.toDouble() == value.toInt(-1);
+            }
+        }
+        const double tempo = root["internalBpm"].toDouble(-1);
+        valid &= std::isfinite(tempo) && tempo >= 20 && tempo <= 400;
+        if (!valid) { fail("Invalid sequencer data in sampler banks"); return; }
+    }
     m_bank = std::clamp(root["bank"].toInt(), 0, 3);
     m_gain = std::clamp(root["gain"].toDouble(0.72), 0.0, 1.5); m_audio.setGain(static_cast<float>(m_gain));
     m_quantize = root["quantize"].toInt(1); if (m_quantize != 0 && m_quantize != 1 && m_quantize != 4) m_quantize = 1;
     m_sequencerSwing = std::clamp(root["swing"].toDouble(0), 0.0, 0.5);
     const auto patterns = root["patterns"].toArray();
-    for (int i = 0; i < std::min(static_cast<int>(m_patterns.size()), static_cast<int>(patterns.size())); ++i)
-        m_patterns[i] = static_cast<std::uint16_t>(std::clamp(patterns[i].toInt(), 0, 65535));
+    for (int i = 0; i < std::min(static_cast<int>(m_patterns.size()), static_cast<int>(patterns.size())); ++i) {
+        if (version == 1) {
+            const int mask = std::clamp(patterns[i].toInt(), 0, 65535);
+            for (int step = 0; step < 16; ++step) m_patterns[i][step] = mask & (1 << step) ? 127 : 0;
+        } else {
+            const auto steps = patterns[i].toArray();
+            for (int step = 0; step < std::min(64, static_cast<int>(steps.size())); ++step)
+                m_patterns[i][step] = static_cast<std::uint8_t>(std::clamp(steps[step].toInt(), 0, 127));
+        }
+    }
+    if (version == 2) {
+        const auto lengths = root["lengths"].toArray(), muted = root["muted"].toArray(), solo = root["solo"].toArray();
+        for (int bank = 0; bank < 4; ++bank) {
+            const int length = lengths.at(bank).toInt(16);
+            m_patternLengths[bank] = length >= 16 && length <= 64 && length % 16 == 0 ? length : 16;
+            m_patternMuted[bank] = static_cast<std::uint8_t>(std::clamp(muted.at(bank).toInt(), 0, 255));
+            m_patternSolo[bank] = static_cast<std::uint8_t>(std::clamp(solo.at(bank).toInt(), 0, 255));
+        }
+        m_internalBpm = std::clamp(root["internalBpm"].toDouble(120), 20.0, 400.0);
+    }
     const auto entries = root["slots"].toArray();
     for (int i = 0; i < std::min(32, static_cast<int>(entries.size())); ++i) {
         const auto object = entries[i].toObject(); Slot s;
@@ -392,7 +523,7 @@ void SamplerController::restore() {
 void SamplerController::tick() {
     if (m_stopped) return;
     const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
-    double bpm = m_clock.bpm, beat = m_clock.beat + (now - m_clock.timestamp) * bpm / 60;
+    double bpm = m_internalBpm, beat = m_clock.beat + (now - m_clock.timestamp) * m_clock.bpm / 60;
     QString source = "INTERNAL";
     int index = -1;
     const auto sync = m_sync ? m_sync->snapshot() : engine::sync::SyncCoordinatorSnapshot{};

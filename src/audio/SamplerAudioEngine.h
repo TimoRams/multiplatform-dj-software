@@ -29,7 +29,7 @@ struct SamplerBeatClock {
 
 class SamplerAudioEngine final {
 public:
-    static constexpr int kSlots = 32, kVoices = 8, kSequenceSteps = 16;
+    static constexpr int kSlots = 32, kVoices = 8, kSequenceSteps = 64;
     enum State { Empty, Ready, Pending, Playing, Busy };
     struct PlaybackSnapshot {
         bool valid = false;
@@ -58,7 +58,17 @@ public:
     void setSequencerBank(int bank) noexcept;
     void setSequencerEnabled(bool enabled) noexcept;
     void setSequencerSwing(float swing) noexcept;
+    void setSequencerVelocity(int bank, int track, int step, int velocity) noexcept;
+    void setSequencerLength(int bank, int steps) noexcept;
+    void setSequencerTracks(int bank, std::uint8_t muted, std::uint8_t solo) noexcept;
     int sequencerStep() const noexcept { return m_sequencerStep.load(std::memory_order_relaxed); }
+    bool sequencerRunning() const noexcept { return m_sequenceRunning.load(std::memory_order_acquire); }
+    int sequencerBank() const noexcept { return m_activeSequenceBank.load(std::memory_order_acquire); }
+    int sequencerPendingBank() const noexcept {
+        const int requested = m_sequenceBank.load(std::memory_order_acquire);
+        return sequencerRunning() && m_sequencerEnabled.load(std::memory_order_acquire)
+            && requested != sequencerBank() ? requested : -1;
+    }
     void publishClock(const SamplerBeatClock& clock) noexcept;
     void setGain(float gain) noexcept;
     void setCue(bool cue) noexcept { m_cue.store(cue); }
@@ -79,7 +89,10 @@ private:
                      double duration, double progress, double remaining = 0) noexcept;
     };
     void publishVoice(const Voice& voice, double beat) noexcept;
-    void renderPreview(juce::AudioBuffer<float>& cue, int count) noexcept;
+    void renderPreview(juce::AudioBuffer<float>& cue, int count, int outputOffset) noexcept;
+    void renderBlock(juce::AudioBuffer<float>& program, juce::AudioBuffer<float>& cue,
+                     int samples, double startTime, int outputOffset,
+                     const SamplerBeatClock& clock, bool sequencerEnabled) noexcept;
     struct ReadGuard;
     struct Source;
     struct Command { int slot = -1; int quantize = 0; bool stop = false; std::uint64_t generation = 0; };
@@ -89,7 +102,7 @@ private:
     SamplerBeatClock clockSnapshot() noexcept;
     void retire(Voice& voice) noexcept;
     void start(int slot, int quantize, double beat, const SamplerBeatClock& clock,
-               bool sequenced = false, double scheduledBeat = 0) noexcept;
+               bool sequenced = false, double scheduledBeat = 0, float velocity = 1) noexcept;
     std::array<std::unique_ptr<SamplerSample>, kSlots> m_samples;
     std::array<std::unique_ptr<Voice>, kVoices> m_voices;
     std::array<std::atomic<int>, kSlots> m_states {};
@@ -103,12 +116,18 @@ private:
     int m_previewTailRemaining = 0;
     std::uint64_t m_previewGeneration = 0;
     std::array<std::atomic<std::uint64_t>, kSlots> m_generations {};
-    std::array<std::atomic<std::uint16_t>, kSlots> m_sequencePatterns {};
+    std::array<std::array<std::atomic<std::uint8_t>, kSequenceSteps>, kSlots> m_sequenceVelocities {};
+    std::array<std::atomic<int>, 4> m_sequenceLengths;
+    std::array<std::atomic<std::uint16_t>, 4> m_sequenceTracks {};
     std::atomic<int> m_sequenceBank {0}, m_sequencerStep {0};
+    std::atomic<int> m_activeSequenceBank {0};
+    std::atomic<bool> m_sequenceRunning {false};
     std::atomic<bool> m_sequencerEnabled {false};
     std::atomic<float> m_sequencerSwing {0};
     std::int64_t m_lastSequenceStep = -1;
-    int m_lastSequenceBank = 0;
+    std::int64_t m_sequenceOriginStep = 0;
+    std::uint64_t m_sequenceClockGeneration = 0;
+    int m_activeSequenceLength = 16;
     bool m_sequenceWasEnabled = false;
     std::atomic<bool> m_gate {false};
     std::atomic<unsigned> m_readers {0};

@@ -3781,6 +3781,16 @@ bool samplerAndRecordingRuntimeTests(const std::string& header)
         qmlRegisterType(QUrl::fromLocalFile(directory + "components/" + name + ".qml"), "DJSoftware", 1, 0, name.toUtf8());
     qmlRegisterType(QUrl::fromLocalFile(directory + "performance/SamplerEditor.qml"), "DJSoftware", 1, 0, "SamplerEditor");
     QQmlEngine engine;
+    auto cursor = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            function hideCursor() {}
+            function restoreCursor() {}
+            function moveCursor(x,y) {}
+        }
+    )"), "sampler slider cursor fixture instantiates");
+    if (!cursor) return false;
+    engine.rootContext()->setContextProperty("cursorControl", cursor.get());
     auto recorder = createQmlObject(engine, QStringLiteral(R"(
         import QtQml
         QtObject {
@@ -3827,6 +3837,14 @@ bool samplerAndRecordingRuntimeTests(const std::string& header)
             property int sequencerStep: 0
             property real sequencerSwing: 0
             property var sequencerPattern: [0,0,0,0,0,0,0,0]
+            property var sequencerSteps: emptySteps()
+            property var sequencerTracks: [{muted:false,solo:false},{},{},{},{},{},{},{}]
+            property int sequencerLength: 16
+            property int sequencerActiveBank: 0
+            property int sequencerPendingBank: -1
+            property bool sequencerRunning: sequencerEnabled
+            property real internalBpm: 120
+            property int copiedPattern: -1
             property string clockSource: "INTERNAL"
             property real bpm: 120
             property string error: ""
@@ -3854,12 +3872,24 @@ bool samplerAndRecordingRuntimeTests(const std::string& header)
             signal editorFinished(double session, bool success, string error)
             property var slots: [{name:"Airhorn", color:"#e0a344", loaded:true, state:"READY", duration:2, start:0, end:2, gain:1, waveform:[0.2,0.5,0.8]}, {}, {}, {}, {}, {}, {}, {}]
             function trigger(pad) { triggers++ }
-            function setSequencerStep(pad,step,enabled) {
+            function emptySteps() {
+                const result=[]
+                for(let i=0;i<8;i++) { const row=[]; for(let j=0;j<64;j++) row.push(0); result.push(row) }
+                return result
+            }
+            function setSequencerStep(pad,step,enabled) { setSequencerVelocity(pad,step,enabled ? 127 : 0) }
+            function setSequencerVelocity(pad,step,velocity) {
+                const rows=sequencerSteps.slice()
+                rows[pad]=rows[pad].slice(); rows[pad][step]=velocity; sequencerSteps=rows
+                if(step >= 16) return
                 const next=sequencerPattern.slice()
-                next[pad] = enabled ? (next[pad] | (1 << step)) : (next[pad] & ~(1 << step))
+                next[pad] = velocity ? (next[pad] | (1 << step)) : (next[pad] & ~(1 << step))
                 sequencerPattern=next
             }
-            function clearSequencerPattern() { sequencerPattern=[0,0,0,0,0,0,0,0] }
+            function clearSequencerPattern() { sequencerPattern=[0,0,0,0,0,0,0,0]; sequencerSteps=emptySteps() }
+            function setSequencerMuted(pad,muted) { const rows=sequencerTracks.slice(); rows[pad]=Object.assign({},rows[pad],{muted:muted}); sequencerTracks=rows }
+            function setSequencerSolo(pad,solo) { const rows=sequencerTracks.slice(); rows[pad]=Object.assign({},rows[pad],{solo:solo}); sequencerTracks=rows }
+            function copySequencerPattern(destination) { copiedPattern=destination }
             function stopAll() { stops++ }
             function stop(pad) { padStops++ }
             function playFixture() { const next=slots.slice(); next[0]=Object.assign({},slots[0],{state:"PLAYING",transportState:"PLAYING"}); slots=next }
@@ -3936,6 +3966,62 @@ bool samplerAndRecordingRuntimeTests(const std::string& header)
     }
     ok &= clickItem(window,findVisualItem(panelItem,"samplerSequencerTransport"),"sampler sequencer transport is reachable");
     ok &= require(controller->property("sequencerEnabled").toBool(), "sequencer play button starts the pattern");
+    controller->setProperty("sequencerLength",64);
+    controller->setProperty("sequencerPendingBank",2);
+    controller->setProperty("sequencerActiveBank",0);
+    controller->setProperty("sequencerStep",0);
+    QCoreApplication::processEvents();
+    auto* runningBank = findVisualItem(panelItem,"samplerBank0");
+    auto* queuedBank = findVisualItem(panelItem,"samplerBank2");
+    ok &= require(runningBank->property("sequenceActive").toBool()
+        && queuedBank->property("sequenceQueued").toBool()
+        && !queuedBank->property("sequenceActive").toBool(),
+        "running and queued patterns stay distinct from the selected editing bank");
+    const double brightOpacity = runningBank->opacity();
+    controller->setProperty("sequencerStep",2); QCoreApplication::processEvents();
+    ok &= require(runningBank->opacity() < brightOpacity,
+        "the running pattern blinks from the audio playhead");
+    for (const QSize size : {QSize(800,600),QSize(1280,800),QSize(1920,1080)}) {
+        window.resize(size); panelItem->setSize(QSizeF(size.width(),size.height()-48)); QCoreApplication::processEvents();
+        auto* tempo = findVisualItem(panelItem,"samplerSequencerTempo");
+        auto* lastStep = findVisualItem(panelItem,"samplerSequencerStep0_15");
+        ok &= require(tempo && tempo->mapRectToScene(tempo->boundingRect()).right() <= size.width()
+            && lastStep && lastStep->mapRectToScene(lastStep->boundingRect()).right() <= size.width(),
+            "four-bar controls and sixteen visible steps fit all supported workspace widths");
+    }
+    ok &= clickItem(window,findVisualItem(panelItem,"samplerSequencerPage1"),"extended pattern page is reachable");
+    QCoreApplication::processEvents();
+    ok &= clickItem(window,findVisualItem(panelItem,"samplerSequencerStep0_16"),"step seventeen is editable");
+    ok &= require(controller->property("sequencerSteps").toList()[0].toList()[16].toInt() == 127,
+        "extended step grid does not rely on truncated JavaScript bit masks");
+    auto* velocity = findVisualItem(panelItem,"samplerSequencerVelocity");
+    ok &= require(velocity && velocity->isVisible(), "step velocity control is visible");
+    if (velocity) {
+        const QPoint start = velocity->mapToScene(velocity->boundingRect().center()).toPoint();
+        QTest::mousePress(&window,Qt::LeftButton,Qt::NoModifier,start);
+        QTest::mouseMove(&window,start - QPoint(40,0),20);
+        QTest::mouseRelease(&window,Qt::LeftButton,Qt::NoModifier,start - QPoint(40,0));
+        QCoreApplication::processEvents();
+    }
+    ok &= require(controller->property("sequencerSteps").toList()[0].toList()[16].toInt() < 127,
+        "velocity slider edits the selected extended step");
+    ok &= clickItem(window,findVisualItem(panelItem,"samplerSequencerMute0"),"track mute is reachable");
+    ok &= clickItem(window,findVisualItem(panelItem,"samplerSequencerSolo0"),"track solo is reachable");
+    ok &= require(controller->property("sequencerTracks").toList()[0].toMap()["muted"].toBool()
+        && controller->property("sequencerTracks").toList()[0].toMap()["solo"].toBool(),
+        "mute and solo controls update track settings");
+    ok &= clickItem(window,findVisualItem(panelItem,"samplerSequencerCopy"),"pattern copy opens a confirmation");
+    QCoreApplication::processEvents();
+    auto* copyDialog = panel->findChild<QObject*>("samplerSequencerCopyDialog");
+    ok &= require(copyDialog && QMetaObject::invokeMethod(copyDialog,"accept"),
+        "pattern copy confirmation can be accepted");
+    QCoreApplication::processEvents();
+    ok &= require(controller->property("copiedPattern").toInt() == 0,
+        "pattern copy excludes its source bank from destinations");
+    controller->setProperty("sequencerLength",16);
+    controller->setProperty("sequencerEnabled",false);
+    controller->setProperty("sequencerPendingBank",-1);
+    QCoreApplication::processEvents();
     ok &= clickItem(window,findVisualItem(panelItem,"samplerSequencerView"),"sampler returns from sequencer to pads");
     QMetaObject::invokeMethod(controller.get(),"playFixture"); QCoreApplication::processEvents();
     const int beforeStop = controller->property("triggers").toInt();

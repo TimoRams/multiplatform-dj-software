@@ -160,6 +160,16 @@ bool testLiveDeckFeatures(QString& error)
                 failed.clearEditor(session);
                 require(failed.slotList()[0].toMap().value("loaded").toBool(), "failed clear removed a playable sample");
                 failed.cancelEditor(session);
+                failed.setSequencerVelocity(0,63,55);
+                failed.setSequencerLength(64);
+                failed.setSequencerMuted(0,true);
+                failed.setInternalBpm(139);
+                failed.setBank(1);
+                require(failed.sequencerSteps()[0].toList()[63].toInt() == 0
+                    && failed.sequencerLength() == 16 && failed.bank() == 0
+                    && !failed.sequencerTracks()[0].toMap()["muted"].toBool()
+                    && failed.internalBpm() == 120 && !failed.error().isEmpty(),
+                    "failed sequencer persistence must retain prior patterns, bank and tempo");
             }
             sampler.setBank(1); sampler.loadFile(2, sourceSample, 0, 0.5);
             require(wait([&] { return sampler.slotList()[2].toMap().value("loaded").toBool(); }), "second sampler bank did not load");
@@ -167,6 +177,18 @@ bool testLiveDeckFeatures(QString& error)
             sampler.setSequencerStep(0,0,true);
             sampler.setSequencerStep(0,4,true);
             sampler.setSequencerSwing(0.23);
+            sampler.setSequencerLength(64);
+            sampler.setSequencerVelocity(0,63,42);
+            sampler.setSequencerMuted(2,true);
+            sampler.setSequencerSolo(0,true);
+            sampler.setInternalBpm(137);
+            sampler.copySequencerPattern(2);
+            sampler.setBank(2);
+            require(sampler.sequencerLength() == 64
+                && sampler.sequencerSteps()[0].toList()[63].toInt() == 42
+                && !sampler.slotList()[0].toMap().value("loaded").toBool(),
+                "pattern copy loses extended steps or copies sample assets");
+            sampler.setBank(0);
             require(QFile::remove(sourceSample), "cannot remove original sample fixture");
         }
         {
@@ -177,6 +199,11 @@ bool testLiveDeckFeatures(QString& error)
                 && std::abs(entry.value("end").toDouble() - 0.9) < 0.001 && restored.quantize() == 4
                 && std::abs(restored.gain() - 0.63) < 0.001
                 && restored.sequencerPattern().first().toInt() == 17
+                && restored.sequencerLength() == 64
+                && restored.sequencerSteps()[0].toList()[63].toInt() == 42
+                && restored.sequencerTracks()[2].toMap()["muted"].toBool()
+                && restored.sequencerTracks()[0].toMap()["solo"].toBool()
+                && restored.internalBpm() == 137
                 && std::abs(restored.sequencerSwing() - 0.23) < 0.001,
                 "sampler metadata/range/settings/sequencer pattern did not persist");
             require(wait([&] { return restored.slotList()[3].toMap().value("loaded").toBool(); })
@@ -232,6 +259,28 @@ bool testLiveDeckFeatures(QString& error)
             for (int i = 0; i < 4; ++i) bus.getNextAudioBlock({&renderedSample,0,512});
             require(bus.sampler().state(9) == SamplerAudioEngine::Playing,
                 "MIDI sampler pad depends on a deck connection or track instead of global sampler");
+        }
+        {
+            const QString legacyDirectory = directory.filePath("legacy-sampler");
+            require(QDir().mkpath(legacyDirectory), "legacy sampler directory could not be created");
+            QFile manifest(legacyDirectory + "/banks.json");
+            require(manifest.open(QIODevice::WriteOnly)
+                && manifest.write(R"({"version":1,"patterns":[17],"slots":[]})") > 0,
+                "legacy sampler manifest could not be written");
+            manifest.close();
+            SamplerAudioEngine legacyAudio;
+            {
+                SamplerController legacy(legacyAudio,clock,legacyDirectory);
+                require(legacy.sequencerPattern()[0].toInt() == 17
+                    && legacy.sequencerLength() == 16
+                    && legacy.sequencerSteps()[0].toList()[0].toInt() == 127,
+                    "legacy sixteen-step patterns did not migrate at full velocity");
+                legacy.setSequencerVelocity(0,63,55);
+            }
+            SamplerController migrated(legacyAudio,clock,legacyDirectory);
+            require(migrated.sequencerSteps()[0].toList()[63].toInt() == 55
+                && migrated.sequencerPattern()[0].toInt() == 17,
+                "migrated extended pattern did not survive restart");
         }
         deck.play();
         require(deck.isPlaying(), "live fixture must have play intent");

@@ -177,6 +177,143 @@ int main() {
         sequencer.release();
     }
 
+    {
+        SamplerAudioEngine sequencer;
+        sequencer.prepare(2048, 48000);
+        sequencer.setGain(1);
+        sequencer.setCue(true);
+        for (int bank = 0; bank < 4; ++bank) {
+            auto clip = sample(true);
+            for (int ch = 0; ch < 2; ++ch)
+                juce::FloatVectorOperations::fill(clip->pcm.getWritePointer(ch),
+                    0.2f * (bank + 1), clip->pcm.getNumSamples());
+            sequencer.install(bank * 8, std::move(clip));
+            sequencer.setSequencerPattern(bank, 0, 1);
+        }
+        sequencer.publishClock({120, 0, 0, 30});
+        sequencer.setSequencerEnabled(true);
+        juce::AudioBuffer<float> bus(2, 2048), phones(2, 2048);
+        int frames = 0;
+        auto renderCount = [&](int count) {
+            bus.clear(); phones.clear();
+            sequencer.render(bus, phones, count, frames / 48000.0);
+            frames += count;
+        };
+        auto renderTo = [&](int target) {
+            while (frames < target) renderCount(std::min(1024, target - frames));
+        };
+        renderTo(12000);
+        sequencer.setSequencerBank(1);
+        require(sequencer.sequencerPendingBank() == 1 && sequencer.sequencerBank() == 0,
+            "selecting a bank queues it without changing the running pattern");
+        renderTo(95488);
+        require(sequencer.sequencerBank() == 0 && sequencer.sequencerStep() == 15
+            && sequencer.state(8) == SamplerAudioEngine::Ready,
+            "all sixteen steps of the old pattern finish before switching");
+        renderCount(1024);
+        require(std::abs(bus.getSample(0, 500) - 0.2f) < 1e-5f
+            && std::abs(bus.getSample(0, 1000) - 0.4f) < 1e-5f,
+            "a pattern boundary inside a callback preserves old audio before the boundary");
+        require(std::abs(bus.getSample(0, 1000) - phones.getSample(0, 1000)) < 1e-6f,
+            "split callbacks preserve cue output offsets");
+        require(sequencer.sequencerBank() == 1 && sequencer.sequencerPendingBank() == -1
+            && sequencer.sequencerStep() == 0 && sequencer.state(0) == SamplerAudioEngine::Ready,
+            "queued pattern starts at step one and retires old sequenced loops");
+        sequencer.setSequencerBank(2);
+        sequencer.setSequencerBank(1);
+        require(sequencer.sequencerPendingBank() == -1, "selecting the running bank cancels the queue");
+        sequencer.setSequencerBank(2);
+        sequencer.setSequencerBank(3);
+        sequencer.setSequencerLength(3, 32);
+        renderTo(192001);
+        require(sequencer.sequencerBank() == 3 && sequencer.state(16) == SamplerAudioEngine::Ready,
+            "the latest queued bank wins without briefly playing superseded requests");
+        sequencer.setSequencerBank(0);
+        renderTo(288001);
+        require(sequencer.sequencerBank() == 3 && sequencer.sequencerStep() == 16,
+            "a 32-step pattern does not switch after only sixteen steps");
+        renderTo(384001);
+        require(sequencer.sequencerBank() == 0 && sequencer.sequencerStep() == 0,
+            "long patterns switch at their own end");
+        sequencer.stopAll();
+        renderCount(1024);
+        require(!sequencer.sequencerRunning() && sequencer.sequencerPendingBank() == -1,
+            "stop-all also halts sequencing and clears queued status");
+        const auto stats = sequencer.realtimeStats();
+        require(stats.prepareCallsFromAudioThread == 0 && stats.bufferGrowthsFromAudioThread == 0
+            && stats.blockingLockAttempts == 0, "pattern switching never prepares, grows or locks in the callback");
+    }
+    {
+        SamplerAudioEngine sequencer;
+        sequencer.prepare(1024, 48000); sequencer.setGain(1);
+        for (int track = 0; track < 3; ++track) {
+            auto clip = sample(true);
+            for (int ch = 0; ch < 2; ++ch)
+                juce::FloatVectorOperations::fill(clip->pcm.getWritePointer(ch), 0.2f, clip->pcm.getNumSamples());
+            sequencer.install(track, std::move(clip));
+        }
+        sequencer.setSequencerLength(0, 64);
+        sequencer.setSequencerVelocity(0, 0, 0, 32);
+        sequencer.setSequencerVelocity(0, 1, 63, 127);
+        sequencer.publishClock({120, 0, 0, 40}); sequencer.setSequencerEnabled(true);
+        juce::AudioBuffer<float> bus(2, 1024), phones(2, 1024);
+        int frames = 0;
+        auto renderCount = [&](int count) {
+            bus.clear(); phones.clear();
+            sequencer.render(bus, phones, count, frames / 48000.0); frames += count;
+        };
+        renderCount(1024);
+        renderCount(1024);
+        require(std::abs(bus.getSample(0, 1000) - 0.2f * 32 / 127) < 1e-5f,
+            "step velocity scales actual sample audio");
+        sequencer.setSequencerTracks(0, 1, 0);
+        renderCount(1024);
+        require(sequencer.state(0) == SamplerAudioEngine::Ready,
+            "mute fades an existing sequenced loop");
+        sequencer.trigger(2, 0); sequencer.setSequencerTracks(0, 0, 2);
+        renderCount(1024);
+        require(sequencer.state(2) == SamplerAudioEngine::Playing,
+            "solo only filters sequencer tracks, not manually played pads");
+        while (frames < 378001) renderCount(std::min(1024, 378001 - frames));
+        require(sequencer.sequencerStep() == 63 && sequencer.state(1) == SamplerAudioEngine::Playing,
+            "step 64 is editable and plays without truncated masks");
+        sequencer.setSequencerBank(1);
+        sequencer.publishClock({120, 100, frames / 48000.0, 41});
+        renderCount(1024);
+        require(sequencer.sequencerBank() == 0 && sequencer.sequencerPendingBank() == 1
+            && sequencer.sequencerStep() == 63,
+            "clock handover preserves local pattern position and queued selection");
+        while (frames < 384002) renderCount(std::min(1024, 384002 - frames));
+        require(sequencer.sequencerBank() == 1, "queued change completes after handover without restarting the pattern");
+    }
+    {
+        SamplerAudioEngine sequencer;
+        sequencer.prepare(1024, 48000);
+        sequencer.publishClock({120, 0, 0, 50});
+        sequencer.setSequencerEnabled(true);
+        juce::AudioBuffer<float> bus(2, 1024), phones(2, 1024);
+        int frames = 0;
+        auto renderTo = [&](int target) {
+            while (frames < target) {
+                const int count = std::min(1024, target - frames);
+                bus.clear(); phones.clear();
+                sequencer.render(bus, phones, count, frames / 48000.0); frames += count;
+            }
+        };
+        renderTo(1);
+        sequencer.setSequencerLength(0, 32);
+        renderTo(96001);
+        require(sequencer.sequencerStep() == 0,
+            "editing length waits for the original sixteen-step cycle to complete");
+        sequencer.setSequencerBank(1);
+        renderTo(192001);
+        require(sequencer.sequencerBank() == 0 && sequencer.sequencerStep() == 16,
+            "the following cycle uses the edited thirty-two-step length");
+        renderTo(288001);
+        require(sequencer.sequencerBank() == 1 && sequencer.sequencerStep() == 0,
+            "a queued pattern respects the newly latched cycle length");
+    }
+
     // Exercise the actual shared pitch-preserving pipeline with resident PCM.
     engine.install(0, sample(true, true, 44100));
     const double syncStartTime = time;

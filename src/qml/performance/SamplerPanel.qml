@@ -15,6 +15,23 @@ Rectangle {
     readonly property var entries: controller ? controller.slots : []
     readonly property var transport: controller && controller.playback ? controller.playback : []
     readonly property var bankActivity: controller && controller.bankActivity ? controller.bankActivity : []
+    property int sequencePage: 0
+    property int velocityTrack: 0
+    property int velocityStep: 0
+    readonly property int sequenceLength: controller ? controller.sequencerLength : 16
+    readonly property var sequenceSteps: controller ? controller.sequencerSteps : []
+    readonly property var sequenceTracks: controller ? controller.sequencerTracks : []
+    readonly property bool sequenceRunning: !!controller && controller.sequencerRunning
+    readonly property int sequenceBank: controller ? controller.bank : 0
+    onSequenceBankChanged: {
+        sequencePage = 0
+        velocityTrack = 0
+        velocityStep = 0
+    }
+    onSequenceLengthChanged: {
+        sequencePage = Math.min(sequencePage, sequenceLength / 16 - 1)
+        velocityStep = Math.min(velocityStep, sequenceLength - 1)
+    }
     function openEditor(pad, path) { sampleEditor.openForPad(pad, path || "") }
     function seconds(value) { return isFinite(value) ? Math.max(0, value).toFixed(1) : "0.0" }
     onVisibleChanged: if (!visible) sampleEditor.close()
@@ -49,13 +66,18 @@ Rectangle {
                         required property int index
                         objectName: "samplerBank" + index
                         readonly property var activity: root.bankActivity[index] || ({playing:0, queued:0})
-                        text: "ABCD"[index] + (activity.playing || activity.queued ? " · " + activity.playing + "/" + activity.queued : "")
+                        readonly property bool sequenceActive: root.sequenceRunning && root.controller.sequencerActiveBank === index
+                        readonly property bool sequenceQueued: !!root.controller && root.controller.sequencerPendingBank === index
+                        text: "ABCD"[index] + (sequenceQueued ? " NEXT" : sequenceActive ? " RUN"
+                            : activity.playing || activity.queued ? " · " + activity.playing + "/" + activity.queued : "")
+                        opacity: sequenceActive && root.controller.sequencerStep % 4 >= 2 ? 0.45 : 1
                         Layout.preferredWidth: UiTheme.px(64)
                         Layout.minimumHeight: UiTheme.touchTarget
                         checked: !!root.controller && root.controller.bank === index
                         onClicked: if (root.controller) root.controller.bank = index
                         ToolTip.visible: hovered
-                        ToolTip.text: activity.playing + " playing · " + activity.queued + " waiting"
+                        ToolTip.text: (sequenceActive ? "Running pattern. " : sequenceQueued ? "Switches after the current pattern. " : "")
+                            + activity.playing + " playing · " + activity.queued + " waiting"
                     }
                 }
                 Text {
@@ -120,7 +142,9 @@ Rectangle {
                     Text {
                         Layout.fillWidth: true
                         text: root.controller
-                            ? root.controller.clockSource + " · " + root.controller.bpm.toFixed(1) + " BPM · 16 STEPS"
+                            ? root.controller.clockSource + " · " + root.controller.bpm.toFixed(1) + " BPM"
+                                + (root.sequenceRunning ? " · RUN " + "ABCD"[root.controller.sequencerActiveBank] : "")
+                                + (root.controller.sequencerPendingBank >= 0 ? " · NEXT " + "ABCD"[root.controller.sequencerPendingBank] : "")
                             : "INTERNAL · 120 BPM · 16 STEPS"
                         color: UiTheme.textSecondary
                         font.pixelSize: 12
@@ -128,12 +152,19 @@ Rectangle {
                     }
                     Text { text: "SWING"; color: UiTheme.textSecondary; font.pixelSize: 12 }
                     Slider {
+                        id: swingSlider
                         objectName: "samplerSequencerSwing"
                         Layout.preferredWidth: UiTheme.px(140)
                         Layout.minimumWidth: UiTheme.px(60)
                         from: 0; to: 0.5; stepSize: 0.01
-                        value: root.controller ? root.controller.sequencerSwing : 0
-                        onMoved: if (root.controller) root.controller.sequencerSwing = value
+                        onValueChanged: if ((dragActive || !enabled) && root.controller)
+                            root.controller.sequencerSwing = value
+                        Binding {
+                            target: swingSlider; property: "value"
+                            value: root.controller ? root.controller.sequencerSwing : 0
+                            when: !swingSlider.dragActive
+                            restoreMode: Binding.RestoreNone
+                        }
                     }
                     Text {
                         text: Math.round((root.controller ? root.controller.sequencerSwing : 0) * 100) + "%"
@@ -142,11 +173,79 @@ Rectangle {
                         Layout.preferredWidth: UiTheme.px(36)
                     }
                     Button {
+                        objectName: "samplerSequencerCopy"
+                        touchTarget: true
+                        text: "COPY"
+                        onClicked: {
+                            patternCopy.sourceBank = root.controller ? root.controller.bank : 0
+                            patternCopy.open()
+                        }
+                    }
+                    Button {
                         objectName: "samplerSequencerClear"
                         touchTarget: true
                         text: "CLEAR"
                         onClicked: if (root.controller) root.controller.clearSequencerPattern()
                     }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: UiTheme.px(6)
+                    Text { text: "LENGTH"; color: UiTheme.textSecondary; font.pixelSize: 11 }
+                    ComboBox {
+                        objectName: "samplerSequencerLength"
+                        model: ["16", "32", "48", "64"]
+                        currentIndex: root.sequenceLength / 16 - 1
+                        onActivated: if (root.controller) root.controller.sequencerLength = (currentIndex + 1) * 16
+                    }
+                    Repeater {
+                        model: root.sequenceLength / 16
+                        Button {
+                            required property int index
+                            objectName: "samplerSequencerPage" + index
+                            touchTarget: true
+                            text: (index * 16 + 1) + "-" + (index * 16 + 16)
+                            checked: root.sequencePage === index
+                            onClicked: root.sequencePage = index
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
+                    Text { text: "TEMPO"; color: UiTheme.textSecondary; font.pixelSize: 11 }
+                    SpinBox {
+                        objectName: "samplerSequencerTempo"
+                        from: 20; to: 400; editable: true
+                        value: root.controller ? Math.round(root.controller.internalBpm) : 120
+                        enabled: !root.controller || root.controller.clockSource === "INTERNAL"
+                        onValueModified: if (root.controller) root.controller.internalBpm = value
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Internal tempo. Deck/Link tempo takes priority while synchronized."
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: "VELOCITY · PAD " + (root.velocityTrack + 1) + " / STEP " + (root.velocityStep + 1)
+                        color: UiTheme.textSecondary; font.pixelSize: 11
+                    }
+                    Slider {
+                        id: velocitySlider
+                        objectName: "samplerSequencerVelocity"
+                        Layout.fillWidth: true
+                        Layout.maximumWidth: UiTheme.px(280)
+                        Layout.minimumHeight: UiTheme.touchTarget
+                        from: 1; to: 127; stepSize: 1
+                        defaultValue: 127
+                        onValueChanged: if ((dragActive || !enabled) && root.controller)
+                            root.controller.setSequencerVelocity(root.velocityTrack, root.velocityStep, Math.round(value))
+                        Binding {
+                            target: velocitySlider; property: "value"
+                            value: (root.sequenceSteps[root.velocityTrack] || [])[root.velocityStep] || 127
+                            when: !velocitySlider.dragActive
+                            restoreMode: Binding.RestoreNone
+                        }
+                    }
+                    Text { text: Math.round(velocitySlider.value); color: UiTheme.textPrimary; font.pixelSize: 11 }
+                    Item { Layout.fillWidth: true }
                 }
                 Repeater {
                     model: 8
@@ -155,8 +254,8 @@ Rectangle {
                         required property int index
                         Layout.fillWidth: true
                         spacing: UiTheme.px(3)
-                        readonly property int mask: Number(root.controller && root.controller.sequencerPattern
-                            ? root.controller.sequencerPattern[index] : 0)
+                        readonly property var steps: root.sequenceSteps[index] || []
+                        readonly property var trackState: root.sequenceTracks[index] || ({muted:false, solo:false})
                         Text {
                             Layout.preferredWidth: UiTheme.px(90)
                             Layout.minimumWidth: UiTheme.px(48)
@@ -168,37 +267,69 @@ Rectangle {
                             font.pixelSize: 11
                             elide: Text.ElideRight
                         }
+                        Button {
+                            objectName: "samplerSequencerMute" + sequenceTrack.index
+                            touchTarget: true
+                            text: "M"
+                            checked: sequenceTrack.trackState.muted
+                            Layout.preferredWidth: UiTheme.touchTarget
+                            onClicked: if (root.controller) root.controller.setSequencerMuted(sequenceTrack.index, !checked)
+                            ToolTip.visible: hovered; ToolTip.text: "Mute this sequencer track (live pads remain available)"
+                        }
+                        Button {
+                            objectName: "samplerSequencerSolo" + sequenceTrack.index
+                            touchTarget: true
+                            text: "S"
+                            checked: sequenceTrack.trackState.solo
+                            Layout.preferredWidth: UiTheme.touchTarget
+                            onClicked: if (root.controller) root.controller.setSequencerSolo(sequenceTrack.index, !checked)
+                            ToolTip.visible: hovered; ToolTip.text: "Solo this sequencer track"
+                        }
                         Repeater {
                             model: 16
                             Button {
                                 required property int index
-                                objectName: "samplerSequencerStep" + sequenceTrack.index + "_" + index
+                                readonly property int stepNumber: root.sequencePage * 16 + index
+                                readonly property int velocity: sequenceTrack.steps[stepNumber] || 0
+                                readonly property bool playhead: root.sequenceRunning
+                                    && root.controller.sequencerActiveBank === root.controller.bank
+                                    && root.controller.sequencerStep === stepNumber
+                                objectName: "samplerSequencerStep" + sequenceTrack.index + "_" + stepNumber
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: UiTheme.px(22)
                                 Layout.preferredWidth: UiTheme.px(34)
                                 Layout.minimumHeight: UiTheme.touchTarget
-                                checkable: true
-                                checked: !!(sequenceTrack.mask & (1 << index))
-                                text: index % 4 === 0 ? (index + 1).toString() : ""
+                                checked: velocity > 0
+                                text: velocity > 0 && velocity < 127 ? velocity.toString()
+                                    : index % 4 === 0 ? (stepNumber + 1).toString() : ""
                                 font.pixelSize: 10
                                 background: Rectangle {
                                     color: parent.checked ? UiTheme.orange
-                                        : (root.controller && root.controller.sequencerStep === index
+                                        : (parent.playhead
                                             ? UiTheme.panelRaised : UiTheme.panelDeep)
-                                    border.width: parent.checked || (root.controller && root.controller.sequencerStep === index) ? 2 : 1
-                                    border.color: parent.checked ? UiTheme.orange : UiTheme.borderSubtle
+                                    border.width: parent.playhead ? 3 : parent.checked ? 2 : 1
+                                    border.color: parent.playhead ? UiTheme.textPrimary
+                                        : parent.checked ? UiTheme.orange : UiTheme.borderSubtle
                                     radius: 0
                                 }
-                                onClicked: if (root.controller)
-                                    root.controller.setSequencerStep(sequenceTrack.index, index,
-                                        !(sequenceTrack.mask & (1 << index)))
+                                onClicked: {
+                                    root.velocityTrack = sequenceTrack.index
+                                    root.velocityStep = stepNumber
+                                    if (root.controller) root.controller.setSequencerStep(sequenceTrack.index, stepNumber, velocity === 0)
+                                }
+                                onPressAndHold: {
+                                    root.velocityTrack = sequenceTrack.index
+                                    root.velocityStep = stepNumber
+                                }
                             }
                         }
                     }
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: "Each bank has its own 8-track, 16-step pattern. Sample hits follow the active deck or Link clock."
+                    text: "Each bank has an 8-track pattern with 1-4 bars. Select or hold a step to edit velocity. "
+                        + "Pattern and length changes wait for the current cycle to finish; selecting the running bank cancels NEXT. "
+                        + "COPY replaces steps, length and mute/solo only, not samples."
                     color: UiTheme.textMuted
                     font.pixelSize: 11
                     wrapMode: Text.Wrap
@@ -299,6 +430,32 @@ Rectangle {
             }
             Text { id: samplerError; Layout.fillWidth: true; wrapMode: Text.Wrap; text: root.controller ? root.controller.error : ""; visible: text.length > 0; color: UiTheme.error; font.pixelSize: 12 }
         }
+    }
+    Dialog {
+        id: patternCopy
+        objectName: "samplerSequencerCopyDialog"
+        property int sourceBank: 0
+        readonly property var destinations: [0, 1, 2, 3].filter(function(bank) { return bank !== sourceBank })
+        anchors.centerIn: parent
+        width: Math.min(UiTheme.px(380), root.width - UiTheme.px(24))
+        modal: true
+        title: "COPY PATTERN " + "ABCD"[sourceBank]
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        contentItem: ColumnLayout {
+            Text {
+                Layout.fillWidth: true
+                text: "Replace the destination pattern's steps, length and mute/solo settings? Samples are not copied."
+                color: UiTheme.textPrimary
+                wrapMode: Text.Wrap
+            }
+            ComboBox {
+                id: copyDestination
+                objectName: "samplerSequencerCopyDestination"
+                Layout.fillWidth: true
+                model: patternCopy.destinations.map(function(bank) { return "ABCD"[bank] })
+            }
+        }
+        onAccepted: if (root.controller) root.controller.copySequencerPattern(destinations[copyDestination.currentIndex])
     }
     SamplerEditor { id: sampleEditor; controller: root.controller }
 }

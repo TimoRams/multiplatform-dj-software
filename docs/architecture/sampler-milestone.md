@@ -28,14 +28,35 @@ reject another start with BUSY state. Bank changes and closing the panel preserv
 playback. One-shots retrigger and loops toggle; STOP ALL preserves command order.
 Slot generation checks discard presses queued for a replaced/cleared asset.
 
-The sampler page also has a 16-step sequencer view. Each bank stores an independent
-pattern for its eight sample slots; enabled steps trigger against the same active
-Link/deck/internal clock as quantized sampler starts. Swing delays alternating
-sixteenth-note steps, and patterns plus swing are committed with the bank manifest.
-Step scheduling and sample starts happen in the audio callback; pattern masks,
-transport, swing and playhead are exchanged through atomics, with no UI timer
-triggering audio. Playback follows the clock's absolute bar phase rather than
-resetting the shared DJ clock when the sequencer starts.
+The sampler page has an Electribe-inspired eight-track sequencer with 16, 32, 48
+or 64 sixteenth-note steps per bank, displayed in sixteen-step pages. Each step
+stores velocity (1-127; zero disables it), applied to actual program and cue PCM.
+Click a step to toggle/select it, or hold to select it without toggling; the
+velocity slider edits that selected step. Track Mute/Solo filters sequenced
+voices, fading existing sequenced playback without silencing manually played
+pads. Swing delays alternating sixteenth-note steps. Internal tempo is adjustable
+from 20-400 BPM; an active deck or Link clock takes priority.
+
+The editing/selected bank is distinct from the audio thread's running bank.
+The running pattern button pulses from the audio playhead even while another bank
+is selected. That other bank is marked NEXT and starts at step one only after the
+running pattern completes its full configured length. The latest request wins;
+selecting the running bank cancels NEXT. Length edits also take effect at the next
+cycle. Stop clears queued playback; STOP ALL also disables the sequencer.
+Sequencing starts at the next sixteenth-note boundary with local step one,
+without resetting the shared DJ clock. Master/Link clock jumps preserve the local
+playhead and queued selection rather than forcing a pattern switch.
+
+Pattern COPY asks for confirmation and copies steps, length and mute/solo to
+another bank, not its samples. Changes save through the existing QSaveFile
+manifest before audio publication. Version 2 persists velocity arrays, lengths,
+track settings and internal tempo; version 1 masks migrate to sixteen steps at
+full velocity. Playback transport and queued requests are not restored.
+Step scheduling and starts run in the callback using fixed-size atomics and
+preallocated voices. Rendering splits at grid boundaries so a change inside a
+callback cannot cut off the old pattern early; no UI timer triggers audio.
+This is a sample sequencer, not a full ESX/ES2 emulator: synthesis, motion
+recording and song-mode pattern chains are not implemented here.
 
 All samples are immutable resident stereo float PCM. Imports reserve from a
 shared 256 MiB budget before decoding (including concurrent import buffers), with
@@ -108,8 +129,9 @@ open the sampler page; the selected main page restores on restart.
 ## Validation and remaining roadmap
 
 `sampler_audio` checks PCM output, pre-fader cue, retrigger/stop, voice limits,
-sample-rate conversion, sample-position quantization, swung sequencer triggers
-and pitch preservation at device callback cadence. It checks DSP realtime counters
+sample-rate conversion, sample-position quantization, swung sequencer triggers,
+sample-accurate queued bank transitions, 64-step playback, velocity, Mute/Solo,
+clock handovers and pitch preservation at device callback cadence. It checks DSP realtime counters
 for forbidden callback preparation, growth, locks and inline seeds.
 `deck_audio_graph` checks simultaneous
 preview/sampler routing and reads actual recorded PCM, then runs four decks,
@@ -119,6 +141,14 @@ imports, trimming, failed replacement, source deletion, bank restoration, deck
 capture and MIDI triggering without a connected deck. `qml_component` exercises
 real recording-button and sampler-panel input at 800/1280/1920 widths. Optional
 `BROCKDJ_TEST_CAPTURE_DIR` saves a panel image for visual inspection.
+
+For this sequencer update, Linux RelWithDebInfo sampler, QML and audio-routing
+tests pass, as do Debug application startup and persistence/migration checks.
+The Debug sampler executable passes the new sequencing checks but retains a
+pre-existing pitch-preservation failure: approximately 528 Hz instead of 440 Hz
+at 144 BPM. The unchanged HEAD sampler sources/tests, compiled with the same
+Debug flags and linked dependencies, reproduce the same failure. It is not
+claimed fixed by this update; real audio-device acceptance remains separate.
 
 On the macOS development host, sandbox-launched startup checks intermittently
 timed out after LinkManager initialization, before the system-monitor/cache
