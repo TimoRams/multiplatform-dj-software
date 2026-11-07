@@ -1124,7 +1124,7 @@ bool pullDownHandleTests(const std::string& header)
 bool libraryControllerPaneTests(const std::string& source)
 {
     QString methods;
-    if (!extractFunctions(source, {"navigateBrowserBack", "activateSidebarCursor",
+    if (!extractFunctions(source, {"aioLoadBarFilePath", "navigateBrowserBack", "activateSidebarCursor",
                                   "selectSidebarItem", "moveSidebarCursor",
                                   "collapseSidebarItem", "confirmLibrarySelection"}, methods))
         return false;
@@ -1135,6 +1135,7 @@ bool libraryControllerPaneTests(const std::string& source)
             id: root
             property bool touchMode: false
             property string activeTab: "favorites"
+            property string activeTrackFilePath: "/library/selected.wav"
             property string focusedPanel: "tracks"
             property string aioFocusZone: "tracks"
             property bool aioBrowseDrilled: false
@@ -1152,6 +1153,7 @@ bool libraryControllerPaneTests(const std::string& source)
             property int loads: 0
             property int touchActivations: 0
             property string loadedDeck: ""
+            function getCursorFilePath() { return "/music/folder/selected.wav" }
             property var window: ({openLibrarySourceView: function() { ++root.sourceOpens }})
             property var entries: [
                 {type: "nav", tab: "library"}, {type: "nav", tab: "favorites"},
@@ -1175,12 +1177,24 @@ bool libraryControllerPaneTests(const std::string& source)
             function activateUsbCursor() {}
         )") + methods + QStringLiteral("\n}"), "controller pane navigation instantiates");
     if (!host) return false;
+    bool ok = true;
+    QVariant fileLoadPath;
+    ok &= QMetaObject::invokeMethod(host.get(), "aioLoadBarFilePath",
+        Q_RETURN_ARG(QVariant, fileLoadPath));
+    ok &= require(fileLoadPath.toString() == "/library/selected.wav",
+                  "AIO load bar retains the selected library track path");
+    host->setProperty("activeTab", "files");
+    ok &= QMetaObject::invokeMethod(host.get(), "aioLoadBarFilePath",
+        Q_RETURN_ARG(QVariant, fileLoadPath));
+    ok &= require(fileLoadPath.toString() == "/music/folder/selected.wav",
+                  "AIO folder load bar uses the selected file-browser track instead of stale library state");
+    host->setProperty("activeTab", "favorites");
     auto run = [&](const QString& script) {
         QQmlExpression expression(QQmlEngine::contextForObject(host.get()), host.get(), script);
         expression.evaluate();
         return !expression.hasError();
     };
-    bool ok = require(run("navigateBrowserBack()")
+    ok &= require(run("navigateBrowserBack()")
                       && host->property("focusedPanel").toString() == "sidebar"
                       && host->property("activeTab").toString() == "favorites"
                       && host->property("sidebarCursorIndex").toInt() == 1,
@@ -3273,6 +3287,15 @@ bool qmlMergeRuntimeTests()
             QCoreApplication::processEvents();
         };
         fit(1024);
+        auto* title = infoA->findChild<QObject*>("deckInfoTrackTitle");
+        infoEngine->setProperty("trackTitle", QString(180, QChar('X')) + "\ncontinued title");
+        QCoreApplication::processEvents();
+        ok &= require(title && title->property("lineCount").toInt() == 1
+                          && !title->property("text").toString().contains('\n')
+                          && title->property("truncated").toBool(),
+                      "long and multiline track titles stay on one elided line in the deck side panel");
+        infoEngine->setProperty("trackTitle", "After Hours / Extended Mix");
+        QCoreApplication::processEvents();
         const double initialMetric = infoA->property("metricScale").toDouble();
         auto* clockDigits = infoA->findChild<QQuickItem*>("deckClockDigits");
         const qreal clockWidth = clockDigits ? clockDigits->width() : 0;

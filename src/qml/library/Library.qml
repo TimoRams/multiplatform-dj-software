@@ -1712,6 +1712,10 @@ Rectangle {
         return activeTrackFilePath || ""
     }
 
+    function aioLoadBarFilePath() {
+        return activeTab === "files" ? getCursorFilePath() : activeTrackFilePath || ""
+    }
+
     function getCursorTrackId() {
         if (activeTab === "files") return ""
         if (!browserCursorActive || browserCursorIndex < 0) return ""
@@ -2176,8 +2180,10 @@ Rectangle {
     component AioLoadBar: Rectangle {
         id: aioBar
         property bool fullTrackView: true
+        readonly property string sourcePath: libraryRoot.aioLoadBarFilePath()
+        readonly property string sourceTrackId: libraryRoot.activeTab === "files" ? "" : libraryRoot.activeTrackId
         visible: libraryRoot.touchMode && fullTrackView
-                 && libraryRoot.activeTrackFilePath.length > 0
+                 && sourcePath.length > 0
         height: visible ? 52 : 0
         color: Design.UiTheme.panelInset
         clip: true
@@ -2208,10 +2214,10 @@ Rectangle {
                 Layout.alignment: Qt.AlignVCenter
                 radius: 0
                 color: previewBtnMa.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.greenDim
-                border.color: libraryRoot.activeTrackFilePath.length > 0
+                border.color: aioBar.sourcePath.length > 0
                               && typeof libraryPreview !== "undefined" && libraryPreview
                               && libraryPreview.playing
-                              && libraryPreview.currentPath === libraryRoot.activeTrackFilePath
+                              && libraryPreview.currentPath === aioBar.sourcePath
                               ? libraryRoot.accentKeyMatch : libraryRoot.borderSub
                 border.width: 1
                 Text {
@@ -2226,7 +2232,7 @@ Rectangle {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: libraryRoot.togglePreview(libraryRoot.activeTrackFilePath)
+                    onClicked: libraryRoot.togglePreview(aioBar.sourcePath)
                 }
             }
 
@@ -2253,9 +2259,8 @@ Rectangle {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: libraryRoot.loadTrackToDeck(modelData,
-                                                               libraryRoot.activeTrackFilePath,
-                                                               libraryRoot.activeTrackId)
+                        onClicked: libraryRoot.loadTrackToDeck(modelData, aioBar.sourcePath,
+                                                               aioBar.sourceTrackId)
                     }
                 }
             }
@@ -2265,7 +2270,7 @@ Rectangle {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
                 text: {
-                    var p = libraryRoot.activeTrackFilePath
+                    var p = aioBar.sourcePath
                     if (!p) return ""
                     var parts = p.split("/")
                     return parts.length ? parts[parts.length - 1] : p
@@ -5506,6 +5511,13 @@ Rectangle {
                                 color: libraryRoot.bgHeader
                                 Rectangle { anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right; height: 1; color: libraryRoot.borderMain }
                                 Text { anchors.verticalCenter: parent.verticalCenter; anchors.left: parent.left; anchors.leftMargin: 10; text: "TRACKS"; color: libraryRoot.textSecond; font.pixelSize: window.sp(10); font.bold: true }
+                            }
+
+                            AioLoadBar {
+                                objectName: "folderAioLoadBar"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: height
+                                Layout.maximumHeight: height
                             }
 
                             ListView {

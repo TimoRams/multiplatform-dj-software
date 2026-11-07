@@ -66,6 +66,10 @@ Item {
         return Math.max(minimum, Math.round(reference * metricScale))
     }
 
+    function singleLine(value) {
+        return String(value || "").replace(/[\r\n\t]+/g, " ").replace(/\s{2,}/g, " ").trim()
+    }
+
     function playbackSeconds() {
         if (!engine || duration <= 0)
             return 0
@@ -225,16 +229,18 @@ Item {
 
             Text {
                 id: titleText
+                objectName: "deckInfoTrackTitle"
                 anchors.left: parent.left
                 anchors.leftMargin: root.valuePx(68, 46)
                 anchors.right: onAirBadge.visible ? onAirBadge.left : parent.right
                 anchors.rightMargin: root.valuePx(16, 9)
                 anchors.top: parent.top
                 anchors.topMargin: root.valuePx(9, 5)
-                text: root.hasTrack ? root.engine.trackTitle : "No Track Loaded"
+                text: root.hasTrack ? root.singleLine(root.engine.trackTitle) : "No Track Loaded"
                 color: root.hasTrack ? root.primaryText : UiTheme.textMuted
                 font.pixelSize: root.valuePx(22, 14)
                 font.weight: Font.DemiBold
+                wrapMode: Text.NoWrap
                 elide: Text.ElideRight
                 maximumLineCount: 1
                 verticalAlignment: Text.AlignVCenter
@@ -245,9 +251,10 @@ Item {
                 anchors.right: titleText.right
                 anchors.top: titleText.bottom
                 anchors.topMargin: root.valuePx(3, 2)
-                text: root.hasTrack ? root.engine.trackArtist : "Load a track to begin"
+                text: root.hasTrack ? root.singleLine(root.engine.trackArtist) : "Load a track to begin"
                 color: root.secondaryText
                 font.pixelSize: root.valuePx(14, 10)
+                wrapMode: Text.NoWrap
                 elide: Text.ElideRight
                 maximumLineCount: 1
             }
