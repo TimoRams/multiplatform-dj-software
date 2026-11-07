@@ -90,6 +90,10 @@ public:
 
 private:
    [[nodiscard]] waveform::WaveformDemand waveformDemandSnapshot() const;
+   // Pressure pauses are bounded: after a continuous pause a short work window
+   // is granted so sustained load throttles analysis instead of stalling it
+   // forever while it still owns a global analysis slot.
+   [[nodiscard]] bool shouldPauseBackgroundWork() noexcept;
    juce::AudioFormatManager* m_formatManager = nullptr;
    QString m_filePath;
    analysis::AnalysisOptions m_options;
@@ -98,6 +102,8 @@ private:
    std::atomic<double> m_seekHintSec{0.0};
    std::atomic<bool> m_realtimeInteractionActive{false};
    std::atomic<bool> m_backgroundWorkPaused{false};
+   std::atomic<double> m_pressurePauseStartedMs{0.0};
+   std::atomic<double> m_pressureGrantUntilMs{0.0};
    mutable std::mutex m_demandMutex;
    waveform::WaveformDemand m_waveformDemand;
    std::atomic<AnalysisGeneration> m_generation{0};

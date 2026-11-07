@@ -1,9 +1,11 @@
 #include "TrackData.h"
 #include "analysis/internal/FeatureAnalysis.h"
 #include "waveform/WaveformAnalyzer.h"
+#include "waveform/WaveformCache.h"
 #include "waveform/WaveformLineStore.h"
 
 #include <QCoreApplication>
+#include <QFile>
 #include <QTemporaryDir>
 #include <algorithm>
 #include <atomic>
@@ -359,6 +361,35 @@ int main(int argc, char** argv)
         analyzer.shutdownAndJoin();
     }
     if (ok) {
+        const QString pressuredPath = dir.filePath(QStringLiteral("sustained-pressure.wav"));
+        ok &= require(writeSilentWave(pressuredPath), "pressure fixture must be writable");
+        WaveformAnalyzer analyzer(&formats, 600);
+        std::mutex doneMutex;
+        std::condition_variable doneCv;
+        bool finished = false;
+        bool completedOk = false;
+        analyzer.setCompletionCallback(
+            [&](bool completed, WaveformAnalyzer::AnalysisGeneration, const QString&,
+                WaveformAnalyzer::ResultPtr) {
+                {
+                    std::lock_guard lock(doneMutex);
+                    finished = true;
+                    completedOk = completed;
+                }
+                doneCv.notify_one();
+            });
+        analyzer.setBackgroundWorkPaused(true);
+        analyzer.startAnalysis(pressuredPath);
+        {
+            std::unique_lock lock(doneMutex);
+            ok &= require(doneCv.wait_for(lock, std::chrono::seconds(60),
+                                          [&] { return finished; })
+                              && completedOk,
+                          "sustained audio pressure must throttle analysis, not stall it forever");
+        }
+        analyzer.shutdownAndJoin();
+    }
+    if (ok) {
         TrackData data;
         auto analyzer = std::make_unique<WaveformAnalyzer>(&formats, 600);
         std::atomic<int> acceptedCompletions{0};
@@ -384,9 +415,16 @@ int main(int argc, char** argv)
         seed.bpm = 128; seed.firstBeatSample = 8820; seed.sampleRate = 44100;
         seed.beats = {{.2, true, true, 0, 1, 1, 1.0f}};
         seed.detectedKey = "8A"; seed.beatFingerprint = seed.keyFingerprint = "legacy-fixture";
+        WaveformAnalyzer::ResultPtr cachedWaveform;
         for (bool explicitReanalysis : {false, true}) {
             WaveformAnalyzer analyzer(&formats, 600);
             WaveformAnalyzer::ResultPtr completedResult;
+            std::atomic<int> waveformChunks{0};
+            analyzer.setChunkCallback(
+                [&](auto, int, int, QVector<TrackData::WaveformBin>, int, int,
+                    QVector<TrackData::SpectralWaveformPoint>, WaveformNormalizationState) {
+                    waveformChunks.fetch_add(1, std::memory_order_relaxed);
+                });
             analyzer.setCompletionCallback([&](bool completed, auto, const QString&, auto result) {
                 if (completed) completedResult = std::move(result);
             });
@@ -395,14 +433,31 @@ int main(int argc, char** argv)
             analyzer.shutdownAndJoin();
             ok &= require(completedResult && completedResult->validated, "preservation fixture did not publish");
             if (completedResult) {
-                if (!explicitReanalysis)
+                if (!explicitReanalysis) {
                     ok &= require(completedResult->bpm == 128 && completedResult->firstBeatSample == 8820
                         && completedResult->detectedKey == "8A" && completedResult->keyFingerprint == "legacy-fixture",
                         "waveform rebuild silently replaced existing analysis");
-                else
+                    cachedWaveform = completedResult;
+                    ok &= require(waveformChunks.load(std::memory_order_relaxed) > 0
+                                      && cachedWaveform->waveform && !cachedWaveform->waveform->isEmpty()
+                                      && cachedWaveform->spectralWaveform && !cachedWaveform->spectralWaveform->isEmpty()
+                                      && QFile::exists(WaveformCache::cachePathFor(tonalPath, 600))
+                                      && QFile::exists(WaveformCache::renderCachePathFor(tonalPath, 600)),
+                                  "fresh analysis generated and cached both waveform representations");
+                } else {
                     ok &= require(completedResult->detectedKey == "8B"
                         && completedResult->keyFingerprint.startsWith("electronic-v1:"),
                         "explicit reanalysis did not replace the old key and provenance");
+                    ok &= require(cachedWaveform && cachedWaveform->waveform
+                                      && cachedWaveform->spectralWaveform
+                                      && completedResult->waveform && completedResult->spectralWaveform
+                                      && *completedResult->waveform == *cachedWaveform->waveform
+                                      && *completedResult->spectralWaveform == *cachedWaveform->spectralWaveform
+                                      && waveformChunks.load(std::memory_order_relaxed) == 0
+                                      && QFile::exists(WaveformCache::cachePathFor(tonalPath, 600))
+                                      && QFile::exists(WaveformCache::renderCachePathFor(tonalPath, 600)),
+                                  "explicit reanalysis reuses the cached waveform without regenerating it");
+                }
             }
         }
     }

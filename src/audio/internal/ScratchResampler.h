@@ -69,12 +69,7 @@ public:
         m_trackLengthSamples = std::max(0.0, lengthSamples);
     }
 
-    void setLoopRange(double loopInSample, double loopOutSample, bool active) noexcept
-    {
-        m_loopInSample = loopInSample;
-        m_loopOutSample = loopOutSample;
-        m_loopActive = active;
-    }
+    void setLoopRange(double loopInSample, double loopOutSample, bool active) noexcept;
 
     // rate: track samples advanced per output sample (negative = reverse)
     void processBlock(double rate,
@@ -99,7 +94,7 @@ public:
                                       std::numeric_limits<double>::infinity(),
                                   double tickCorrectionTimeSeconds = 0.0) noexcept;
 
-    [[nodiscard]] double readPosition() const noexcept { return m_readPos; }
+    [[nodiscard]] double readPosition() const noexcept { return wrapPosition(m_readPos); }
     [[nodiscard]] int deviceBufferSize() const noexcept { return m_deviceBufferSize; }
     [[nodiscard]] ScratchCacheStats cacheStats() const noexcept;
     [[nodiscard]] ScratchMotionStats motionStats() const noexcept;
@@ -147,6 +142,7 @@ private:
     double m_referencePos = 0.0;
     double m_referenceVelocity = 0.0; // track samples / second
     bool m_referenceValid = false;
+    double m_trackingTargetOffset = 0.0;
     // Decaying envelope of recent hand speed, track samples/second. The runaway
     // guard sizes itself from this rather than the instantaneous speed, which
     // passes through zero at every direction change.

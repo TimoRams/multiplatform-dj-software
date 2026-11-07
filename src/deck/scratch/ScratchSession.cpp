@@ -13,6 +13,7 @@ void ScratchSession::clear() noexcept
     m_loopLocked = false;
     m_savedReverse = false;
     m_lastRawSec = 0.0;
+    m_lastPointerSec = 0.0;
 }
 
 void ScratchSession::setScrubbing(bool value) noexcept
@@ -62,6 +63,7 @@ double ScratchSession::armGrab(double grabSec, double trackLenSec, const Scratch
 {
     m_loopLocked = false;
     m_lastRawSec = wrapLoopPosition(grabSec, trackLenSec, loop, m_loopLocked);
+    m_lastPointerSec = grabSec;
     m_physicsClock.restart();
     m_lastMoveClock.restart();
     return m_lastRawSec;
@@ -79,7 +81,7 @@ bool ScratchSession::submitRelative(engine::audio::RenderModeRouter* bridge,
     // complete distance since the previous event, so clipping one event loses
     // real drag distance (especially on Linux with sparse pointer events).
     return submitRelativeAtInterval(bridge, deltaSec, sampleRate, dtSec,
-                                    std::numeric_limits<double>::quiet_NaN(), false);
+                                    std::numeric_limits<double>::quiet_NaN(), false, true);
 }
 
 bool ScratchSession::submitRelativeAtInterval(engine::audio::RenderModeRouter* bridge,
@@ -87,7 +89,8 @@ bool ScratchSession::submitRelativeAtInterval(engine::audio::RenderModeRouter* b
                                               double sampleRate,
                                               double eventIntervalSeconds,
                                               double measuredRate,
-                                              bool clampEventSpike) noexcept
+                                              bool clampEventSpike,
+                                              bool pointerInput) noexcept
 {
     if (!bridge || deltaSec == 0.0)
         return false;
@@ -103,8 +106,12 @@ bool ScratchSession::submitRelativeAtInterval(engine::audio::RenderModeRouter* b
         0.120);
     m_lastMoveClock.restart();
 
-    bridge->submitHandDeltaSeconds(acceptedDelta, dtSec, measuredRate);
+    if (pointerInput)
+        bridge->submitPointerDeltaSeconds(acceptedDelta, dtSec);
+    else
+        bridge->submitHandDeltaSeconds(acceptedDelta, dtSec, measuredRate);
     m_lastRawSec += acceptedDelta;
+    m_lastPointerSec += acceptedDelta;
     // Audio position is owned by the tracker on the audio thread (driven by the
     // platter target updated in submitHandDeltaSeconds). Only publish the display.
     bridge->publishScratchDisplay(m_lastRawSec);
@@ -137,10 +144,9 @@ bool ScratchSession::submitAbsolute(engine::audio::RenderModeRouter* bridge,
     if (!bridge || !scrubbing() || trackLenSec <= 0.0)
         return false;
 
-    double target = std::clamp(posSec, -scratchPreRollSec, trackLenSec);
-    target = wrapLoopPosition(target, trackLenSec, loop, m_loopLocked);
-
-    const double virtualDelta = target - m_lastRawSec;
+    const double target = std::clamp(posSec, -scratchPreRollSec, trackLenSec);
+    (void)wrapLoopPosition(target, trackLenSec, loop, m_loopLocked);
+    const double virtualDelta = target - m_lastPointerSec;
     if (std::abs(virtualDelta) <= 1e-9)
         return false;
 

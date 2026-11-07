@@ -123,10 +123,10 @@ int main(int argc, char** argv)
     bool ok = true;
 
     {
-        const QString source = sourceDir.filePath(QStringLiteral("reanalyze.audio"));
+        const QString source = sourceDir.filePath(QStringLiteral("invalidate.audio"));
         const QString other = sourceDir.filePath(QStringLiteral("other.audio"));
         ok &= require(writeSourceStub(source) && writeSourceStub(other),
-                      "reanalysis source stubs are writable");
+                      "invalidation source stubs are writable");
         CachePaths deckPaths;
         CachePaths otherPaths;
         ok &= require(seedValidCache(source, deckPaths) && seedValidCache(other, otherPaths),
@@ -140,13 +140,13 @@ int main(int argc, char** argv)
         const CachePaths libraryPaths{WaveformCache::cachePathFor(source, 600),
                                      WaveformCache::renderCachePathFor(source, 600)};
         ok &= require(libraryPaths.bothExist() && deckPaths.bothExist(),
-                      "both waveform resolutions exist before reanalysis");
+                      "both waveform resolutions exist before invalidation");
         for (const int resolution : {600, 1200})
             ok &= require(WaveformCache::invalidateForFile(source, resolution),
-                          "explicit reanalysis invalidates a cache pair");
+                          "explicit invalidation removes a cache pair");
         ok &= require(libraryPaths.neitherExists() && deckPaths.neitherExists()
                           && otherPaths.bothExist(),
-                      "reanalysis removes both resolutions and render files without touching another track");
+                      "invalidation removes both resolutions and render files without touching another track");
         WaveformCache::Payload loaded;
         WaveformCache::RenderInfo render;
         ok &= require(!WaveformCache::loadForFile(source, 1200, &loaded)

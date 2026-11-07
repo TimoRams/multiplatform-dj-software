@@ -20,6 +20,12 @@ A separate 900–9000 Hz attack envelope, sampled every 44 samples, refines phas
 and period by robust regression. The refined tempo is not rounded to integer
 BPM. Regression is also checked against the selected BPM range.
 
+The phase search accumulates the same Gaussian model using a geometric
+recurrence rather than recomputing a wrapped distance and exponential for
+every hit and phase. Near-ties are checked again with the original expression
+and summation order. Frequency-band assignments are calculated once, and FFT
+output only computes the positive-frequency magnitudes that the analysis uses.
+
 Local models use 16-second windows at 8-second intervals. A new stable tempo or
 phase needs three consistent windows and a supported run of actual attacks at
 its boundary. Gradual transitions follow measured beat intervals; a breakdown
@@ -64,7 +70,10 @@ current waveform. File identity and track generation guard publication.
 minutes, tempo cuts, ramps, breakdowns with and without a phase change,
 structural downbeats, loud offbeats, selected BPM ranges, 44.1/48/96 kHz input,
 antiphase stereo, 24 synthetic major/minor chords, detuning, right-only audio,
-tonal content after 90 seconds, silence, noise and cancellation.
+tonal content after 90 seconds, silence, noise and cancellation. The optimized
+phase search is compared with the original calculation on randomized hits and
+ambiguous phase ties; positive-frequency FFT output is checked against the
+full-spectrum calculation.
 
 Integration tests cover option snapshots and queue deduplication, persisted
 profile/range settings, schema migration, grid protection during database
@@ -80,6 +89,54 @@ meters are not guaranteed by the stable-window detector. Key modulation is
 represented by one whole-track key, not a time-varying harmonic map.
 Transition walking currently searches at most 48 seconds before the next
 supported stable region; longer continuous ramps require additional validation.
+
+## Analysis performance and Debug builds
+
+On GCC and Clang, Debug builds use `-Og` for the analysis sources, waveform
+envelope pass and JUCE DSP module. Debug symbols and assertions remain enabled,
+but optimized variables and stepping in those sources can be less predictable.
+Set `-DBROCKDJ_OPTIMIZE_DEBUG_ANALYSIS=OFF` in the CMake profile when detailed
+debugging of those sources is needed. Release configurations and MSVC Debug
+settings are unchanged.
+
+The audio-pressure guard remains active: sustained critical pressure still
+throttles background work, so analysis can take longer while protecting
+playback. It does not reduce waveform, beatgrid or key resolution.
+
+### Linux performance snapshot (2026-11-07)
+
+The production pipeline benchmark analyzed the same 120-second, 48 kHz stereo
+fixture while two cached sources played on an 18-logical-CPU Linux host. The
+measurements below are individual runs, not universal performance guarantees:
+
+| Build | Before | After |
+| --- | ---: | ---: |
+| Debug | 39.26 s | 4.68 s |
+| RelWithDebInfo | 11.75 s | 2.32 s |
+
+Both versions reported the same displayed BPM, key, beat count and waveform
+frame counts.
+An additional 223-second library WAV took 8.98 s in Debug and 4.41 s in
+RelWithDebInfo, with the same BPM and key as the earlier analysis. Its waveform
+cache was isolated in a temporary directory.
+
+With four simulated playing sources and the process restricted to two CPUs,
+the Debug benchmark observed no cache starvation and a worst callback time of
+2.31 ms against a 10.67 ms block budget. Continuously simulated audio pressure
+increased analysis time to 27.43 s. These sources share one cache handle and
+do not model a complete mixer, real audio device or independent files.
+
+The benchmark can also analyze a local track read-only or simulate sustained
+pressure; its waveform caches always use a temporary configuration directory:
+
+```sh
+BROCKDJ_WAVEFORM_BENCHMARK_TRACK=/absolute/path/to/track.wav \
+BROCKDJ_WAVEFORM_BENCHMARK_PLAYING_DECKS=2 \
+  ./cmake-build-debug/BrockDJ_waveform_pipeline_benchmark
+
+BROCKDJ_WAVEFORM_BENCHMARK_AUDIO_PRESSURE=1 \
+  ./cmake-build-debug/BrockDJ_waveform_pipeline_benchmark
+```
 
 ## Validation snapshot (2026-10-29, macOS Debug)
 

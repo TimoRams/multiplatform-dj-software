@@ -49,6 +49,7 @@ void ScratchResampler::prepare(int numChannels, int maxBlockSize, double outputS
     m_referencePos = 0.0;
     m_referenceVelocity = 0.0;
     m_referenceValid = false;
+    m_trackingTargetOffset = 0.0;
     m_leadSpeedEnvelope = 0.0;
     m_starvationGain = 0.0f;
     m_lastOutputL = 0.0f;
@@ -154,7 +155,61 @@ void ScratchResampler::reset(double readPositionSamples) noexcept
     m_trackVel = 0.0;
     m_referenceVelocity = 0.0;
     m_referenceValid = false;
+    m_trackingTargetOffset = 0.0;
     m_leadSpeedEnvelope = 0.0;
+}
+
+void ScratchResampler::setLoopRange(double loopInSample,
+                                    double loopOutSample,
+                                    bool active) noexcept
+{
+    const double trackLength = m_cacheHandle.isValid()
+        ? static_cast<double>(m_cacheHandle.lengthInSamples()) : m_trackLengthSamples;
+    active = active && std::isfinite(loopInSample) && std::isfinite(loopOutSample);
+    if (active) {
+        // The normal cached reader also rounds loop boundaries to source samples.
+        loopInSample = std::max(0.0, std::round(loopInSample));
+        loopOutSample = std::max(0.0, std::round(loopOutSample));
+        if (trackLength > 0.0) {
+            loopInSample = std::min(loopInSample, trackLength);
+            loopOutSample = std::min(loopOutSample, trackLength);
+        }
+        active = loopOutSample > loopInSample + 1.0;
+    }
+    if (m_loopActive == active
+        && (!active || (m_loopInSample == loopInSample && m_loopOutSample == loopOutSample))) {
+        return;
+    }
+
+    const double oldSourcePosition = wrapPosition(m_readPos);
+    m_loopActive = active;
+    m_loopInSample = active ? loopInSample : 0.0;
+    m_loopOutSample = active ? loopOutSample : 0.0;
+    const double newSourcePosition = wrapPosition(oldSourcePosition);
+    const double shift = newSourcePosition - m_readPos;
+    m_readPos = newSourcePosition;
+    m_trackingTargetOffset += shift;
+    if (m_referenceValid)
+        m_referencePos += shift;
+    m_sourceSize = 0;
+
+    if (!active || !m_cache || !m_cacheHandle.isValid())
+        return;
+
+    // Warm both sides before a fast scratch reaches a distant loop boundary.
+    for (const double endpoint : {m_loopInSample, m_loopOutSample - 1.0}) {
+        const auto page = AudioPage::pageIndexForSample(
+            static_cast<std::int64_t>(endpoint));
+        for (std::int64_t offset = -3; offset <= 3; ++offset) {
+            const auto requested = page + offset;
+            if (requested < 0 || requested >= m_cacheHandle.pageCount())
+                continue;
+            if (!m_cache->requestPage(m_cacheHandle, requested,
+                                      AudioCachePriority::ScratchNearPlayhead)) {
+                m_droppedRequests.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
 }
 
 void ScratchResampler::setReadPositionSamples(double readPositionSamples) noexcept
@@ -179,6 +234,7 @@ void ScratchResampler::beginContinuation(const ScratchResampler& source) noexcep
     m_loopInSample = source.m_loopInSample;
     m_loopOutSample = source.m_loopOutSample;
     m_loopActive = source.m_loopActive;
+    m_trackingTargetOffset = source.m_trackingTargetOffset;
 }
 
 void ScratchResampler::beginRateLanding(double targetRate, int samples) noexcept
@@ -301,8 +357,8 @@ bool ScratchResampler::needsWindowReload(double minAbsPos, double maxAbsPos) con
     const double relMin = minAbsPos - m_bufferOriginSample;
     const double relMax = maxAbsPos - m_bufferOriginSample;
     const int edgeGuard = kSincRadius + std::max(32, m_deviceBufferSize / 3);
-    const bool ownsTrackStart = m_bufferOriginSample <= 0.0;
-    const bool ownsTrackEnd = m_trackLengthSamples > 1.0
+    const bool ownsTrackStart = !m_loopActive && m_bufferOriginSample <= 0.0;
+    const bool ownsTrackEnd = !m_loopActive && m_trackLengthSamples > 1.0
         && m_bufferOriginSample + static_cast<double>(m_sourceSize)
             >= m_trackLengthSamples;
 
@@ -319,8 +375,8 @@ bool ScratchResampler::positionInWindow(double position) const noexcept
     // At a real track boundary the sinc reader can use its reflected extension;
     // a local cache-window boundary cannot, because audio outside that window
     // exists and must be loaded instead of mirrored.
-    const bool ownsTrackStart = m_bufferOriginSample <= 0.0;
-    const bool ownsTrackEnd = m_trackLengthSamples > 1.0
+    const bool ownsTrackStart = !m_loopActive && m_bufferOriginSample <= 0.0;
+    const bool ownsTrackEnd = !m_loopActive && m_trackLengthSamples > 1.0
         && m_bufferOriginSample + static_cast<double>(m_sourceSize)
             >= m_trackLengthSamples;
     const double firstReadable = m_bufferOriginSample
@@ -362,58 +418,127 @@ bool ScratchResampler::refillWindowFromCache(double rate, int outputBlockSize) n
         lookBehind = std::min(m_sourceBuffer.getNumSamples() - lookAhead, lookBehind * 2);
     }
     const auto trackLength = m_cacheHandle.lengthInSamples();
-    const auto start = std::max<std::int64_t>(0, static_cast<std::int64_t>(std::floor(m_readPos)) - lookBehind);
-    const auto wanted = std::min<std::int64_t>(m_sourceBuffer.getNumSamples(), lookBehind + lookAhead + outputBlockSize);
-    const auto count = std::min<std::int64_t>(wanted, std::max<std::int64_t>(0, trackLength - start));
-    if (count < kMinWindowSamples) return false;
-    const auto firstPage = AudioPage::pageIndexForSample(start);
-    const auto lastPage = AudioPage::pageIndexForSample(start + count - 1);
+    const auto unboundedStart = static_cast<std::int64_t>(std::floor(m_readPos)) - lookBehind;
+    const auto start = m_loopActive ? unboundedStart : std::max<std::int64_t>(0, unboundedStart);
+    const auto wanted = std::min<std::int64_t>(
+        m_sourceBuffer.getNumSamples(), lookBehind + lookAhead + outputBlockSize);
+    const auto count = m_loopActive ? wanted
+        : std::min<std::int64_t>(wanted, std::max<std::int64_t>(0, trackLength - start));
+    if (count < kMinWindowSamples)
+        return false;
+
+    struct SourceSpan {
+        std::int64_t firstSample = 0;
+        std::int64_t count = 0;
+        std::int64_t firstPage = 0;
+        std::int64_t lastPage = 0;
+        std::size_t pageOffset = 0;
+    };
+    std::array<SourceSpan, 2> spans {};
+    int spanCount = 1;
+    std::int64_t uniqueSamples = count;
+    if (m_loopActive) {
+        const auto loopIn = static_cast<std::int64_t>(m_loopInSample);
+        const auto loopOut = static_cast<std::int64_t>(m_loopOutSample);
+        const auto loopLength = loopOut - loopIn;
+        if (loopIn < 0 || loopOut > trackLength || loopLength <= 1)
+            return false;
+
+        auto offset = (start - loopIn) % loopLength;
+        if (offset < 0)
+            offset += loopLength;
+        const auto firstSample = loopIn + offset;
+        uniqueSamples = std::min(count, loopLength);
+        const auto firstCount = std::min(uniqueSamples, loopOut - firstSample);
+        spans[0].firstSample = firstSample;
+        spans[0].count = firstCount;
+        if (firstCount < uniqueSamples) {
+            spans[1].firstSample = loopIn;
+            spans[1].count = uniqueSamples - firstCount;
+            spanCount = 2;
+        }
+    } else {
+        spans[0].firstSample = start;
+        spans[0].count = count;
+    }
+
     // Pin every required page before touching the active audio window. A
     // speculative page can be missing while the old window still contains the
     // entire current block. Copying the resident prefix first would corrupt
     // that old window even though the refill cannot be committed.
     constexpr std::size_t kMaximumWindowPages =
-        kMaximumSourceBufferSamples / AudioPage::kSamplesPerChannel + 1;
+        kMaximumSourceBufferSamples / AudioPage::kSamplesPerChannel + 4;
     std::array<AudioPageReadGuard, kMaximumWindowPages> pages;
-    const auto pageCount = static_cast<std::size_t>(lastPage - firstPage + 1);
-    if (pageCount > pages.size())
-        return false;
+    const auto currentPage = AudioPage::pageIndexForSample(
+        static_cast<std::int64_t>(wrapPosition(m_readPos)));
+    std::size_t pagesUsed = 0;
     bool complete = true;
-    for (auto pageIndex = firstPage; pageIndex <= lastPage; ++pageIndex) {
-        auto page = m_cache->tryGetPage(m_cacheHandle, pageIndex);
-        if (!page) {
-            complete = false;
-            m_pageMisses.fetch_add(1, std::memory_order_relaxed);
-            if (!m_cache->requestPage(m_cacheHandle, pageIndex,
-                    pageIndex == AudioPage::pageIndexForSample(static_cast<std::int64_t>(m_readPos))
-                        ? AudioCachePriority::RealtimeCritical : AudioCachePriority::ScratchNearPlayhead))
-                m_droppedRequests.fetch_add(1, std::memory_order_relaxed);
-            continue;
+    for (int spanIndex = 0; spanIndex < spanCount; ++spanIndex) {
+        auto& span = spans[static_cast<std::size_t>(spanIndex)];
+        span.firstPage = AudioPage::pageIndexForSample(span.firstSample);
+        span.lastPage = AudioPage::pageIndexForSample(span.firstSample + span.count - 1);
+        span.pageOffset = pagesUsed;
+        const auto pageCount = static_cast<std::size_t>(span.lastPage - span.firstPage + 1);
+        if (pageCount > pages.size() - pagesUsed)
+            return false;
+        pagesUsed += pageCount;
+        for (auto pageIndex = span.firstPage; pageIndex <= span.lastPage; ++pageIndex) {
+            auto page = m_cache->tryGetPage(m_cacheHandle, pageIndex);
+            if (!page) {
+                complete = false;
+                m_pageMisses.fetch_add(1, std::memory_order_relaxed);
+                if (!m_cache->requestPage(m_cacheHandle, pageIndex,
+                        pageIndex == currentPage ? AudioCachePriority::RealtimeCritical
+                                                 : AudioCachePriority::ScratchNearPlayhead))
+                    m_droppedRequests.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+            if (page->trackId != m_cacheHandle.id() || page->generation != m_cacheHandle.generation()) {
+                complete = false;
+                m_generationMismatches.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+            m_pageHits.fetch_add(1, std::memory_order_relaxed);
+            pages[span.pageOffset + static_cast<std::size_t>(pageIndex - span.firstPage)]
+                = std::move(page);
         }
-        if (page->trackId != m_cacheHandle.id() || page->generation != m_cacheHandle.generation()) {
-            complete = false;
-            m_generationMismatches.fetch_add(1, std::memory_order_relaxed);
-            continue;
-        }
-        m_pageHits.fetch_add(1, std::memory_order_relaxed);
-        pages[static_cast<std::size_t>(pageIndex - firstPage)] = std::move(page);
     }
-    if (!complete) return false;
+    if (!complete)
+        return false;
 
-    for (auto pageIndex = firstPage; pageIndex <= lastPage; ++pageIndex) {
-        const auto& page = pages[static_cast<std::size_t>(pageIndex - firstPage)];
-        const auto copyStart = std::max<std::int64_t>(start, page->firstSample);
-        const auto copyEnd = std::min<std::int64_t>(start + count,
-            page->firstSample + page->validSampleCount);
-        const int copyCount = static_cast<int>(std::max<std::int64_t>(0, copyEnd - copyStart));
-        const int sourceOffset = static_cast<int>(copyStart - page->firstSample);
-        const int targetOffset = static_cast<int>(copyStart - start);
-        for (int channel = 0; channel < m_channels; ++channel) {
-            const int sourceChannel = std::min(channel, static_cast<int>(page->channelCount) - 1);
-            if (const float* source = page->channelData(static_cast<unsigned>(sourceChannel)))
-                std::copy_n(source + sourceOffset, copyCount,
-                            m_sourceBuffer.getWritePointer(channel) + targetOffset);
+    int destinationOffset = 0;
+    for (int spanIndex = 0; spanIndex < spanCount; ++spanIndex) {
+        const auto& span = spans[static_cast<std::size_t>(spanIndex)];
+        for (auto pageIndex = span.firstPage; pageIndex <= span.lastPage; ++pageIndex) {
+            const auto& page = pages[
+                span.pageOffset + static_cast<std::size_t>(pageIndex - span.firstPage)];
+            const auto copyStart = std::max<std::int64_t>(span.firstSample, page->firstSample);
+            const auto copyEnd = std::min<std::int64_t>(span.firstSample + span.count,
+                page->firstSample + page->validSampleCount);
+            const int copyCount = static_cast<int>(std::max<std::int64_t>(0, copyEnd - copyStart));
+            const int sourceOffset = static_cast<int>(copyStart - page->firstSample);
+            const int targetOffset = destinationOffset
+                + static_cast<int>(copyStart - span.firstSample);
+            for (int channel = 0; channel < m_channels; ++channel) {
+                const int sourceChannel = std::min(channel, static_cast<int>(page->channelCount) - 1);
+                if (const float* source = page->channelData(static_cast<unsigned>(sourceChannel)))
+                    std::copy_n(source + sourceOffset, copyCount,
+                                m_sourceBuffer.getWritePointer(channel) + targetOffset);
+            }
         }
+        destinationOffset += static_cast<int>(span.count);
+    }
+    // Tiny loops may repeat many times inside one window. Copy one complete
+    // cycle from the cache, then double the prepared prefix instead of
+    // reacquiring pages for every repetition.
+    int filled = static_cast<int>(uniqueSamples);
+    while (filled < count) {
+        const int copyCount = std::min(filled, static_cast<int>(count) - filled);
+        for (int channel = 0; channel < m_channels; ++channel) {
+            std::copy_n(m_sourceBuffer.getReadPointer(channel), copyCount,
+                        m_sourceBuffer.getWritePointer(channel) + filled);
+        }
+        filled += copyCount;
     }
     m_bufferOriginSample = static_cast<double>(start);
     m_sourceSize = static_cast<int>(count);
@@ -436,8 +561,8 @@ bool ScratchResampler::ensureWindow(double rate, int outputBlockSize) noexcept
         + minRate * static_cast<double>(blockSamples) - pad;
     const double maxPos = m_readPos
         + maxRate * static_cast<double>(blockSamples) + pad;
-    const double clampedMin = std::max(0.0, minPos);
-    const double clampedMax = (m_trackLengthSamples > 1.0)
+    const double clampedMin = m_loopActive ? minPos : std::max(0.0, minPos);
+    const double clampedMax = !m_loopActive && m_trackLengthSamples > 1.0
         ? std::min(m_trackLengthSamples - 1.0, maxPos)
         : maxPos;
 
@@ -627,7 +752,8 @@ void ScratchResampler::processBlock(double rate,
                 continue;
         }
 
-        m_readPos = wrapPosition(m_readPos);
+        if (!m_loopActive)
+            m_readPos = wrapPosition(m_readPos);
         // A predicted endpoint may miss the window while the first part of
         // this block is still resident. Render those samples and fade only
         // when the read head actually reaches unavailable audio.
@@ -640,7 +766,8 @@ void ScratchResampler::processBlock(double rate,
     m_statMaxRate.store(statMaxRate, std::memory_order_relaxed);
     m_statMaxRateStep.store(statMaxRateStep, std::memory_order_relaxed);
     m_statMaxRateStepDelta.store(statMaxRateStepDelta, std::memory_order_relaxed);
-    m_readPos = wrapPosition(m_readPos);
+    if (!m_loopActive)
+        m_readPos = wrapPosition(m_readPos);
 }
 
 double ScratchResampler::processScratchTracking(double targetPosSamples,
@@ -667,7 +794,8 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
 
     // No audio before t=0 — keep the read head at the start during pre-roll while
     // the visible (negative) playhead is published separately by the UI thread.
-    const double target = std::max(0.0, targetPosSamples);
+    const double targetPosition = targetPosSamples + m_trackingTargetOffset;
+    const double target = m_loopActive ? targetPosition : std::max(0.0, targetPosition);
 
     const double outSr = std::max(1.0, m_outputSampleRate);
     const double dt = 1.0 / outSr;
@@ -918,9 +1046,11 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
         m_previousRateStep = actualRateStep;
         previousRate = rate;
 
-        m_readPos = wrapPosition(m_readPos);
+        if (!m_loopActive)
+            m_readPos = wrapPosition(m_readPos);
         writeScratchOutput(out0, out1, i,
-                           positionInWindow(m_readPos), rate);
+                           std::abs(rate) >= 1.0e-7 && positionInWindow(m_readPos),
+                           rate);
         m_readPos += rate;
 
         if (!m_loopActive) {
@@ -960,7 +1090,8 @@ double ScratchResampler::processScratchTracking(double targetPosSamples,
 
     m_smoothedRate = m_trackVel * dt;
     m_lastRate = m_smoothedRate;
-    m_readPos = wrapPosition(m_readPos);
+    if (!m_loopActive)
+        m_readPos = wrapPosition(m_readPos);
     return m_smoothedRate;
 }
 

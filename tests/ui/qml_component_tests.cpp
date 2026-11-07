@@ -1963,7 +1963,7 @@ bool appOverlaysRuntimeTests(const std::string& source)
         import QtQml
         QtObject {
             property bool recoveryWarningNeeded: true
-            property string recoveryWarningMessage: "Recovered from an interrupted shutdown"
+            function recoveryWarningMessage() { return "Recovered from an interrupted shutdown" }
         }
     )"), "AppOverlays recovery sink instantiates");
     if (!appWindow || !mainLayout || !appConfig || !libraryDb)

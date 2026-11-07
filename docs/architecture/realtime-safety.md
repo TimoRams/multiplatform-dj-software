@@ -130,6 +130,12 @@ prepare/reset call:
 - `ScratchResampler` reads only guarded immutable pages and its preallocated
   local window. `ScratchCacheStats::diskReadsFromAudioThread` must remain zero;
   starvation and recovery use the fixed 128-sample fade.
+- For an active loop, that window contains periodic PCM from at most two
+  guarded source spans. A short loop expands its first cached cycle by bounded
+  copying; loop endpoint prefetch uses only `requestPage()`. The read head
+  remains unwrapped for the position servo and only the published cursor wraps.
+  A missing endpoint must never overwrite a still-playable window or wait for
+  the decoder.
 - Its sinc table and ordinary <=192 kHz source window are built/reserved in
   `prepareToPlay()`. A larger-track fallback growth is permitted only during
   track installation behind `DeckAudioPipeline`'s callback gate. Neither the

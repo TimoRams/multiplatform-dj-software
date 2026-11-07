@@ -134,7 +134,7 @@ Item {
                 if (typeof appConfig !== "undefined" && appConfig && !appConfig.firstRunCompleted)
                     root.welcomeActive = true
                 if (typeof libraryDb !== "undefined" && libraryDb && libraryDb.recoveryWarningNeeded) {
-                    uncleanShutdownWarning.visibleMessage = libraryDb.recoveryWarningMessage
+                    uncleanShutdownWarning.visibleMessage = libraryDb.recoveryWarningMessage()
                     window.uncleanShutdownWarningVisible = true
                 }
             }

@@ -170,6 +170,29 @@ void WaveformAnalyzer::setWaveformDemand(
         demand.scratching, std::memory_order_release);
 }
 
+bool WaveformAnalyzer::shouldPauseBackgroundWork() noexcept
+{
+    constexpr double kMaxContinuousPauseMs = 250.0;
+    constexpr double kGrantedWorkMs = 50.0;
+    if (!m_backgroundWorkPaused.load(std::memory_order_acquire)) {
+        m_pressurePauseStartedMs.store(0.0, std::memory_order_relaxed);
+        return false;
+    }
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now < m_pressureGrantUntilMs.load(std::memory_order_relaxed))
+        return false;
+    const double started = m_pressurePauseStartedMs.load(std::memory_order_relaxed);
+    if (started <= 0.0) {
+        m_pressurePauseStartedMs.store(now, std::memory_order_relaxed);
+        return true;
+    }
+    if (now - started < kMaxContinuousPauseMs)
+        return true;
+    m_pressurePauseStartedMs.store(0.0, std::memory_order_relaxed);
+    m_pressureGrantUntilMs.store(now + kGrantedWorkMs, std::memory_order_relaxed);
+    return false;
+}
+
 waveform::WaveformDemand WaveformAnalyzer::waveformDemandSnapshot() const
 {
     std::lock_guard lock(m_demandMutex);
@@ -346,9 +369,7 @@ void WaveformAnalyzer::run()
             [this]() {
                 return m_realtimeInteractionActive.load(std::memory_order_acquire);
             },
-            [this]() {
-                return m_backgroundWorkPaused.load(std::memory_order_acquire);
-            },
+            [this]() { return shouldPauseBackgroundWork(); },
             [this, &backgroundSlot]() {
                 backgroundSlot = std::make_unique<AnalysisSlot>(*this);
                 return backgroundSlot->acquired();
@@ -419,9 +440,7 @@ void WaveformAnalyzer::run()
             sampleRate,
             duration,
             haveFullWaveform,
-            [this]() {
-                return m_backgroundWorkPaused.load(std::memory_order_acquire);
-            },
+            [this]() { return shouldPauseBackgroundWork(); },
             m_options,
             m_reanalyzeExisting || seed.bpm <= 0,
             m_reanalyzeExisting || seed.detectedKey.isEmpty(),

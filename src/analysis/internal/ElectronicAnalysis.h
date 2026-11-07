@@ -4,8 +4,18 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <functional>
 #include <array>
+#include <span>
 
 namespace analysis {
+namespace detail {
+struct PhaseHit {
+    double time;
+    double weight;
+};
+inline constexpr int kPhaseCount = 128;
+int selectBeatPhase(std::span<const PhaseHit> hits, double period);
+}
+
 struct ElectronicFeatures {
     AnalysisFeatures rhythm;
     double attackStep = 44.0 / 44100.0;

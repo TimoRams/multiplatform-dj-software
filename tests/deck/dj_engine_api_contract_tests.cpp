@@ -145,16 +145,34 @@ int main(int argc, char** argv)
                       && !reload.contains(QStringLiteral("loadTrack("))
                       && !reload.contains(QStringLiteral("m_transport->")),
                   "reanalysis stops old waveform writers and resets visuals without reloading audio");
-    const auto invalidation = librarySource.indexOf(QStringLiteral("emit waveformInvalidationStarted"));
-    const auto erase = librarySource.indexOf(QStringLiteral("WaveformCache::invalidateForFile"));
-    const auto resume = librarySource.indexOf(QStringLiteral("emit waveformInvalidationFinished"));
-    ok &= require(invalidation >= 0 && erase > invalidation && resume > erase
-                      && librarySource.contains(QStringLiteral("{600, 1200}"))
-                      && bootstrapSource.contains(QStringLiteral("&DjEngine::beginWaveformReanalysis"))
-                      && bootstrapSource.contains(QStringLiteral("&DjEngine::finishWaveformReanalysis"))
-                      && transportSource.contains(QStringLiteral("generation == safeThis->m_reanalyzedVisualGeneration"))
+    const auto acceptAnalysisBegin = deckSource.indexOf(QStringLiteral("void DjEngine::acceptLibraryAnalysis"));
+    const auto acceptAnalysis = deckSource.mid(acceptAnalysisBegin, finishReload - acceptAnalysisBegin);
+    ok &= require(librarySource.contains(QStringLiteral("m_trackData->createAnalysisSeed(), m_current.options, true"))
+                      && librarySource.contains(QStringLiteral("if (completion->completed && completion->result)\n            emit analysisReady(m_current.filePath, completion->result)"))
+                      && !librarySource.contains(QStringLiteral("WaveformCache::invalidateForFile"))
+                      && !librarySource.contains(QStringLiteral("emit waveformInvalidationStarted"))
+                      && !librarySource.contains(QStringLiteral("emit waveformInvalidationFinished"))
+                      && bootstrapSource.contains(QStringLiteral("&LibraryAnalysisManager::analysisReady"))
+                      && bootstrapSource.contains(QStringLiteral("&DjEngine::acceptLibraryAnalysis"))
+                      && acceptAnalysisBegin >= 0 && finishReload > acceptAnalysisBegin
+                      && acceptAnalysis.contains(QStringLiteral("!result->validated || !result->complete"))
+                      && acceptAnalysis.contains(QStringLiteral("file != QFileInfo(m_trackFilePath)"))
+                      && acceptAnalysis.contains(QStringLiteral("result->identity.fileSize"))
+                      && acceptAnalysis.contains(QStringLiteral("result->identity.fileModifiedMs"))
+                      && acceptAnalysis.contains(QStringLiteral("m_trackData->createAnalysisSeed()"))
+                      && acceptAnalysis.contains(QStringLiteral("!merged.beatGrid.lockedByUser"))
+                      && acceptAnalysis.contains(QStringLiteral("!merged.beatGrid.userModified"))
+                      && acceptAnalysis.contains(QStringLiteral("merged.identity.trackGeneration = m_trackLoader.currentGeneration()"))
+                      && !acceptAnalysis.contains(QStringLiteral("result->waveform"))
+                      && !acceptAnalysis.contains(QStringLiteral("result->spectralWaveform"))
+                      && !acceptAnalysis.contains(QStringLiteral("result->overviewWaveform"))
+                      && !acceptAnalysis.contains(QStringLiteral("result->peakMip"))
+                      && !acceptAnalysis.contains(QStringLiteral("result->preparedWaveformLines"))
+                      && !acceptAnalysis.contains(QStringLiteral("m_transport->")),
+                  "library reanalysis reuses waveforms and safely merges validated results into loaded decks");
+    ok &= require(transportSource.contains(QStringLiteral("generation == safeThis->m_reanalyzedVisualGeneration"))
                       && transportSource.contains(QStringLiteral("acceptLoadedWaveform")),
-                  "all decks quiesce before both cache resolutions are erased and reject stale loader publications");
+                  "waveform rebuilds reject stale loader publications");
     const auto inputBridgeSource = readFile(
         QStringLiteral(SOURCE_DIR "/src/controllers/flx10/Flx10InputOwnershipBridge.cpp"));
     ok &= require(header.contains(QStringLiteral("inputExternal"))

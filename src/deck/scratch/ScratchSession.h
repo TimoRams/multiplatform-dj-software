@@ -46,7 +46,7 @@ public:
 
     void clear() noexcept;
 
-    // Loop wrap used at grab and during absolute scrub targets.
+    // Loop wrap used to choose the initial audible position.
     [[nodiscard]] static double wrapLoopPosition(double posSec,
                                                  double trackLenSec,
                                                  const ScratchLoopCtx& loop,
@@ -63,7 +63,8 @@ public:
                                   double eventIntervalSeconds,
                                   double measuredRate
                                       = std::numeric_limits<double>::quiet_NaN(),
-                                  bool clampEventSpike = true) noexcept;
+                                  bool clampEventSpike = true,
+                                  bool pointerInput = false) noexcept;
 
     bool submitReleaseRelative(engine::audio::RenderModeRouter* bridge,
                                double deltaSec) noexcept;
@@ -86,6 +87,7 @@ private:
     bool m_loopLocked = false;
     bool m_savedReverse = false;
     double m_lastRawSec = 0.0;
+    double m_lastPointerSec = 0.0;
     QElapsedTimer m_physicsClock;
     QElapsedTimer m_lastMoveClock;
 };

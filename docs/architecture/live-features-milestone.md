@@ -86,10 +86,10 @@ including cancellation of opposite-polarity channels.
 The four previously reproduced envelope holes during the +/-16% tempo sweep at
 64/256-frame blocks (44.1/48 kHz) are resolved by the hop-consistent pitch map and
 denser overlap described in `keylock-stability.md`. Sweep limits remain unchanged.
-Separately,
-`dj_engine_api_contract` expects waveform-invalidation implementation strings in
-LibraryAnalysisManager.cpp that are absent in both HEAD and the working tree.
-Neither test is disabled or relaxed by this milestone.
+The prior `dj_engine_api_contract` invalidation check has been updated to the
+documented electronic-analysis policy: reuse valid waveform caches and merge
+validated results into loaded decks without replacing their waveforms. The
+`analysis_lifetime` test verifies actual cache reuse during explicit reanalysis.
 
 Hardware acceptance still requires real USB removal/eject on Linux, headphone
 routing on the target audio interface, extended four-deck recording to removable

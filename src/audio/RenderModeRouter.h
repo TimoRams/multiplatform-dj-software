@@ -7,6 +7,7 @@
 #include "audio/internal/ScratchResampler.h"
 #include "deck/scratch/ScratchController.h"
 #include "deck/scratch/ScratchInput.h"
+#include "deck/scratch/PointerScratchTrajectory.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <array>
@@ -91,6 +92,10 @@ public:
                                 double dtSeconds,
                                 double measuredRate
                                     = std::numeric_limits<double>::quiet_NaN()) noexcept;
+    // On-screen pointer (waveform drag, virtual platter): as above, and the
+    // reported position is timestamped so the callback can render the pointer
+    // path continuously instead of chasing each frame-rate report.
+    void submitPointerDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept;
     void submitReleaseDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept;
     void syncScratchReadPosition(double displaySec, double trackSampleRate) noexcept;
     void publishScratchDisplay(double displaySec) noexcept;
@@ -189,6 +194,7 @@ private:
 
     engine::scratch::ScratchController m_controller;
     engine::scratch::VirtualTurntable m_platter;
+    engine::scratch::PointerScratchTrajectory m_pointerTrajectory;
     ScratchResampler m_scratchResampler;
     ScratchResampler m_scratchExitResampler;
     juce::AudioBuffer<float> m_scratchExitAudio;
@@ -213,6 +219,7 @@ private:
     std::atomic<double> m_trackSampleRate { 44100.0 };
     std::atomic<double> m_trackLengthSeconds { 0.0 };
     std::atomic<double> m_scratchDisplaySec { 0.0 };
+    std::atomic<bool> m_scratchDisplayFollowsAudio { false };
     std::atomic<double> m_audioScratchReadPositionSamples { 0.0 };
     std::atomic<std::int64_t> m_lastScratchPrefetchPage {-1};
 

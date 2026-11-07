@@ -19,6 +19,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <functional>
+#include <string>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -459,6 +461,328 @@ bool testSpinHandoffs(const QString& path)
     return ok;
 }
 
+bool testLoopRealtimeScratch(const QString& path)
+{
+    bool ok = true;
+    {
+        engine::audio::RenderModeRouter router(nullptr);
+        engine::scratch::ScratchSession pointer;
+        const engine::scratch::ScratchLoopCtx loop {true, 4.0, 5.0};
+        router.configureTrack(48'000.0, 12.0);
+        router.setLoopRangeSeconds(4.0, 5.0, true, 48'000.0);
+        router.beginScratch(4.99, 48'000.0, 12.0, false, 1.0);
+        router.syncScratchReadPosition(4.99, 48'000.0);
+        pointer.setScrubbing(true);
+        (void)pointer.armGrab(4.99, 12.0, loop);
+        ok &= require(pointer.submitAbsolute(&router, 5.01, 48'000.0, 12.0, 0.0, loop)
+                          && std::abs(pointer.lastRawSec() - 5.01) < 1.0e-9,
+                      "absolute UI scrub keeps its direction across a loop edge");
+        ok &= require(std::abs(router.displayPositionSeconds() - 4.99) < 1.0e-9,
+                      "a loop scratch displays the rendered cursor, not the unwrapped pointer");
+        (void)pointer.armGrab(5.10, 12.0, loop);
+        ok &= require(pointer.submitAbsolute(&router, 5.11, 48'000.0, 12.0, 0.0, loop)
+                          && std::abs(pointer.lastRawSec() - 4.11) < 1.0e-9,
+                      "absolute UI scrub keeps its pointer anchor outside the loop");
+        ok &= require(pointer.submitRelative(&router, 0.01, 48'000.0)
+                          && pointer.submitAbsolute(&router, 5.13, 48'000.0, 12.0, 0.0, loop)
+                          && std::abs(pointer.lastRawSec() - 4.13) < 1.0e-9,
+                      "relative and absolute UI scratch updates share one pointer trajectory");
+        router.setLoopRangeSeconds(0.0, 0.0, false, 48'000.0);
+        ok &= require(pointer.submitRelative(&router, 0.01, 48'000.0)
+                         && std::abs(router.displayPositionSeconds() - 4.99) < 1.0e-9,
+                      "clearing a scratch loop keeps the rendered cursor authoritative");
+        router.beginScratch(2.0, 48'000.0, 12.0, false, 1.0);
+        router.syncScratchReadPosition(2.0, 48'000.0);
+        router.publishScratchDisplay(2.1);
+        ok &= require(std::abs(router.displayPositionSeconds() - 2.1) < 1.0e-9,
+                      "a new non-loop scratch retains immediate pointer display updates");
+        router.setLoopRangeSeconds(4.0, 5.0, true, 48'000.0);
+        router.publishScratchDisplay(5.2);
+        router.setLoopRangeSeconds(0.0, 0.0, false, 48'000.0);
+        router.publishScratchDisplay(6.2);
+        ok &= require(std::abs(router.displayPositionSeconds() - 2.1) < 1.0e-9,
+                      "a loop enabled and cleared mid-scratch keeps the audio cursor authoritative");
+    }
+
+    AudioPageCache cache(8 * 1024 * 1024);
+    const auto handle = cache.openTrack({path});
+    (void)cache.requestRange(handle, 0, handle.pageCount() - 1,
+                             AudioCachePriority::ScratchNearPlayhead);
+    ok &= require(cache.waitForPageRange(handle, 0, handle.pageCount() - 1,
+                                        std::chrono::seconds(5)),
+                  "loop scratch fixture resident");
+    for (const double direction : {-1.0, 1.0}) {
+        DeckAudioPipeline graph(cache);
+        graph.prepareToPlay(128, 48'000.0);
+        graph.installPreparedTrack({handle, 48'000.0, 1});
+        graph.setLoopRangeSeconds(4.0, 5.0, true, 48'000.0);
+        juce::AudioBuffer<float> output(2, 128);
+        graph.getNextAudioBlock({&output, 0, 128});
+
+        flx10::Flx10RealtimeScratchIngress ingress;
+        auto& router = graph.renderModeRouter();
+        router.setRealtimeScratchInput(ingress.stream());
+        router.configureTrack(48'000.0, 12.0);
+        const double anchor = direction > 0.0 ? 4.999 : 4.001;
+        const double start = engine::scratch::RealtimeScratchInput::clockSeconds() - 0.010;
+        (void)ingress.touchDown(start, 1);
+        router.beginScratch(anchor, 48'000.0, 12.0, false, 1.0);
+        graph.getNextAudioBlock({&output, 0, 128});
+        for (int packet = 1; packet <= 6; ++packet)
+            (void)ingress.platter(direction * 7.0, start + packet * 0.001, 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(75));
+        for (int block = 0; block < 24; ++block)
+            graph.getNextAudioBlock({&output, 0, 128});
+
+        const double expected = anchor + flx10::scratchDeltaSeconds(direction * 42.0);
+        const double position = router.readPositionSeconds(48'000.0);
+        const double error = std::abs(std::remainder(position - expected, 1.0));
+        std::cout << "native-loop direction=" << direction << " error-seconds=" << error << '\n';
+        ok &= require(error < 0.001,
+                      "native FLX10 follows its complete tick travel across a loop without the UI");
+
+        router.publishScratchDisplay(anchor + direction * 2.0);
+        ok &= require(std::abs(router.displayPositionSeconds() - position) < 1.0e-9,
+                      "UI movement cannot overwrite the loop scratch's audible display cursor");
+        graph.getNextAudioBlock({&output, 0, 128});
+        ok &= require(std::abs(std::remainder(
+                          router.readPositionSeconds(48'000.0) - expected, 1.0)) < 0.001,
+                      "stale UI display updates cannot reset the loop scratch reader");
+
+        (void)ingress.touchUp(engine::scratch::RealtimeScratchInput::clockSeconds(), 1);
+        const auto release = router.requestScratchRelease(0.0, false, false);
+        for (int block = 0; block < 8 && !router.scratchReleaseComplete(release); ++block)
+            graph.getNextAudioBlock({&output, 0, 128});
+        ok &= require(router.scratchReleaseComplete(release),
+                      "loop scratch release completes");
+        ok &= require(std::abs(std::remainder(
+                          router.scratchReleaseSnapshot().finalCursorSeconds - expected,
+                          1.0)) < 0.001,
+                      "loop scratch release hands off the rendered cursor");
+        ok &= require(realtimeCountersAreZero(graph),
+                      "native loop scratching remains realtime safe");
+        router.setRealtimeScratchInput(nullptr);
+        graph.clearTrack();
+        graph.releaseResources();
+    }
+    return ok;
+}
+
+// An on-screen waveform drag, reproduced the way a desktop delivers it: the
+// pointer is sampled at the display rate, rounded to whole pixels and handed to
+// the GUI thread a few milliseconds late with jitter, while the audio callback
+// runs on its own clock. The metrics are the audible ones: frame-rate rate
+// ripple during a steady drag (the "digital stutter"), rate steps between
+// blocks, lag-compensated position error, false direction flips and the final
+// resting position.
+struct UiScratchMetrics {
+    double ripple = 0.0;
+    double maxRateStep = 0.0;
+    double rmsErrorMs = 0.0;
+    double lagMs = 0.0;
+    int extraReversals = 0;
+    double restErrorMs = 0.0;
+};
+
+UiScratchMetrics runUiPointerScratch(DeckAudioPipeline& graph,
+                                     const std::function<double(double)>& hand,
+                                     double durationSec,
+                                     double steadyFrom,
+                                     double steadyTo,
+                                     int expectedReversals,
+                                     double eventRateHz,
+                                     unsigned seed)
+{
+    constexpr double kSampleRate = 48'000.0;
+    constexpr int kBlock = 128;
+    constexpr double kBlockSec = kBlock / kSampleRate;
+    constexpr double kPixelsPerSecond = 264.0; // default zoom: 0.22 px/point
+    constexpr double kAnchor = 2.0;
+
+    auto& router = graph.renderModeRouter();
+    router.configureTrack(kSampleRate, 12.0);
+    router.beginScratch(kAnchor, kSampleRate, 12.0, false, 1.0);
+    router.syncScratchReadPosition(kAnchor, kSampleRate);
+    engine::scratch::ScratchSession pointer;
+    pointer.setScrubbing(true);
+    (void) pointer.armGrab(kAnchor, 12.0, {});
+
+    struct Event { double sampleSec; double deliverSec; double pixel; };
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<double> sampleJitter(-0.0015, 0.0015);
+    std::uniform_real_distribution<double> deliveryDelay(0.0005, 0.0070);
+    std::vector<Event> events;
+    double lastDeliver = 0.0;
+    for (int k = 1; k / eventRateHz <= durationSec + 0.2; ++k) {
+        const double sampleSec = k / eventRateHz + sampleJitter(rng);
+        const double deliverSec = std::max(lastDeliver, sampleSec + deliveryDelay(rng));
+        lastDeliver = deliverSec;
+        const double t = std::min(sampleSec, durationSec);
+        events.push_back({sampleSec, deliverSec, std::round(hand(t) * kPixelsPerSecond)});
+    }
+
+    juce::AudioBuffer<float> output(2, kBlock);
+    std::vector<double> positions;
+    std::size_t next = 0;
+    double lastPixel = 0.0;
+    const int blocks = static_cast<int>((durationSec + 0.35) / kBlockSec);
+    const auto start = std::chrono::steady_clock::now();
+    for (int block = 0; block < blocks; ++block) {
+        const double now = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - start).count();
+        while (next < events.size() && events[next].deliverSec <= now) {
+            const double deltaPx = events[next].pixel - lastPixel;
+            lastPixel = events[next].pixel;
+            if (deltaPx != 0.0)
+                (void) pointer.submitRelative(&router, deltaPx / kPixelsPerSecond, kSampleRate);
+            ++next;
+        }
+        graph.getNextAudioBlock({&output, 0, kBlock});
+        positions.push_back(router.readPositionSeconds(kSampleRate) - kAnchor);
+        std::this_thread::sleep_until(
+            start + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<double>((block + 1) * kBlockSec)));
+    }
+
+    UiScratchMetrics metrics;
+    std::vector<double> rates;
+    for (std::size_t i = 1; i < positions.size(); ++i)
+        rates.push_back((positions[i] - positions[i - 1]) / kBlockSec);
+    if (steadyTo > steadyFrom) {
+        double sum = 0.0, sumSq = 0.0;
+        int count = 0;
+        for (std::size_t i = 1; i < rates.size(); ++i) {
+            const double t = (i + 1) * kBlockSec;
+            if (t < steadyFrom || t > steadyTo)
+                continue;
+            sum += rates[i];
+            sumSq += rates[i] * rates[i];
+            metrics.maxRateStep = std::max(metrics.maxRateStep, std::abs(rates[i] - rates[i - 1]));
+            ++count;
+        }
+        const double mean = sum / std::max(1, count);
+        metrics.ripple = std::sqrt(std::max(0.0, sumSq / std::max(1, count) - mean * mean))
+            / std::max(1e-9, std::abs(mean));
+    } else {
+        for (std::size_t i = 1; i < rates.size(); ++i)
+            metrics.maxRateStep = std::max(metrics.maxRateStep, std::abs(rates[i] - rates[i - 1]));
+    }
+    double best = std::numeric_limits<double>::infinity();
+    for (double lag = 0.0; lag <= 0.080; lag += 0.001) {
+        double sq = 0.0;
+        int count = 0;
+        for (std::size_t i = 0; i < positions.size(); ++i) {
+            const double t = (i + 1) * kBlockSec - lag;
+            if (t < 0.05 || t > durationSec)
+                continue;
+            const double e = positions[i] - hand(t);
+            sq += e * e;
+            ++count;
+        }
+        const double rms = std::sqrt(sq / std::max(1, count));
+        if (rms < best) {
+            best = rms;
+            metrics.lagMs = lag * 1000.0;
+        }
+    }
+    metrics.rmsErrorMs = best * 1000.0;
+    int reversals = 0;
+    double direction = 0.0;
+    for (const double rate : rates) {
+        if (std::abs(rate) < 0.05)
+            continue;
+        const double sign = rate > 0.0 ? 1.0 : -1.0;
+        if (direction != 0.0 && sign != direction)
+            ++reversals;
+        direction = sign;
+    }
+    metrics.extraReversals = std::max(0, reversals - expectedReversals);
+    metrics.restErrorMs = std::abs(positions.back() - lastPixel / kPixelsPerSecond) * 1000.0;
+
+    const auto release = router.requestScratchRelease(0.0, false, false);
+    for (int block = 0; block < 64 && !router.scratchReleaseComplete(release); ++block)
+        graph.getNextAudioBlock({&output, 0, kBlock});
+    return metrics;
+}
+
+bool testUiPointerScratch(const QString& path)
+{
+    bool ok = true;
+    AudioPageCache cache(8 * 1024 * 1024);
+    const auto handle = cache.openTrack({path});
+    (void) cache.requestRange(handle, 0, handle.pageCount() - 1,
+                              AudioCachePriority::ScratchNearPlayhead);
+    ok &= require(cache.waitForPageRange(handle, 0, handle.pageCount() - 1,
+                                        std::chrono::seconds(5)),
+                  "UI scratch fixture resident");
+    DeckAudioPipeline graph(cache);
+    graph.prepareToPlay(128, 48'000.0);
+    graph.installPreparedTrack({handle, 48'000.0, 1});
+
+    constexpr double kTwoPi = 6.28318530717958647692;
+    struct Scenario {
+        const char* name;
+        std::function<double(double)> hand;
+        double duration, steadyFrom, steadyTo;
+        int reversals;
+        double eventRate;
+        // Limits sit well below the frame-locked rate pulses of chasing each
+        // pointer report (ripple ~0.8-0.9, rate steps up to ~10x, ~30 false
+        // reversals per second) but leave room for scheduler jitter.
+        double maxRipple, maxRateStep, maxRmsErrorMs;
+        int maxExtraReversals;
+    };
+    const std::vector<Scenario> scenarios {
+        {"slow-drag-60hz", [](double t) { return 0.35 * t; }, 0.9, 0.25, 0.85, 0, 60.0,
+         0.45, 1.0, 6.0, 6},
+        {"nominal-drag-60hz", [](double t) { return 1.0 * t; }, 0.7, 0.20, 0.65, 0, 60.0,
+         0.40, 1.5, 8.0, 6},
+        {"slow-drag-125hz", [](double t) { return 0.35 * t; }, 0.9, 0.25, 0.85, 0, 125.0,
+         0.50, 1.0, 6.0, 8},
+        {"baby-scratch-60hz", [=](double t) { return 0.09 * std::sin(kTwoPi * 2.5 * t); },
+         1.2, 0.0, 0.0, 6, 60.0, 0.0, 3.0, 8.0, 8},
+        {"fast-scratch-60hz", [=](double t) { return 0.22 * std::sin(kTwoPi * 3.5 * t); },
+         1.0, 0.0, 0.0, 7, 60.0, 0.0, 8.0, 20.0, 16},
+    };
+    for (const auto& scenario : scenarios) {
+        UiScratchMetrics worst;
+        for (unsigned seed = 1; seed <= 3; ++seed) {
+            const auto m = runUiPointerScratch(graph, scenario.hand, scenario.duration,
+                                               scenario.steadyFrom, scenario.steadyTo,
+                                               scenario.reversals, scenario.eventRate, seed);
+            worst.ripple = std::max(worst.ripple, m.ripple);
+            worst.maxRateStep = std::max(worst.maxRateStep, m.maxRateStep);
+            worst.rmsErrorMs = std::max(worst.rmsErrorMs, m.rmsErrorMs);
+            worst.lagMs = std::max(worst.lagMs, m.lagMs);
+            worst.extraReversals = std::max(worst.extraReversals, m.extraReversals);
+            worst.restErrorMs = std::max(worst.restErrorMs, m.restErrorMs);
+        }
+        std::cout << "ui-scratch " << scenario.name
+                  << " ripple=" << worst.ripple
+                  << " max-rate-step=" << worst.maxRateStep
+                  << " rms-error-ms=" << worst.rmsErrorMs
+                  << " lag-ms=" << worst.lagMs
+                  << " extra-reversals=" << worst.extraReversals
+                  << " rest-error-ms=" << worst.restErrorMs << '\n';
+        const std::string name = scenario.name;
+        if (scenario.maxRipple > 0.0)
+            ok &= require(worst.ripple < scenario.maxRipple,
+                          (name + ": steady UI drag plays at an even rate").c_str());
+        ok &= require(worst.maxRateStep < scenario.maxRateStep,
+                      (name + ": UI scratch rate has no frame-rate pulses").c_str());
+        ok &= require(worst.rmsErrorMs < scenario.maxRmsErrorMs,
+                      (name + ": UI scratch follows the pointer path").c_str());
+        ok &= require(worst.extraReversals <= scenario.maxExtraReversals,
+                      (name + ": UI scratch has no false direction changes").c_str());
+        ok &= require(worst.lagMs <= 60.0,
+                      (name + ": UI scratch audio stays close behind the pointer").c_str());
+        ok &= require(worst.restErrorMs < 0.5,
+                      (name + ": UI scratch settles exactly on the pointer").c_str());
+    }
+    ok &= require(realtimeCountersAreZero(graph), "UI pointer scratching remains realtime safe");
+    return ok;
+}
+
 } // namespace
 
 int main(int argc, char** argv)
@@ -477,12 +801,18 @@ int main(int argc, char** argv)
     ok &= require(writeTransientWave(transientPath), "transient fixture");
     ok &= require(writeWave(sweepPath, 48'000.0, 2, 220.0), "sweep fixture");
     ok &= require(writeWave(spinPath, 48'000.0, 2, 220.0, 576'000), "spin fixture");
+    if (std::getenv("BROCKDJ_SCRATCH_LOOP_ONLY") != nullptr)
+        return ok && testLoopRealtimeScratch(spinPath) ? 0 : 1;
+    if (std::getenv("BROCKDJ_UI_SCRATCH_ONLY") != nullptr)
+        return ok && testUiPointerScratch(spinPath) ? 0 : 1;
     if (std::getenv("BROCKDJ_SPIN_HANDOFF_ONLY") != nullptr)
         return ok && testSpinHandoffs(spinPath) ? 0 : 1;
     if (std::getenv("BROCKDJ_KEYLOCK_SWEEP_ONLY") != nullptr)
         return ok && testTempoSweeps(sweepPath) ? 0 : 1;
+    ok &= testLoopRealtimeScratch(spinPath);
     ok &= testSpinHandoffs(spinPath);
     ok &= testTempoSweeps(sweepPath);
+    ok &= testUiPointerScratch(spinPath);
 
     {
         AudioPageCache transientCache(4 * 1024 * 1024);

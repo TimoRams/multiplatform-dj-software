@@ -5,6 +5,8 @@
 #include <QTemporaryDir>
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <iostream>
@@ -30,6 +32,23 @@ bool writeWave(const QString& path, double sr, int channels, int samples,
                 2.0 * juce::MathConstants<double>::pi * frequencyHz * i / sr)));
     return writer->writeFromAudioSampleBuffer(data, 0, samples);
 }
+
+bool writeLoopEdgeWave(const QString& path)
+{
+    juce::WavAudioFormat format;
+    std::unique_ptr<juce::OutputStream> stream =
+        std::make_unique<juce::FileOutputStream>(juce::File(path.toStdString()));
+    auto writer = format.createWriterFor(stream, juce::AudioFormatWriterOptions{}
+        .withSampleRate(48000.0).withNumChannels(2).withBitsPerSample(16));
+    if (!writer)
+        return false;
+    juce::AudioBuffer<float> data(2, 70000);
+    for (int channel = 0; channel < data.getNumChannels(); ++channel)
+        for (int i = 0; i < data.getNumSamples(); ++i)
+            data.setSample(channel, i, i >= 10000 && i < 58000 ? 0.25f : -0.25f);
+    return writer->writeFromAudioSampleBuffer(data, 0, data.getNumSamples());
+}
+
 bool waitResident(AudioPageCache& cache, const AudioCacheHandle& h, int first, int last)
 {
     cache.requestRange(h, first, last, AudioCachePriority::ScratchNearPlayhead);
@@ -49,6 +68,99 @@ bool finiteBlock(const juce::AudioBuffer<float>& b)
     return true;
 }
 
+struct LoopReaderGate {
+    std::atomic<bool> entered {false};
+    std::atomic<bool> released {false};
+};
+
+class GatedLoopReader final : public juce::AudioFormatReader {
+public:
+    explicit GatedLoopReader(std::shared_ptr<LoopReaderGate> gate)
+        : juce::AudioFormatReader(nullptr, "gated-loop"), m_gate(std::move(gate))
+    {
+        sampleRate = 48000.0;
+        lengthInSamples = 70000;
+        numChannels = 2;
+        bitsPerSample = 32;
+        usesFloatingPointData = true;
+    }
+
+    bool readSamples(int* const* destinations, int channels, int offset,
+                     juce::int64 sourceStart, int count) override
+    {
+        if (sourceStart < AudioPage::kSamplesPerChannel) {
+            m_gate->entered.store(true, std::memory_order_release);
+            while (!m_gate->released.load(std::memory_order_acquire))
+                m_gate->released.wait(false, std::memory_order_acquire);
+        }
+        for (int channel = 0; channel < channels; ++channel) {
+            if (destinations[channel])
+                std::fill_n(reinterpret_cast<float*>(destinations[channel]) + offset,
+                            count, 0.25f);
+        }
+        return true;
+    }
+
+private:
+    std::shared_ptr<LoopReaderGate> m_gate;
+};
+
+bool checkLoopCacheMiss(const QString& path)
+{
+    auto gate = std::make_shared<LoopReaderGate>();
+    AudioPageCache cache(8 * 1024 * 1024);
+    const auto handle = cache.openTrack({path}, std::make_unique<GatedLoopReader>(gate));
+    bool ok = require(waitResident(cache, handle, 2, 3),
+                      "loop cache miss fixture's current pages resident");
+    engine::audio::ScratchResampler scratch;
+    scratch.prepare(2, 128, 48000.0);
+    scratch.setTrackLengthSamples(handle.lengthInSamples());
+    scratch.setTrackCacheSource(&cache, handle);
+    scratch.setLoopRange(10000.0, 58000.0, true);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!gate->entered.load(std::memory_order_acquire)
+           && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    ok &= require(gate->entered.load(std::memory_order_acquire),
+                  "loop destination prefetch reaches the blocked worker");
+
+    scratch.reset(45000.0);
+    scratch.snapSmoothedRate(1.0);
+    juce::AudioBuffer<float> output(2, 128);
+    for (int block = 0; block < 3; ++block)
+        scratch.processBlock(1.0, {&output, 0, 128});
+    const auto before = scratch.cacheStats();
+    scratch.setReadPositionSamples(54580.0);
+    std::atomic<bool> callbackDone {false};
+    std::thread callback([&] {
+        scratch.processBlock(1.0, {&output, 0, 128});
+        callbackDone.store(true, std::memory_order_release);
+    });
+    const auto callbackDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!callbackDone.load(std::memory_order_acquire)
+           && std::chrono::steady_clock::now() < callbackDeadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const bool returnedWhileBlocked = callbackDone.load(std::memory_order_acquire);
+    gate->released.store(true, std::memory_order_release);
+    gate->released.notify_all();
+    callback.join();
+    const auto after = scratch.cacheStats();
+    double maximumError = 0.0;
+    for (int sample = 0; sample < 128; ++sample)
+        maximumError = std::max(maximumError,
+            std::abs(static_cast<double>(output.getSample(0, sample)) - 0.25));
+    ok &= require(returnedWhileBlocked && after.pageMisses > before.pageMisses,
+                  "loop cache miss requests work without waiting for the decoder");
+    ok &= require(after.starvationBlocks == before.starvationBlocks && maximumError < 0.001,
+                  "missing loop destination keeps the still-resident window audible");
+    ok &= require(waitResident(cache, handle, 0, 4), "loop destination eventually becomes resident");
+    scratch.processBlock(1.0, {&output, 0, 128});
+    ok &= require(finiteBlock(output) && scratch.cacheStats().diskReadsFromAudioThread == 0,
+                  "loop cache recovery stays finite and callback-safe");
+    return ok;
+}
+
 double renderRms(engine::audio::ScratchResampler& scratch, double rate)
 {
     juce::AudioBuffer<float> output(2, 512);
@@ -64,6 +176,319 @@ double renderRms(engine::audio::ScratchResampler& scratch, double rate)
     return std::sqrt(sumSquares
         / static_cast<double>(output.getNumChannels() * output.getNumSamples()));
 }
+
+double wrapLoop(double position, double in, double out)
+{
+    double offset = std::fmod(position - in, out - in);
+    if (offset < 0.0)
+        offset += out - in;
+    return in + offset;
+}
+
+bool checkLoopScratch(AudioPageCache& cache,
+                      const AudioCacheHandle& tone,
+                      const AudioCacheHandle& edges)
+{
+    using engine::audio::ScratchResampler;
+    constexpr double loopIn = 10000.0;
+    constexpr double loopOut = 58000.0;
+    bool ok = true;
+    for (const int blockSize : {64, 128, 512}) {
+        for (const double rate : {-1.0, 1.0}) {
+            ScratchResampler scratch;
+            scratch.prepare(2, blockSize, 48000.0);
+            scratch.setTrackLengthSamples(tone.lengthInSamples());
+            scratch.setTrackCacheSource(&cache, tone);
+            scratch.setLoopRange(loopIn, loopOut, true);
+            const double start = rate > 0.0
+                ? loopOut - 2.5 * blockSize : loopIn + 2.5 * blockSize;
+            scratch.reset(start);
+            scratch.snapSmoothedRate(rate);
+            juce::AudioBuffer<float> output(2, blockSize);
+            double maximumError = 0.0;
+            for (int block = 0; block < 6; ++block) {
+                scratch.processBlock(rate, {&output, 0, blockSize});
+                if (block < 2)
+                    continue;
+                for (int sample = 0; sample < blockSize; ++sample) {
+                    const double position = start
+                        + rate * (block * blockSize + sample);
+                    const double expected = 0.25 * std::sin(
+                        2.0 * juce::MathConstants<double>::pi * 330.0
+                        * position / 48000.0);
+                    maximumError = std::max(maximumError, std::abs(
+                        static_cast<double>(output.getSample(0, sample)) - expected));
+                }
+            }
+            if (qEnvironmentVariableIsSet("BROCKDJ_SCRATCH_VERBOSE"))
+                std::cout << "long-loop waveform block=" << blockSize
+                          << " rate=" << rate << " error=" << maximumError << '\n';
+            ok &= require(maximumError < 0.001,
+                          "resident long loop stays audible and phase-correct across the wrap");
+            ok &= require(scratch.cacheStats().starvationBlocks == 0,
+                          "resident long loop does not starve at the wrap");
+        }
+    }
+
+    for (const double rate : {-1.0, 1.0}) {
+        ScratchResampler scratch;
+        scratch.prepare(2, 128, 48000.0);
+        scratch.setTrackLengthSamples(tone.lengthInSamples());
+        scratch.setTrackCacheSource(&cache, tone);
+        scratch.setLoopRange(loopIn, loopOut, true);
+        const double start = rate > 0.0 ? loopOut - 64.0 : loopIn + 64.0;
+        scratch.reset(start);
+        scratch.snapSmoothedRate(rate);
+        scratch.primeTrackerVelocity(rate);
+        juce::AudioBuffer<float> output(2, 128);
+        double maximumError = 0.0;
+        double maximumRateError = 0.0;
+        for (int block = 0; block < 8; ++block) {
+            const double target = start + rate * block * 128.0;
+            scratch.processScratchTracking(target, rate, 10.0, {&output, 0, 128}, 0.0);
+            const double expected = wrapLoop(target + rate * 128.0, loopIn, loopOut);
+            const double error = std::remainder(scratch.readPosition() - expected,
+                                                loopOut - loopIn);
+            maximumError = std::max(maximumError, std::abs(error));
+            const auto stats = scratch.motionStats();
+            maximumRateError = std::max({maximumRateError,
+                                         std::abs(stats.minRate - rate),
+                                         std::abs(stats.maxRate - rate)});
+        }
+        if (qEnvironmentVariableIsSet("BROCKDJ_SCRATCH_VERBOSE"))
+            std::cout << "loop tracker rate=" << rate << " position-error="
+                      << maximumError << " rate-error=" << maximumRateError << '\n';
+        ok &= require(maximumError < 2.0 && maximumRateError < 0.02,
+                      "position tracker retains hand travel and speed across the loop");
+
+        constexpr double editedIn = 9000.0;
+        constexpr double editedOut = 59000.0;
+        const double cursorBeforeEdit = scratch.readPosition();
+        scratch.setLoopRange(editedIn, editedOut, true);
+        const double editedAnchor = wrapLoop(cursorBeforeEdit, editedIn, editedOut);
+        for (int block = 0; block < 4; ++block) {
+            const double target = start + rate * (8 + block) * 128.0;
+            scratch.processScratchTracking(target, rate, 10.0, {&output, 0, 128}, 0.0);
+        }
+        ok &= require(std::abs(std::remainder(
+                          scratch.readPosition()
+                              - wrapLoop(editedAnchor + rate * 4.0 * 128.0,
+                                         editedIn, editedOut),
+                          editedOut - editedIn)) < 2.0,
+                      "editing an active loop preserves the continuous hand trajectory");
+
+        const double cursorBeforeClear = scratch.readPosition();
+        scratch.setLoopRange(0.0, 0.0, false);
+        for (int block = 0; block < 4; ++block) {
+            const double target = start + rate * (12 + block) * 128.0;
+            scratch.processScratchTracking(target, rate, 10.0, {&output, 0, 128}, 0.0);
+        }
+        ok &= require(std::abs(scratch.readPosition()
+                               - (cursorBeforeClear + rate * 4.0 * 128.0)) < 2.0,
+                      "clearing a loop preserves the current scratch cursor and hand motion");
+
+        constexpr double newIn = 12000.0;
+        constexpr double newOut = 57000.0;
+        const double cursorBeforeNewLoop = scratch.readPosition();
+        scratch.setLoopRange(newIn, newOut, true);
+        const double newAnchor = wrapLoop(cursorBeforeNewLoop, newIn, newOut);
+        for (int block = 0; block < 4; ++block) {
+            const double target = start + rate * (16 + block) * 128.0;
+            scratch.processScratchTracking(target, rate, 10.0, {&output, 0, 128}, 0.0);
+        }
+        ok &= require(std::abs(std::remainder(
+                          scratch.readPosition()
+                              - wrapLoop(newAnchor + rate * 4.0 * 128.0, newIn, newOut),
+                          newOut - newIn)) < 2.0,
+                      "changing a loop rebases the hand trajectory without a speed spike");
+    }
+
+    for (const double rate : {-8.0, -0.37, 0.37, 8.0}) {
+        ScratchResampler scratch;
+        scratch.prepare(2, 512, 48000.0);
+        scratch.setTrackLengthSamples(edges.lengthInSamples());
+        scratch.setTrackCacheSource(&cache, edges);
+        scratch.setLoopRange(20000.49, 20002.49, true);
+        scratch.reset(20001.0);
+        scratch.snapSmoothedRate(rate);
+        scratch.primeTrackerVelocity(rate);
+        juce::AudioBuffer<float> output(2, 512);
+        double maximumError = 0.0;
+        for (int block = 0; block < 8; ++block) {
+            scratch.processScratchTracking(20001.0 + rate * block * 512.0,
+                                            rate, 10.0, {&output, 0, 512}, 0.0);
+            if (block == 0)
+                continue;
+            for (int sample = 0; sample < 512; ++sample)
+                maximumError = std::max(maximumError,
+                    std::abs(static_cast<double>(output.getSample(0, sample)) - 0.25));
+        }
+        const double expected = wrapLoop(20001.0 + rate * 8.0 * 512.0, 20000.0, 20002.0);
+        ok &= require(maximumError < 0.001
+                          && std::abs(std::remainder(scratch.readPosition() - expected, 2.0)) < 0.1
+                          && scratch.cacheStats().starvationBlocks == 0,
+                      "tiny loops repeat safely over many turns and negative hand coordinates");
+    }
+
+    if (qEnvironmentVariableIsSet("BROCKDJ_SCRATCH_BENCHMARK")) {
+        ScratchResampler scratch;
+        scratch.prepare(2, 128, 48000.0);
+        scratch.setTrackLengthSamples(edges.lengthInSamples());
+        scratch.setTrackCacheSource(&cache, edges);
+        scratch.setLoopRange(20000.0, 20002.0, true);
+        scratch.reset(20001.0);
+        scratch.snapSmoothedRate(8.0);
+        juce::AudioBuffer<float> output(2, 128);
+        constexpr int iterations = 2000;
+        double totalMicros = 0.0;
+        double worstMicros = 0.0;
+        for (int block = 0; block < iterations; ++block) {
+            const auto start = std::chrono::steady_clock::now();
+            scratch.processBlock(8.0, {&output, 0, 128});
+            const double elapsed = std::chrono::duration<double, std::micro>(
+                std::chrono::steady_clock::now() - start).count();
+            totalMicros += elapsed;
+            worstMicros = std::max(worstMicros, elapsed);
+        }
+        std::cout << "two-sample loop 8x, 128-frame callback: average-us="
+                  << totalMicros / iterations << " worst-us=" << worstMicros << '\n';
+    }
+
+    {
+        ScratchResampler looped, direct;
+        for (auto* reader : {&looped, &direct}) {
+            reader->prepare(2, 128, 48000.0);
+            reader->setTrackLengthSamples(tone.lengthInSamples());
+            reader->setTrackCacheSource(&cache, tone);
+        }
+        looped.setLoopRange(loopIn, loopOut, true);
+        constexpr double start = loopOut - 128.0;
+        for (auto* reader : {&looped, &direct}) {
+            reader->reset(start);
+            reader->snapSmoothedRate(1.5);
+            reader->primeTrackerVelocity(1.5);
+        }
+        juce::AudioBuffer<float> loopOutput(2, 128), directOutput(2, 128);
+        double target = start;
+        double maxPositionDifference = 0.0;
+        double maxRateDifference = 0.0;
+        for (int block = 0; block < 16; ++block) {
+            const double rate = block < 4 ? 1.5 : -1.5;
+            const double loopRate = looped.processScratchTracking(
+                target, rate, 10.0, {&loopOutput, 0, 128}, 0.0);
+            const double directRate = direct.processScratchTracking(
+                target, rate, 10.0, {&directOutput, 0, 128}, 0.0);
+            target += rate * 128.0;
+            maxPositionDifference = std::max(maxPositionDifference, std::abs(
+                std::remainder(looped.readPosition()
+                    - wrapLoop(direct.readPosition(), loopIn, loopOut), loopOut - loopIn)));
+            maxRateDifference = std::max(maxRateDifference, std::abs(loopRate - directRate));
+        }
+        ok &= require(maxPositionDifference < 0.01 && maxRateDifference < 0.0001,
+                      "loop crossing and reversal keep the same continuous scratch trajectory");
+    }
+
+    for (const double rate : {-1.0, 1.0}) {
+        ScratchResampler scratch;
+        scratch.prepare(2, 128, 48000.0);
+        scratch.setTrackLengthSamples(edges.lengthInSamples());
+        scratch.setTrackCacheSource(&cache, edges);
+        scratch.setLoopRange(loopIn, loopOut, true);
+        const double start = rate > 0.0 ? loopOut - 2.25 : loopIn + 2.25;
+        scratch.reset(start - rate * 256.0);
+        scratch.snapSmoothedRate(rate);
+        juce::AudioBuffer<float> output(2, 128);
+        double maximumError = 0.0;
+        for (int block = 0; block < 4; ++block) {
+            scratch.processBlock(rate, {&output, 0, 128});
+            if (block < 2)
+                continue;
+            for (int sample = 0; sample < 128; ++sample)
+                maximumError = std::max(maximumError,
+                    std::abs(static_cast<double>(output.getSample(0, sample)) - 0.25));
+        }
+        ok &= require(maximumError < 0.001,
+                      "sinc interpolation uses loop samples rather than audio outside the loop");
+    }
+
+    for (const bool loopActive : {false, true}) {
+        ScratchResampler scratch;
+        scratch.prepare(2, 128, 48000.0);
+        scratch.setTrackLengthSamples(edges.lengthInSamples());
+        scratch.setTrackCacheSource(&cache, edges);
+        scratch.setLoopRange(loopIn, loopOut, loopActive);
+        scratch.reset(20000.0);
+        scratch.snapSmoothedRate(1.0);
+        juce::AudioBuffer<float> output(2, 128);
+        for (int block = 0; block < 2; ++block)
+            scratch.processBlock(1.0, {&output, 0, 128});
+        const float lastMovingSample = output.getSample(0, 127);
+        const double cursor = scratch.readPosition();
+        scratch.reset(cursor);
+        scratch.processScratchTracking(cursor, 0.0, 10.0, {&output, 0, 128}, 0.0);
+        const float firstStoppedSample = output.getSample(0, 0);
+        scratch.processScratchTracking(cursor, 0.0, 10.0, {&output, 0, 128}, 0.0);
+        ok &= require(std::abs(firstStoppedSample - lastMovingSample) < 0.005
+                          && output.getRMSLevel(0, 0, 128) < 1.0e-6,
+                      "a held stationary platter fades smoothly to silence");
+        scratch.reset(cursor);
+        scratch.snapSmoothedRate(1.0);
+        scratch.primeTrackerVelocity(1.0);
+        scratch.processScratchTracking(cursor, 1.0, 10.0, {&output, 0, 128}, 0.0);
+        ok &= require(std::abs(output.getSample(0, 0)) < 0.005
+                          && std::abs(output.getSample(0, 127) - 0.25f) < 0.001,
+                      "motion after a stationary hold fades back in without an abrupt onset");
+    }
+    return ok;
+}
+
+bool checkHighRateLoop(AudioPageCache& cache, const AudioCacheHandle& handle)
+{
+    using engine::audio::ScratchResampler;
+    constexpr double loopIn = 24000.0;
+    constexpr double loopOut = 72000.0;
+    bool ok = true;
+    for (const auto [blockSize, normalizedSpeed] : {
+             std::pair{128, 8.0}, std::pair{512, 2.0}, std::pair{2048, 1.0}}) {
+        for (const double direction : {-1.0, 1.0}) {
+            ScratchResampler looped, direct;
+            for (auto* reader : {&looped, &direct}) {
+                reader->prepare(2, blockSize, 48000.0);
+                reader->setTrackLengthSamples(handle.lengthInSamples());
+                reader->setTrackCacheSource(&cache, handle);
+            }
+            looped.setLoopRange(loopIn, loopOut, true);
+            const double rate = direction * normalizedSpeed * 4.0;
+            const double start = rate > 0.0
+                ? loopOut - 2.5 * blockSize * rate
+                : loopIn - 2.5 * blockSize * rate;
+            for (auto* reader : {&looped, &direct}) {
+                reader->reset(start);
+                reader->snapSmoothedRate(rate);
+            }
+            juce::AudioBuffer<float> loopOutput(2, blockSize), directOutput(2, blockSize);
+            double maximumDifference = 0.0;
+            for (int block = 0; block < 4; ++block) {
+                looped.processBlock(rate, {&loopOutput, 0, blockSize});
+                direct.processBlock(rate, {&directOutput, 0, blockSize});
+                if (block < 2)
+                    continue;
+                for (int sample = 0; sample < blockSize; ++sample) {
+                    maximumDifference = std::max(maximumDifference, std::abs(
+                        static_cast<double>(loopOutput.getSample(0, sample))
+                            - directOutput.getSample(0, sample)));
+                }
+            }
+            if (qEnvironmentVariableIsSet("BROCKDJ_SCRATCH_VERBOSE"))
+                std::cout << "192/48 loop block=" << blockSize << " rate=" << rate
+                          << " waveform-difference=" << maximumDifference << '\n';
+            ok &= require(maximumDifference < 0.001
+                              && looped.cacheStats().starvationBlocks == 0,
+                          "192/48 kHz loop wrap preserves high-speed audio in both directions");
+        }
+    }
+    return ok;
+}
 }
 
 int main(int argc, char** argv)
@@ -77,6 +502,8 @@ int main(int argc, char** argv)
     const QString ultraRate = dir.filePath("ultra-rate.wav");
     const QString ultraRatePass = dir.filePath("ultra-rate-pass.wav");
     const QString ultraRateAlias = dir.filePath("ultra-rate-alias.wav");
+    const QString loopEdges = dir.filePath("loop-edges.wav");
+    const QString highRateLoop = dir.filePath("high-rate-loop.wav");
     ok &= require(writeWave(stereo, 48000, 2, 70000), "stereo fixture");
     ok &= require(writeWave(mono, 44100, 1, 20000), "mono fixture");
     ok &= require(writeWave(highRate, 96000, 2, 20000), "96 kHz fixture");
@@ -85,9 +512,23 @@ int main(int argc, char** argv)
                   "192 kHz passband fixture");
     ok &= require(writeWave(ultraRateAlias, 192000, 2, 96000, 60000.0),
                   "192 kHz stopband fixture");
+    ok &= require(writeLoopEdgeWave(loopEdges), "loop-edge fixture");
+    ok &= require(writeWave(highRateLoop, 192000, 2, 120000, 320.0),
+                  "high-rate loop fixture");
+    ok &= checkLoopCacheMiss(stereo);
     AudioPageCache cache(8 * 1024 * 1024);
     auto handle = cache.openTrack({stereo});
     ok &= require(waitResident(cache, handle, 0, 4), "scratch pages resident");
+    auto edgeHandle = cache.openTrack({loopEdges});
+    ok &= require(waitResident(cache, edgeHandle, 0, 4), "loop-edge pages resident");
+    ok &= checkLoopScratch(cache, handle, edgeHandle);
+    cache.releaseTrack(edgeHandle);
+    auto highRateLoopHandle = cache.openTrack({highRateLoop});
+    ok &= require(waitResident(cache, highRateLoopHandle, 0,
+                               static_cast<int>(highRateLoopHandle.pageCount() - 1)),
+                  "high-rate loop pages resident");
+    ok &= checkHighRateLoop(cache, highRateLoopHandle);
+    cache.releaseTrack(highRateLoopHandle);
 
     engine::audio::ScratchResampler scratch;
     scratch.prepare(2, 4096, 48000);
@@ -237,6 +678,8 @@ int main(int argc, char** argv)
     for (int block = 0; block < 3; ++block)
         boundaryScratch.processScratchTracking(
             24'000, 0.0, 8.0, {&boundaryOut, 0, 128}, 0.0);
+    boundaryScratch.snapSmoothedRate(0.05);
+    boundaryScratch.processBlock(0.05, {&boundaryOut, 0, 128});
     const auto starvationBeforeBoundary = boundaryScratch.cacheStats().starvationBlocks;
     const auto missesBeforeBoundary = boundaryScratch.cacheStats().pageMisses;
     boundaryScratch.setReadPositionSamples(28'870);

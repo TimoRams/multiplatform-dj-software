@@ -29,6 +29,21 @@ endif()
 
 option(BROCKDJ_ENABLE_NATIVE_ARCH "Enable target-specific -march=native code generation for local release builds" OFF)
 option(BROCKDJ_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer for non-shipping builds" OFF)
+option(BROCKDJ_OPTIMIZE_DEBUG_ANALYSIS
+    "Optimize analysis and JUCE DSP in Debug builds (disable for detailed debugging)" ON)
+if(BROCKDJ_OPTIMIZE_DEBUG_ANALYSIS AND NOT MSVC
+   AND CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
+    # JUCE's FFT implementation is part of its amalgamated DSP module.
+    set_property(SOURCE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/analysis/internal/AnalysisOrchestrator.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/analysis/internal/BeatAnalysis.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/analysis/internal/ElectronicAnalysis.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/analysis/internal/FeatureAnalysis.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/waveform/internal/WaveformEnvelopePass.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/libs/JUCE/modules/juce_dsp/juce_dsp.cpp"
+        APPEND PROPERTY COMPILE_OPTIONS "$<$<CONFIG:Debug>:-Og>"
+    )
+endif()
 if(BROCKDJ_ENABLE_SANITIZERS)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$" OR WIN32)
         message(FATAL_ERROR "BROCKDJ_ENABLE_SANITIZERS requires a Unix GCC or Clang toolchain")

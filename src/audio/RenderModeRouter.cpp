@@ -102,6 +102,9 @@ void RenderModeRouter::beginScratch(double anchorSeconds,
     m_latestReleaseSpeed.store(0.0, std::memory_order_relaxed);
     m_trackSampleRate.store(std::max(1.0, trackSampleRate), std::memory_order_relaxed);
     m_trackLengthSeconds.store(std::max(0.0, trackLengthSeconds), std::memory_order_relaxed);
+    m_scratchDisplayFollowsAudio.store(false, std::memory_order_release);
+    if (m_loopActive.load(std::memory_order_acquire))
+        m_scratchDisplayFollowsAudio.store(true, std::memory_order_release);
 
     // Bind this scratch session to the physical touch that caused it. The
     // controller thread may already have accumulated several platter packets by
@@ -131,6 +134,8 @@ void RenderModeRouter::beginScratch(double anchorSeconds,
         : std::abs(normalPlaybackSpeed);
     m_controller.setTrackSampleRate(trackSampleRate);
     m_platter.reset(targetSamples, trackSampleRate);
+    m_pointerTrajectory.reset(engine::scratch::RealtimeScratchInput::clockSeconds(),
+                              targetSamples);
     m_controller.startScratch(audioAnchorSamples, wasPlayingBeforeScratch, playbackSpeed);
     m_controller.setHandPositionSec(anchorSeconds);
     m_startPositionSeconds.store(audioAnchorSec, std::memory_order_relaxed);
@@ -222,6 +227,7 @@ void RenderModeRouter::engageScratchDuringInertia() noexcept
     // The callback remains the sole owner of the resampler state. The controller
     // preserves its inertia velocity, so re-grabbing stays continuous without a
     // control-thread read-head reset.
+    m_pointerTrajectory.clear();
     m_controller.startScratch(m_controller.readPositionSamples(), wasPlaying, normalSpeed);
     m_useScratchScaler.store(true, std::memory_order_release);
 }
@@ -236,8 +242,20 @@ void RenderModeRouter::addTargetDeltaSeconds(double deltaSeconds, double trackSa
 
 void RenderModeRouter::prefetchScratchTarget() noexcept
 {
-    const double samplePosition = m_platter.targetSamplePosition();
-    if (!std::isfinite(samplePosition) || samplePosition < 0.0)
+    double samplePosition = m_platter.targetSamplePosition();
+    if (!std::isfinite(samplePosition))
+        return;
+    if (m_loopActive.load(std::memory_order_acquire)) {
+        const double loopIn = std::round(m_loopInSample.load(std::memory_order_relaxed));
+        const double loopOut = std::round(m_loopOutSample.load(std::memory_order_relaxed));
+        if (std::isfinite(loopIn) && std::isfinite(loopOut) && loopOut > loopIn + 1.0) {
+            double offset = std::fmod(samplePosition - loopIn, loopOut - loopIn);
+            if (offset < 0.0)
+                offset += loopOut - loopIn;
+            samplePosition = loopIn + offset;
+        }
+    }
+    if (samplePosition < 0.0)
         return;
     const auto page = static_cast<std::int64_t>(samplePosition)
         / AudioPage::kSamplesPerChannel;
@@ -256,6 +274,14 @@ void RenderModeRouter::submitHandDeltaSeconds(double deltaSeconds,
 {
     m_platter.addTimeDeltaSeconds(deltaSeconds);
     m_controller.submitHandDelta(deltaSeconds, dtSeconds, measuredRate);
+}
+
+void RenderModeRouter::submitPointerDeltaSeconds(double deltaSeconds,
+                                                 double dtSeconds) noexcept
+{
+    submitHandDeltaSeconds(deltaSeconds, dtSeconds);
+    m_pointerTrajectory.push(engine::scratch::RealtimeScratchInput::clockSeconds(),
+                             m_platter.targetSamplePosition());
 }
 
 void RenderModeRouter::submitReleaseDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept
@@ -280,23 +306,13 @@ void RenderModeRouter::syncScratchReadPosition(double displaySec, double trackSa
 
 void RenderModeRouter::publishScratchDisplay(double displaySec) noexcept
 {
-    // Continuous touch updates from the UI thread. The audio thread's position
-    // tracker owns the read head (no readPos slam here → no UI/audio fight), so we
-    // only publish the visible playhead and the hand position.
     m_controller.setHandPositionSec(displaySec);
-    m_scratchDisplaySec.store(displaySec, std::memory_order_relaxed);
-
-    if (!m_loopActive.load(std::memory_order_acquire))
-        return;
-
-    // Loop-while-scratching uses the rate-integration path; keep the read head
-    // anchored to the hand position as before.
-    const double sr = m_trackSampleRate.load(std::memory_order_relaxed);
-    const double audioSamples = std::max(0.0, displaySec) * sr;
-    m_readerSyncPositionSeconds.store(std::max(0.0, displaySec), std::memory_order_relaxed);
-    m_readerSyncSampleRate.store(sr, std::memory_order_relaxed);
-    m_readerSyncGeneration.fetch_add(1, std::memory_order_release);
-    m_controller.syncReadPositionSamples(audioSamples);
+    // Once a loop has rebased the scratch timeline, only the audio cursor
+    // represents the visible position, even if the loop is later cleared.
+    if (!m_scratchDisplayFollowsAudio.load(std::memory_order_acquire)
+        && !m_loopActive.load(std::memory_order_acquire)) {
+        m_scratchDisplaySec.store(displaySec, std::memory_order_relaxed);
+    }
 }
 
 void RenderModeRouter::configureTrack(double trackSampleRate, double trackLengthSeconds) noexcept
@@ -386,6 +402,8 @@ void RenderModeRouter::setLoopRangeSeconds(double loopInSec, double loopOutSec, 
 {
     m_loopInSample.store(loopInSec * trackSampleRate, std::memory_order_relaxed);
     m_loopOutSample.store(loopOutSec * trackSampleRate, std::memory_order_relaxed);
+    if (active)
+        m_scratchDisplayFollowsAudio.store(true, std::memory_order_release);
     m_loopActive.store(active, std::memory_order_release);
     m_loopCommandGeneration.fetch_add(1, std::memory_order_release);
 }
@@ -1327,8 +1345,7 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
     const double sr = m_trackSampleRate.load(std::memory_order_relaxed);
     const double oneX = sr / std::max(1.0, m_outputSampleRate);
 
-    if ((m_controller.requiresPositionTracking() || m_cursorHandoffPending)
-        && !m_loopActive.load(std::memory_order_acquire)) {
+    if (m_controller.requiresPositionTracking() || m_cursorHandoffPending) {
         // Position-authoritative scratch: a critically-damped tracker glides the
         // read head to the hand target. Exact tracking for slow/precise moves,
         // momentum across sparse UI events, no overshoot/snap-back warble.
@@ -1356,6 +1373,19 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
             accumulatedLeadSamples = std::numeric_limits<double>::quiet_NaN();
             maxReferenceCorrectionRate = std::numeric_limits<double>::infinity();
             tickCorrectionTimeSeconds = 0.015;
+        } else if (engine::scratch::PointerScratchTrajectory::Estimate pointer;
+                   m_pointerTrajectory.evaluate(
+                       engine::scratch::RealtimeScratchInput::clockSeconds(), pointer)) {
+            // The rendered pointer path is already continuous in position and
+            // speed and is evaluated at the time it represents: no age to
+            // extrapolate across, no stepped report to spread out.
+            target = pointer.positionSamples;
+            commandedRate = pointer.velocitySamplesPerSecond
+                / std::max(1.0, m_outputSampleRate);
+            inputLead = 0.0;
+            accumulatedLeadSamples = 0.0;
+            maxReferenceCorrectionRate = std::numeric_limits<double>::infinity();
+            tickCorrectionTimeSeconds = 0.0;
         }
         const double maxAbsRate = ScratchResampler::kMaximumTrackingRate * oneX;
         // Extrapolate by the target's real age. Using the same half-interval on

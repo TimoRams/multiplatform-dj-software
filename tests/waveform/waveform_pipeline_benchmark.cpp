@@ -9,11 +9,13 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -120,10 +122,21 @@ int main(int argc, char** argv)
         "BROCKDJ_WAVEFORM_BENCHMARK_SECONDS", 30, 10, 300);
     const int playingDecks = environmentInt(
         "BROCKDJ_WAVEFORM_BENCHMARK_PLAYING_DECKS", 1, 1, 4);
+    const bool audioPressure = environmentInt(
+        "BROCKDJ_WAVEFORM_BENCHMARK_AUDIO_PRESSURE", 0, 0, 1) != 0;
+    const QString realTrack = qEnvironmentVariable("BROCKDJ_WAVEFORM_BENCHMARK_TRACK");
     const QString deckAPath = sourceDirectory.filePath(QStringLiteral("deck-a.wav"));
-    const QString deckBPath = sourceDirectory.filePath(QStringLiteral("deck-b.wav"));
+    const QString deckBPath = realTrack.isEmpty()
+        ? sourceDirectory.filePath(QStringLiteral("deck-b.wav"))
+        : QFileInfo(realTrack).absoluteFilePath();
+    const QFileInfo trackInfo(deckBPath);
+    if (!realTrack.isEmpty() && (!trackInfo.isFile() || !trackInfo.isReadable())) {
+        std::cerr << "The waveform benchmark input is not a readable file\n";
+        return 3;
+    }
     if (!writeBenchmarkWave(deckAPath, durationSeconds, 0.0)
-        || !writeBenchmarkWave(deckBPath, durationSeconds, 3.0)) {
+        || (realTrack.isEmpty() && !writeBenchmarkWave(deckBPath, durationSeconds, 3.0))) {
+        std::cerr << "Could not create the waveform benchmark fixture\n";
         return 3;
     }
 
@@ -170,6 +183,23 @@ int main(int argc, char** argv)
 
     const auto cacheBefore = pageCache.stats();
     const auto analysisStarted = std::chrono::steady_clock::now();
+    constexpr std::array<double, 3> milestones {0.62, 0.84, 0.94};
+    std::array<std::atomic<std::int64_t>, milestones.size()> milestoneUsec {};
+    analyzer.setProgressCallback(
+        [&](double progress, bool active, WaveformAnalyzer::AnalysisGeneration) {
+            if (!active)
+                return;
+            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - analysisStarted).count() + 1;
+            for (std::size_t i = 0; i < milestones.size(); ++i) {
+                if (progress < milestones[i])
+                    continue;
+                std::int64_t unset = 0;
+                milestoneUsec[i].compare_exchange_strong(unset, elapsed,
+                                                         std::memory_order_relaxed);
+            }
+        });
+    analyzer.setBackgroundWorkPaused(audioPressure);
     analyzer.startAnalysis(deckBPath, durationSeconds * 0.5);
 
     std::uint64_t callbackCount = 0;
@@ -204,6 +234,7 @@ int main(int argc, char** argv)
     if (!analysisFinished.load(std::memory_order_acquire)) {
         analyzer.requestCancel();
         analyzer.shutdownAndJoin();
+        std::cerr << "Waveform analysis timed out\n";
         return 5;
     }
     while (analyzer.isThreadRunning())
@@ -211,8 +242,10 @@ int main(int argc, char** argv)
 
     const double analysisMs = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - analysisStarted).count();
-    if (!analysisAccepted.load(std::memory_order_acquire) || !result)
+    if (!analysisAccepted.load(std::memory_order_acquire) || !result) {
+        std::cerr << "Waveform analysis failed for " << deckBPath.toStdString() << '\n';
         return 6;
+    }
 
     const QString payloadPath = WaveformCache::cachePathFor(deckBPath, 600);
     const QString renderPath = WaveformCache::renderCachePathFor(deckBPath, 600);
@@ -239,8 +272,17 @@ int main(int argc, char** argv)
     }
     std::cout << "waveform-pipeline-benchmark"
               << " duration-s=" << durationSeconds
+              << " input=" << (realTrack.isEmpty() ? "synthetic" : "file")
+              << " analyzed-duration-s=" << result->totalExpected / 600.0
               << " playing-decks=" << playingDecks
+              << " audio-pressure=" << audioPressure
               << " analysis-ms=" << analysisMs
+              << " waveform-ready-ms=" << milestoneUsec[0].load() / 1000.0
+              << " features-near-ready-ms=" << milestoneUsec[1].load() / 1000.0
+              << " grid-ready-ms=" << milestoneUsec[2].load() / 1000.0
+              << " bpm=" << std::setprecision(14) << result->bpm << std::setprecision(6)
+              << " key=" << result->detectedKey.toStdString()
+              << " beats=" << result->beats.size()
               << " cache-load-ms=" << cacheLoadMs
               << " payload-bytes=" << payloadBytes
               << " render-bytes=" << renderBytes

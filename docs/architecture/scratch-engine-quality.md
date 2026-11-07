@@ -63,11 +63,49 @@ UI work cannot batch the audio trajectory. `RealtimeScratchInput::tryRead()`
 makes one non-spinning coherent read attempt; the callback retains its previous
 valid snapshot if it catches a writer in progress.
 
+### On-screen pointer scratch
+
+Dragging the scrolling waveform or the virtual platter reports through
+`ScratchSession::submitRelative()`: once per display frame (60-125 Hz), rounded
+to whole pixels (about 3.8 ms of audio at default zoom), with 0.5-7 ms of GUI
+delivery jitter and no reports while the pointer rests. Chasing each report
+made the read head sprint on every event and stall before the next one, a
+frame-rate rate pulse heard as digital stutter on every drag.
+
+`RenderModeRouter::submitPointerDeltaSeconds()` therefore also timestamps the
+reported hand position into `PointerScratchTrajectory`, a lock-free
+single-writer/single-reader ring. The callback renders the pointer path a
+short adaptive delay behind real time and fits a locally weighted line around
+that render time:
+
+- the report interval is the median of the last eight motion gaps, smoothed per
+  callback and clamped to 4-34 ms;
+- render delay = 1.5 intervals + 6 ms delivery margin (about 31 ms at 60 Hz,
+  18 ms at 125 Hz); the future half of the biweight window spans exactly that
+  delay, so a new report enters at the leading edge with zero weight;
+- the past half spans at least 40 ms, so a slow drag reported at 125 Hz still
+  spans several distinct pixel positions;
+- a report older than one interval plus 6 ms without a successor implies a
+  resting pointer and adds hold samples on a 4 ms grid, so the head settles
+  exactly on the last report;
+- position and speed come from the same fit and feed the existing tracker with
+  no extra lead or correction-rate limit.
+
+The waveform display still follows the pointer immediately; only the audio
+trails it by the render delay. MIDI and FLX10 input do not use this path.
+
 ## Audio trajectory
 
 The callback reconstructs the absolute hand target from the grab anchor plus
 the fitted cumulative tick travel. It supplies the measured event age and velocity to
 `ScratchResampler::processScratchTracking()`.
+
+The comparison with [openDJ's controller filtering](https://github.com/sebastian-beca/opendj/blob/2d2677c19e7542c95e49b8e8e7e0a5894c45cac6/crates/controllers/src/host.rs)
+and [scratch speed ramps](https://github.com/sebastian-beca/opendj/blob/2d2677c19e7542c95e49b8e8e7e0a5894c45cac6/crates/engine/src/engine.rs)
+reinforced the value of smooth velocity changes. BrockDJ retains its own
+position-authoritative trajectory instead of using velocity alone: filtered
+speed must not change accumulated platter travel. The loop changes below are an
+independent implementation.
 
 Each audio block joins the persistent prior hand state to the newest predicted
 position and velocity with a quintic Hermite curve whose endpoint acceleration
@@ -126,6 +164,32 @@ only a larger source can grow it, behind `DeckAudioPipeline`'s callback gate.
 The callback only copies immutable resident `AudioPageCache` pages. A miss
 requests bounded worker work and uses the fixed 128-sample starvation fade; it
 never decodes, reads a file, allocates, or waits.
+When the tracked platter is effectively stationary, the same short envelope
+fades the last sample to silence and back in on movement, rather than holding a
+constant DC sample.
+
+### Scratch with an active loop
+
+The hand target and scratch read head stay on an unwrapped sample timeline
+while the published playhead is mapped into the loop. The same position tracker
+and native FLX10 snapshot therefore remain active inside a loop, including
+across repeated wraps and direction changes; UI display updates cannot seek the
+audio reader or overwrite the rendered playhead. After a loop is cleared, that
+playhead remains audio-authoritative until the next grab. Editing, enabling, or
+clearing a loop rebases the tracker and its hand target onto the audible cursor.
+
+Loop boundaries are rounded to source samples just like normal cached playback.
+The existing preallocated scratch window is filled with the loop's periodic
+PCM, including the sinc kernel's neighborhood on both sides of the boundary.
+At most two source spans are pinned before the window is changed. Tiny loops
+copy one complete cycle and expand it by bounded doubling; they do not acquire
+cache pages once per wrap. Both loop endpoints are requested ahead of time,
+but a genuinely cold page can still cause the normal starvation fade. A failed
+speculative refill leaves the previous resident window intact.
+
+This prevents a cache-window dropout or samples outside the selected loop from
+appearing at a wrap. It cannot remove a real waveform discontinuity in a loop
+whose endpoints do not match.
 
 ## Release and handoff
 
@@ -202,6 +266,13 @@ orientation points, not psychoacoustic proof.
 | Decaying backspin edge, 512 | 0.003656x/sample^2 | 0.000039x/sample^2 |
 | 8x steady hardware trajectory | previously clamped/could retain startup gap | 8.000x mean, 1.0002 travel ratio |
 | 6x USB-jitter trajectory, 128/256/512 | one-frame quotient oscillated | 5.9997-6.0000x mean, 1.0006 travel ratio |
+| Periodic long-loop waveform at 1x, 64/128/512 | 0.13-0.36 peak sample error and a wrap dropout | at most 0.000034 peak sample error |
+| Native FLX10 loop move while UI is stalled | complete 42-tick move lost (5.93 ms) | under 0.001 ms simulated position error |
+| UI waveform drag at 60 Hz, rate ripple (0.35 s/s / 1 s/s) | 0.88 / 0.79 | 0.14 / 0.10 |
+| UI waveform drag at 125 Hz, rate ripple | 0.82 | 0.19 |
+| UI baby scratch, largest block-rate step / extra reversals | 9.7x / ~30 | 0.9x / 2 |
+| UI fast scratch, lag-compensated RMS position error | 35 ms | 8 ms |
+| UI pointer audio delay behind the hand | 1-9 ms (pulsed) | 26-39 ms (smooth) |
 | 512-sample stereo reader microbenchmark | 66 us (32 taps) | 115-128 us observed |
 
 The isolated kernel costs roughly 49-62 us more for a 512-sample block, at most
@@ -214,6 +285,10 @@ listening A/B.
 Automated gates cover:
 
 - forward/reverse slow drag, baby scratch, alternating turns, 4x and 8x throws;
+- forward/reverse loop wraps, two-sample loops, direction changes and
+  mid-scratch loop edits, with a stalled native-input UI path;
+- 192 kHz loop audio on a 48 kHz device through normalized 8x and a blocked
+  loop-destination decoder without waiting or corrupting the resident window;
 - 8x release coast at 128, 256, and 512 samples;
 - a deliberately mismatched 2x-rendered/8x-physical release at 128 and 512;
 - full FLX10 estimator-to-audio motion with alternating 0.7/1.3 ms receive jitter;
@@ -224,7 +299,10 @@ Automated gates cover:
   non-physical eight-millisecond stress case;
 - passband and stopband response through 10x, in both directions;
 - 192 kHz source alias rejection on a 48 kHz output device;
-- cache starvation, generation changes, loop/track edges and callback-I/O zeros.
+- cache starvation, generation changes, loop/track edges and callback-I/O zeros;
+- real-time simulated waveform drags and scratches from jittered, pixel-rounded
+  60/125 Hz pointer reports (`BROCKDJ_UI_SCRATCH_ONLY=1`), gated on rate
+  ripple, block-rate steps, false reversals, lag and the resting position.
 
 ## Physical validation still required
 

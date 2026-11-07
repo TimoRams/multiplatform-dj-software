@@ -1,14 +1,34 @@
 #include "analysis/internal/ElectronicAnalysis.h"
 #include "analysis/internal/BeatAnalysis.h"
+#include <juce_dsp/juce_dsp.h>
 #include <iostream>
 #include <cmath>
 #include <numbers>
 #include <functional>
+#include <random>
 
 namespace {
 bool expect(bool value, const char* message) {
     if (!value) std::cerr << "FAIL: " << message << '\n';
     return value;
+}
+int referenceBeatPhase(std::span<const analysis::detail::PhaseHit> hits, double period)
+{
+    int bestPhase = 0;
+    double bestScore = -1.0;
+    for (int phase = 0; phase < analysis::detail::kPhaseCount; ++phase) {
+        const double offset = phase * period / analysis::detail::kPhaseCount;
+        double score = 0.0;
+        for (const auto hit : hits) {
+            const double error = std::remainder(hit.time - offset, period);
+            score += hit.weight * std::exp(-0.5 * std::pow(error / 0.02, 2));
+        }
+        if (score > bestScore) {
+            bestScore = score;
+            bestPhase = phase;
+        }
+    }
+    return bestPhase;
 }
 analysis::ElectronicFeatures pulseFeatures(double bpm, double duration, double offset = .173)
 {
@@ -87,6 +107,62 @@ bool timelineMatches(const analysis::BeatGridFitResult& grid, const std::vector<
 int main()
 {
     bool ok = true;
+    {
+        std::mt19937_64 random(0xb10cULL);
+        std::uniform_real_distribution<double> time(0.0, 3600.0);
+        std::uniform_real_distribution<double> weight(0.01, 2.0);
+        for (const double bpm : {30.0, 48.0, 96.0, 120.0, 128.1234, 255.0, 300.0}) {
+            const double period = 60.0 / bpm;
+            std::vector<analysis::detail::PhaseHit> hits;
+            for (int trial = 0; trial < 16; ++trial) {
+                hits.clear();
+                const double timeOffset = trial % 2 == 0 ? 0.0 : 86400.0;
+                for (int i = 0; i < 193; ++i)
+                    hits.push_back({timeOffset + time(random), weight(random)});
+                for (double phase : {0.0, 0.5, 63.5, 64.0, 127.5})
+                    hits.push_back({600.0 * period
+                                        + phase * period / analysis::detail::kPhaseCount, 1.0});
+                ok &= expect(analysis::detail::selectBeatPhase(hits, period)
+                                 == referenceBeatPhase(hits, period),
+                             "optimized phase search matches the reference search");
+            }
+
+            hits.clear();
+            for (int phase = 0; phase < analysis::detail::kPhaseCount; ++phase)
+                hits.push_back({phase * period / analysis::detail::kPhaseCount, 1.0});
+            ok &= expect(analysis::detail::selectBeatPhase(hits, period)
+                             == referenceBeatPhase(hits, period),
+                         "optimized phase search preserves ambiguous tie handling");
+
+            for (double start : {0.0, 3600.0, 86400.0}) {
+                hits = {{start + 64.5 * period / analysis::detail::kPhaseCount, 1.0}};
+                ok &= expect(analysis::detail::selectBeatPhase(hits, period)
+                                 == referenceBeatPhase(hits, period),
+                             "optimized phase search preserves half-step ties");
+            }
+        }
+    }
+    {
+        std::mt19937 random(0xb10c);
+        std::uniform_real_distribution<float> sample(-1.0f, 1.0f);
+        for (const int order : {10, 12}) {
+            const int size = 1 << order;
+            juce::dsp::FFT fft(order);
+            std::vector<float> reference(size * 2), positive(size * 2);
+            for (int i = 0; i < size; ++i)
+                reference[i] = positive[i] = sample(random);
+            fft.performFrequencyOnlyForwardTransform(reference.data(), false);
+            fft.performFrequencyOnlyForwardTransform(positive.data(), true);
+            float maxError = 0.0f;
+            float maxMagnitude = 0.0f;
+            for (int i = 0; i <= size / 2; ++i) {
+                maxError = std::max(maxError, std::abs(reference[i] - positive[i]));
+                maxMagnitude = std::max(maxMagnitude, std::abs(reference[i]));
+            }
+            ok &= expect(maxError <= 1.0e-5f * (1.0f + maxMagnitude),
+                         "positive-frequency FFT preserves the original magnitudes");
+        }
+    }
     {
         analysis::AnalysisOptions options;
         options.minBpm = 64; options.maxBpm = 100;

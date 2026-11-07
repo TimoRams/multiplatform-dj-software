@@ -1,13 +1,94 @@
 #include "ElectronicAnalysis.h"
 #include <juce_dsp/juce_dsp.h>
 #include <algorithm>
+#include <cmath>
 #include <complex>
+#include <limits>
 #include <numeric>
 #include <numbers>
 #include <set>
 #include <span>
 
 namespace analysis {
+namespace detail {
+
+int selectBeatPhase(std::span<const PhaseHit> hits, double period)
+{
+    if (hits.empty())
+        return 0;
+
+    constexpr double sigma = 0.02;
+    constexpr double inverseVariance = 1.0 / (sigma * sigma);
+    constexpr int halfPhases = kPhaseCount / 2;
+    const double step = period / kPhaseCount;
+    const double decay = std::exp(-step * step * inverseVariance);
+    std::array<double, kPhaseCount> scores{};
+    double totalWeight = 0.0;
+    double largestTime = 0.0;
+
+    // Gaussian ratios between neighbouring phases decay geometrically, so
+    // each hit needs only one wrapped position and two exponentials.
+    for (const auto hit : hits) {
+        const double wrapped = std::remainder(hit.time, period);
+        const int nearest = static_cast<int>(std::round(wrapped / step));
+        const double residual = wrapped - nearest * step;
+        const int centre = (nearest + kPhaseCount) % kPhaseCount;
+        const double normalized = residual / sigma;
+        const double initial = hit.weight * std::exp(-0.5 * normalized * normalized);
+        double forward = initial;
+        double backward = initial;
+        double forwardRatio = std::exp((residual * step - 0.5 * step * step)
+                                       * inverseVariance);
+        double backwardRatio = decay / forwardRatio;
+
+        scores[centre] += initial;
+        for (int distance = 1; distance < halfPhases; ++distance) {
+            forward *= forwardRatio;
+            backward *= backwardRatio;
+            forwardRatio *= decay;
+            backwardRatio *= decay;
+            scores[(centre + distance) % kPhaseCount] += forward;
+            scores[(centre - distance + kPhaseCount) % kPhaseCount] += backward;
+        }
+        scores[(centre + halfPhases) % kPhaseCount] += residual >= 0.0
+            ? forward * forwardRatio : backward * backwardRatio;
+        totalWeight += hit.weight;
+        largestTime = std::max(largestTime, std::abs(hit.time));
+    }
+
+    const auto maximum = std::max_element(scores.begin(), scores.end());
+    const double roundingMargin = 64.0 * std::numeric_limits<double>::epsilon()
+        * largestTime / sigma;
+    const double margin = std::max(1.0e-9, roundingMargin) * std::max(1.0, totalWeight);
+    int bestPhase = static_cast<int>(maximum - scores.begin());
+    int contenders = 0;
+    for (double score : scores)
+        contenders += *maximum - score <= margin;
+    if (contenders <= 1)
+        return bestPhase;
+
+    // Re-evaluate near-ties using the original expression and summation order.
+    // The recurrence changes only floating-point rounding, not the phase model.
+    double bestScore = -1.0;
+    for (int phase = 0; phase < kPhaseCount; ++phase) {
+        if (*maximum - scores[phase] > margin)
+            continue;
+        const double offset = phase * period / kPhaseCount;
+        double score = 0.0;
+        for (const auto hit : hits) {
+            const double error = std::remainder(hit.time - offset, period);
+            score += hit.weight * std::exp(-0.5 * std::pow(error / sigma, 2));
+        }
+        if (score > bestScore) {
+            bestScore = score;
+            bestPhase = phase;
+        }
+    }
+    return bestPhase;
+}
+
+} // namespace detail
+
 namespace {
 constexpr double sr = 44100.0;
 constexpr int hop = 256;
@@ -57,7 +138,7 @@ void addChroma(const std::vector<float>& magnitudes, std::array<double, 36>& chr
     }
 }
 
-struct Hit { double time, weight; };
+using Hit = detail::PhaseHit;
 struct Model { double phase = 0, period = 0, quality = 0; };
 
 std::vector<Hit> hitsOf(const ElectronicFeatures& features)
@@ -147,16 +228,8 @@ Model fit(const std::vector<Hit>& hits, double bpm, double from, double to)
         [](const Hit& hit, double time) { return hit.time < time; });
     const std::span<const Hit> localHits(first, last);
     Model model{0.0, 60.0 / bpm, 0.0};
-    double best = -1.0;
-    for (int phase = 0; phase < 128; ++phase) {
-        const double offset = phase * model.period / 128;
-        double score = 0.0;
-        for (const auto hit : localHits) {
-            const double error = signedPhase(hit.time - offset, model.period);
-            score += hit.weight * std::exp(-0.5 * std::pow(error / 0.02, 2));
-        }
-        if (score > best) { best = score; model.phase = offset; }
-    }
+    const int phase = detail::selectBeatPhase(localHits, model.period);
+    model.phase = phase * model.period / detail::kPhaseCount;
     for (int iteration = 0; iteration < 3; ++iteration) {
         struct Point { double x, y, w, error; };
         std::vector<Point> points;
@@ -219,9 +292,19 @@ ElectronicFeatures extractElectronicFeatures(juce::AudioFormatReader& reader,
     resampler.prepareToPlay(1024, sr);
     juce::AudioBuffer<float> block(channels, 1024), ring(channels, 4096);
     ring.clear();
+    const float* const* blockChannels = block.getArrayOfReadPointers();
+    float* const* ringChannels = ring.getArrayOfWritePointers();
     juce::dsp::FFT onsetFft(10), keyFft(12);
     std::vector<float> fft(8192), magnitude(2049), previous(513), window(4096);
     for (int i = 0; i < 4096; ++i) window[i] = static_cast<float>(0.5 - 0.5 * std::cos(2 * pi * i / 4096));
+    std::array<int, 513> bandForBin;
+    bandForBin.fill(-1);
+    for (int bin = 1; bin <= 512; ++bin) {
+        const double hz = bin * sr / 1024;
+        if (hz >= 40 && hz <= 10000)
+            bandForBin[bin] = std::clamp(
+                static_cast<int>(std::log(hz / 40) / std::log(250.0) * 12), 0, 11);
+    }
     using Filter = juce::dsp::IIR::Filter<float>;
     std::vector<Filter> high(channels), low(channels);
     for (int c = 0; c < channels; ++c) {
@@ -235,9 +318,10 @@ ElectronicFeatures extractElectronicFeatures(juce::AudioFormatReader& reader,
         const int count = static_cast<int>(std::min<std::int64_t>(1024, length - frame));
         resampler.getNextAudioBlock({&block, 0, count});
         for (int sample = 0; sample < count; ++sample, ++frame) {
+            const auto ringPosition = static_cast<int>(frame & 4095);
             for (int channel = 0; channel < channels; ++channel) {
-                const float value = block.getSample(channel, sample);
-                ring.setSample(channel, frame % 4096, value);
+                const float value = blockChannels[channel][sample];
+                ringChannels[channel][ringPosition] = value;
                 const float filtered = low[channel].processSample(high[channel].processSample(value));
                 attackEnergy += static_cast<double>(filtered) * filtered / channels;
             }
@@ -246,13 +330,14 @@ ElectronicFeatures extractElectronicFeatures(juce::AudioFormatReader& reader,
                 attackEnergy = 0;
             }
             const auto spectrum = [&](int size, juce::dsp::FFT& transform) {
-                std::fill(magnitude.begin(), magnitude.end(), 0.0f);
+                std::fill_n(magnitude.begin(), size / 2 + 1, 0.0f);
+                const auto ringStart = static_cast<int>((frame + 1 - size) & 4095);
                 for (int channel = 0; channel < channels; ++channel) {
-                    std::fill(fft.begin(), fft.end(), 0.0f);
+                    std::fill_n(fft.begin(), size * 2, 0.0f);
                     for (int i = 0; i < size; ++i)
-                        fft[i] = ring.getSample(channel, (frame + 1 - size + i + 4096) % 4096)
+                        fft[i] = ringChannels[channel][(ringStart + i) & 4095]
                             * window[i * (4096 / size)];
-                    transform.performFrequencyOnlyForwardTransform(fft.data());
+                    transform.performFrequencyOnlyForwardTransform(fft.data(), true);
                     for (int i = 0; i <= size / 2; ++i) magnitude[i] += fft[i] / channels;
                 }
             };
@@ -269,8 +354,8 @@ ElectronicFeatures extractElectronicFeatures(juce::AudioFormatReader& reader,
                     if (hz <= 200) { bassFlux += rise; bass += magnitude[bin]; }
                     else if (hz <= 3000) mid += magnitude[bin];
                     else treble += magnitude[bin];
-                    if (hz >= 40 && hz <= 10000)
-                        bands[std::clamp(static_cast<int>(std::log(hz / 40) / std::log(250.0) * 12), 0, 11)] += magnitude[bin];
+                    if (bandForBin[bin] >= 0)
+                        bands[bandForBin[bin]] += magnitude[bin];
                     previous[bin] = magnitude[bin];
                 }
                 // Spectra are timed at the window centre, not its trailing edge.
