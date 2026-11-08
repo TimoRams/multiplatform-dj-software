@@ -18,8 +18,13 @@ case "$(uname -m)" in
 esac
 
 [[ -x "$binary" ]] || { echo "BrockDJ binary is missing or not executable: $binary" >&2; exit 1; }
-if ldd "$binary" | grep -q 'not found'; then
-    ldd "$binary" >&2
+if ! binary_dependencies="$(ldd "$binary" 2>&1)"; then
+    printf '%s\n' "$binary_dependencies" >&2
+    echo "Could not inspect BrockDJ shared-library dependencies" >&2
+    exit 1
+fi
+if grep -q 'not found' <<< "$binary_dependencies"; then
+    printf '%s\n' "$binary_dependencies" >&2
     echo "BrockDJ has unresolved shared-library dependencies before packaging" >&2
     exit 1
 fi
@@ -104,10 +109,31 @@ done < <(find "$real_plugins" -type f -name '*.so' -print0)
 [[ -f "$plugin_stage/platforms/libqxcb.so" ]] || { echo "Qt xcb platform plugin is missing or unresolved" >&2; exit 1; }
 [[ -f "$plugin_stage/platforms/libqoffscreen.so" ]] || { echo "Qt offscreen platform plugin is missing or unresolved" >&2; exit 1; }
 [[ -f "$plugin_stage/sqldrivers/libqsqlite.so" ]] || { echo "Qt SQLite plugin is missing or unresolved" >&2; exit 1; }
-[[ -n "$(ldd "$binary" | grep -E 'libsqlcipher\.so' || true)" ]] || {
-    echo "BrockDJ is not linked to the required SQLCipher runtime" >&2
+sqlcipher_metadata="$binary.sqlcipher-runtime"
+[[ -f "$sqlcipher_metadata" ]] || {
+    echo "SQLCipher deployment metadata is missing: $sqlcipher_metadata (reconfigure the build)" >&2
     exit 1
 }
+if ! {
+    IFS= read -r sqlcipher_library
+    IFS= read -r sqlcipher_soname
+} < "$sqlcipher_metadata"; then
+    echo "Incomplete SQLCipher deployment metadata: $sqlcipher_metadata" >&2
+    exit 1
+fi
+[[ -f "$sqlcipher_library" && "$sqlcipher_soname" == libsqlcipher*.so.* && "$sqlcipher_soname" != */* ]] || {
+    echo "Invalid SQLCipher deployment metadata: $sqlcipher_metadata" >&2
+    exit 1
+}
+actual_sqlcipher_soname="$(objdump -p "$sqlcipher_library" | awk '$1 == "SONAME" { print $2 }')"
+[[ "$actual_sqlcipher_soname" == "$sqlcipher_soname" ]] || {
+    echo "SQLCipher runtime ABI differs from the configured build: expected $sqlcipher_soname, found $actual_sqlcipher_soname" >&2
+    exit 1
+}
+if grep -q 'libsqlcipher[^[:space:]]*\.so' <<< "$binary_dependencies"; then
+    echo "BrockDJ must load SQLCipher privately, not link it alongside Qt SQLite" >&2
+    exit 1
+fi
 
 export QMAKE_REAL="$real_qmake"
 export QT_PLUGIN_STAGE="$plugin_stage"
@@ -120,6 +146,7 @@ cp "$repo_root/resources/icons/generated/256.png" "$packaging_icon"
 
 "$linuxdeploy" --appdir "$appdir" \
     --executable "$binary" \
+    --library "$sqlcipher_library" \
     --desktop-file "$repo_root/resources/packaging/net.ramsbrock.BrockDJ.desktop" \
     --icon-file "$packaging_icon" \
     --plugin qt
@@ -135,8 +162,17 @@ find "$appdir" -type f \( \
     echo "QSQLITE plugin is missing from AppDir" >&2
     exit 1
 }
-[[ -n "$(find "$appdir" -type f -name 'libsqlcipher.so*' -print -quit)" ]] || {
-    echo "SQLCipher runtime is missing from AppDir" >&2
+# Explicit --library deployment keeps the input filename, not its SONAME.
+if [[ ! -e "$appdir/usr/lib/$sqlcipher_soname" ]]; then
+    deployed_sqlcipher="$appdir/usr/lib/$(basename "$sqlcipher_library")"
+    [[ -f "$deployed_sqlcipher" ]] || {
+        echo "SQLCipher runtime was not deployed: $deployed_sqlcipher" >&2
+        exit 1
+    }
+    ln -s "$(basename "$sqlcipher_library")" "$appdir/usr/lib/$sqlcipher_soname"
+fi
+[[ -f "$appdir/usr/lib/$sqlcipher_soname" ]] || {
+    echo "Configured SQLCipher runtime is missing from AppDir: $sqlcipher_soname" >&2
     exit 1
 }
 
@@ -229,7 +265,7 @@ done < <(find "$appdir" -type f \( -name '*.so*' -o -name BrockDJ \) -print0)
     echo "RubberBand runtime is missing from AppDir" >&2
     exit 1
 }
-if ldd "$binary" | grep -q 'libonnxruntime\.so'; then
+if grep -q 'libonnxruntime\.so' <<< "$binary_dependencies"; then
     [[ -n "$(find "$appdir" -type f -name 'libonnxruntime.so*' -print -quit)" ]] || {
         echo "ONNX Runtime is missing from the AppDir" >&2
         exit 1

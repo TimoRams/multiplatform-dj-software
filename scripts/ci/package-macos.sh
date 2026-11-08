@@ -56,9 +56,16 @@ printf '[Paths]\nPrefix=%s\nPlugins=%s\n' "$qt_prefix" "$deployment_stage/plugin
 # Bundle native dependencies before Qt rewrites their paths. -of overwrites
 # individual libraries, unlike -od which deletes the entire Frameworks tree.
 mkdir -p "$app/Contents/Frameworks"
+native_search_paths=(-s "$qt_libs" -s "$app/Contents/Frameworks")
+if [[ -d "$repo_root/libs/onnxruntime/lib" ]]; then
+    native_search_paths+=(-s "$repo_root/libs/onnxruntime/lib")
+fi
+# dylibbundler does not reliably expand every @rpath and loops on stdin EOF.
+# Supply SDK search paths and abort on any remaining interactive lookup.
 dylibbundler -of -b -x "$binary" \
     -d "$app/Contents/Frameworks" \
-    -p '@executable_path/../Frameworks/'
+    -p '@executable_path/../Frameworks/' \
+    "${native_search_paths[@]}" <<< quit
 mkdir -p "$app/Contents/PlugIns/platforms"
 offscreen_plugin="$app/Contents/PlugIns/platforms/libqoffscreen.dylib"
 cp "$offscreen_source" "$offscreen_plugin"

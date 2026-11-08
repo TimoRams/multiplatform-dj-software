@@ -105,6 +105,17 @@ The allowlist includes the exact `libgmp.so.10` base-system ABI, which
 linuxdeploy deliberately excludes to avoid GnuTLS/GMP symbol conflicts.
 GnuTLS and its other non-allowlisted dependencies still have to be bundled.
 
+SQLCipher is deliberately loaded privately with `dlopen`, not linked into
+BrockDJ: linking its SQLite symbols alongside Qt's system SQLite causes symbol
+collisions. CMake writes the selected shared-library path and SONAME to
+`BrockDJ.sqlcipher-runtime` beside the executable. Packaging requires this
+build metadata, verifies the ABI, and explicitly deploys SQLCipher and its
+dependencies with `linuxdeploy --library`. The exact configured SONAME must
+exist in `AppDir/usr/lib`; its dependency closure is checked like every other
+shared object. When linuxdeploy retains the unversioned input filename, the
+script creates a relative SONAME symlink inside AppDir. Reconfigure older
+builds before packaging them.
+
 ## macOS bundles
 
 CMake creates `BrockDJ.app` directly for both architectures. The package job:
@@ -136,6 +147,11 @@ copies Qt's Offscreen plugin and supplies it as an additional executable to
 `macdeployqt` so its framework references are rewritten. Both plugins are
 required before the common architecture, dependency and signature checks.
 The extracted ZIP smoke uses that bundled Offscreen plugin, not the runner's.
+The native bundler receives explicit ONNX SDK, Qt and bundle search directories
+to resolve dependencies such as `@rpath/libonnxruntime.1.dylib`. Any remaining
+interactive lookup receives `quit`, so a missing dependency fails immediately
+instead of looping on CI's closed standard input. Architecture, dependency
+closure and final signature checks remain mandatory.
 
 ## Windows ZIP
 
@@ -168,6 +184,10 @@ requiring an audio device or touching user data.
 ## Local package checks
 
 The scripts are CI-oriented and expect native dependencies already installed.
+Workflow lint also runs the isolated script regressions in `tests/packaging`.
+Tool fixtures check SQLCipher deployment and ABI/error handling, and the
+macOS bundler's explicit search paths and fail-fast input.
+These script regressions do not replace native package smoke tests.
 Typical invocations are:
 
 ```bash

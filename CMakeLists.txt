@@ -157,16 +157,19 @@ if(PkgConfig_FOUND)
             # at startup. Linux therefore loads SQLCipher privately via dlopen().
             find_library(BROCKDJ_SQLCIPHER_LIBRARY NAMES sqlcipher
                 HINTS ${SQLCIPHER_LIBRARY_DIRS} NO_CACHE)
+            if(NOT BROCKDJ_SQLCIPHER_LIBRARY OR NOT CMAKE_OBJDUMP)
+                message(FATAL_ERROR "The SQLCipher shared library and objdump are required for runtime deployment")
+            endif()
             set(_sqlcipher_soname "")
-            if(BROCKDJ_SQLCIPHER_LIBRARY AND CMAKE_OBJDUMP)
-                execute_process(COMMAND "${CMAKE_OBJDUMP}" -p "${BROCKDJ_SQLCIPHER_LIBRARY}"
-                    OUTPUT_VARIABLE _sqlcipher_objdump ERROR_QUIET)
-                if(_sqlcipher_objdump MATCHES "SONAME[ \t]+([^ \t\r\n]+)")
-                    set(_sqlcipher_soname "${CMAKE_MATCH_1}")
-                endif()
+            execute_process(COMMAND "${CMAKE_OBJDUMP}" -p "${BROCKDJ_SQLCIPHER_LIBRARY}"
+                OUTPUT_VARIABLE _sqlcipher_objdump
+                ERROR_VARIABLE _sqlcipher_objdump_error
+                RESULT_VARIABLE _sqlcipher_objdump_result)
+            if(_sqlcipher_objdump_result EQUAL 0 AND _sqlcipher_objdump MATCHES "SONAME[ \t]+([^ \t\r\n]+)")
+                set(_sqlcipher_soname "${CMAKE_MATCH_1}")
             endif()
             if(NOT _sqlcipher_soname)
-                set(_sqlcipher_soname "libsqlcipher.so.0")
+                message(FATAL_ERROR "Cannot read SQLCipher SONAME from ${BROCKDJ_SQLCIPHER_LIBRARY}: ${_sqlcipher_objdump_error}")
             endif()
             message(STATUS "Loading SQLCipher at runtime as ${_sqlcipher_soname}")
             target_include_directories(ThirdParty::SQLCipher INTERFACE ${SQLCIPHER_INCLUDE_DIRS})
@@ -548,6 +551,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     ThirdParty::SQLCipher
     Ableton::Link
 )
+
+if(UNIX AND NOT APPLE)
+    file(GENERATE OUTPUT "$<TARGET_FILE:${PROJECT_NAME}>.sqlcipher-runtime"
+        CONTENT "${BROCKDJ_SQLCIPHER_LIBRARY}\n${_sqlcipher_soname}\n")
+endif()
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE BROCKDJ_HAS_ONNXRUNTIME=${BROCKDJ_HAS_ONNXRUNTIME})
 if(BROCKDJ_HAS_ONNXRUNTIME)

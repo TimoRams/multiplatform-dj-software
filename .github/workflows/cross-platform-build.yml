@@ -45,6 +45,7 @@ jobs:
           set -euo pipefail
           ./actionlint -color
           shellcheck scripts/ci/*.sh scripts/generate_icons.sh scripts/fetch-onnxruntime.sh
+          python3 -m unittest discover -s tests/packaging -p '*_tests.py'
           appstreamcli validate --no-net resources/packaging/net.ramsbrock.BrockDJ.metainfo.xml
           cmake --list-presets=all
 
