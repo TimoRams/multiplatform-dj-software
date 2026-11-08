@@ -57,11 +57,13 @@ printf '[Paths]\nPrefix=%s\nPlugins=%s\n' "$qt_prefix" "$deployment_stage/plugin
 # individual libraries, unlike -od which deletes the entire Frameworks tree.
 mkdir -p "$app/Contents/Frameworks"
 native_search_paths=(-s "$qt_libs" -s "$app/Contents/Frameworks")
-if [[ -d "$repo_root/libs/onnxruntime/lib" ]]; then
-    native_search_paths+=(-s "$repo_root/libs/onnxruntime/lib")
+# The build-local source installation is beside bin/BrockDJ.app.
+ort_build_lib="$(dirname "$(dirname "$app")")/onnxruntime/lib"
+if [[ -d "$ort_build_lib" ]]; then
+    native_search_paths+=(-s "$ort_build_lib")
 fi
 # dylibbundler does not reliably expand every @rpath and loops on stdin EOF.
-# Supply SDK search paths and abort on any remaining interactive lookup.
+# Supply build-local runtime search paths and abort on any remaining interactive lookup.
 dylibbundler -of -b -x "$binary" \
     -d "$app/Contents/Frameworks" \
     -p '@executable_path/../Frameworks/' \
@@ -100,7 +102,7 @@ if otool -L "$binary" | grep -qi 'onnxruntime'; then
         exit 1
     }
     mkdir -p "$app/Contents/Resources/onnxruntime"
-    cp "$repo_root/libs/onnxruntime/LICENSE" "$repo_root/libs/onnxruntime/ThirdPartyNotices.txt" \
+    cp "$repo_root/libs/onnxruntime-src/LICENSE" "$repo_root/libs/onnxruntime-src/ThirdPartyNotices.txt" \
         "$app/Contents/Resources/onnxruntime/"
 fi
 cp "$repo_root/NOTICE" "$app/Contents/Resources/NOTICE"

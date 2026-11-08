@@ -4198,6 +4198,82 @@ bool squareControlsRuntimeTests()
     return ok;
 }
 
+bool stemsSettingsRuntimeTests()
+{
+    QQmlEngine engine;
+    for (const char* name : {"deckA", "deckB", "deckC", "deckD", "mixerControl", "linkManager", "parameterStore"})
+        engine.rootContext()->setContextProperty(name, static_cast<QObject*>(nullptr));
+    auto settings = createQmlObject(engine, R"(
+        import QtQml
+        QtObject {
+            property bool stemsEnabled: true
+            property bool stemsGpuAcceleration: false
+        }
+    )", "stem settings fixture instantiates");
+    auto controller = createQmlObject(engine, R"(
+        import QtQml
+        QtObject {
+            property bool supported: true
+            property bool modelInstalled: false
+            property bool downloading: false
+            property real downloadProgress: 0
+            property real cacheSizeMb: 0
+            property string modelPath: "/tmp/models/htdemucs.onnx"
+            property string backend: "CPU"
+            property string acceleratorWarning: ""
+            property string error: ""
+            property int installs: 0
+            property int cancels: 0
+            function refreshCacheSize() {}
+            function clearCache() {}
+            function downloadModel() { installs++; error = ""; downloading = true }
+            function cancelDownload() { cancels++; downloading = false }
+        }
+    )", "stem installer fixture instantiates");
+    if (!settings || !controller) return false;
+    engine.rootContext()->setContextProperty("settingsManager", settings.get());
+    engine.rootContext()->setContextProperty("stems", controller.get());
+    QQmlComponent component(&engine, QUrl::fromLocalFile(
+        QString::fromUtf8(BROCKDJ_SOURCE_DIR) + "/src/qml/settings/SettingsPanel.qml"));
+    std::unique_ptr<QObject> panel(component.createWithInitialProperties({
+        {"active", false}, {"width", 640}, {"height", 600}, {"selectedCategory", 7}}));
+    if (!require(panel != nullptr, "production stems settings page instantiates")) return false;
+    auto* root = qobject_cast<QQuickItem*>(panel.get());
+    auto* install = findVisualItem(root, "stemsDownloadButton");
+    auto* progress = findVisualItem(root, "stemsModelProgress");
+    auto* automatic = findVisualItem(root, "stemsAutoSwitch");
+    if (!require(install && progress && automatic, "stems installer controls exist")) return false;
+    bool ok = require(install->isVisible() && !automatic->isEnabled(),
+                      "missing model exposes installation and disables automatic separation");
+    QMetaObject::invokeMethod(install, "clicked");
+    controller->setProperty("downloadProgress", 0.42);
+    QCoreApplication::processEvents();
+    ok &= require(controller->property("installs").toInt() == 1 && progress->isVisible()
+                      && std::abs(progress->property("value").toDouble() - 0.42) < 0.001,
+                  "install starts the downloader and displays live progress");
+    QMetaObject::invokeMethod(install, "clicked");
+    ok &= require(controller->property("cancels").toInt() == 1,
+                  "running installation can be cancelled from settings");
+    controller->setProperty("error", "Download failed");
+    auto* error = findVisualItem(root, "stemsModelError");
+    ok &= require(error && error->isVisible() && error->property("text").toString() == "Download failed",
+                  "installation errors are visible in settings");
+    QMetaObject::invokeMethod(install, "clicked");
+    ok &= require(controller->property("installs").toInt() == 2
+                      && controller->property("error").toString().isEmpty(),
+                  "failed installation can be retried");
+    controller->setProperty("downloading", false);
+    controller->setProperty("modelInstalled", true);
+    QCoreApplication::processEvents();
+    ok &= require(!install->isVisible() && !progress->isVisible() && automatic->isEnabled(),
+                  "installed model enables separation and hides installation controls");
+    controller->setProperty("modelInstalled", false);
+    controller->setProperty("supported", false);
+    QCoreApplication::processEvents();
+    ok &= require(!install->isVisible(), "builds without stems cannot start model installation");
+    return ok;
+}
+
 bool mainNavigationRuntimeTests()
 {
     const QString directory = QString::fromUtf8(BROCKDJ_SOURCE_DIR) + "/src/qml/";
@@ -4743,6 +4819,7 @@ int main(int argc, char** argv)
     ok &= samplerAndRecordingRuntimeTests(topHeader);
     ok &= effectsPageRuntimeTests(main);
     ok &= mainNavigationRuntimeTests();
+    ok &= stemsSettingsRuntimeTests();
     ok &= shortcutRuntimeTests(main);
     ok &= deckCueFlatButtonRuntimeTests(deckControl);
     ok &= aioDeckControlTests(workspace);

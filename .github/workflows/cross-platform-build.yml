@@ -33,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends appstream shellcheck
+          sudo apt-get install -y --no-install-recommends appstream cmake ninja-build patch shellcheck
           curl --fail --location --retry 5 \
             --output actionlint.tar.gz \
             https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
@@ -44,7 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           ./actionlint -color
-          shellcheck scripts/ci/*.sh scripts/generate_icons.sh scripts/fetch-onnxruntime.sh
+          shellcheck scripts/ci/*.sh scripts/generate_icons.sh
           python3 -m unittest discover -s tests/packaging -p '*_tests.py'
           appstreamcli validate --no-net resources/packaging/net.ramsbrock.BrockDJ.metainfo.xml
           cmake --list-presets=all
@@ -53,7 +53,7 @@ jobs:
     name: Linux ${{ matrix.label }}
     needs: workflow-lint
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 95
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -95,7 +95,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ccache cmake curl desktop-file-utils file imagemagick \
+            ccache cmake patch curl desktop-file-utils file imagemagick \
             libasound2-dev libfftw3-dev libfontconfig1-dev libfreetype6-dev \
             libgl1-mesa-dev libjack-jackd2-dev libsqlcipher-dev libtag1-dev \
             librubberband-dev librsvg2-bin libusb-1.0-0-dev \
@@ -115,10 +115,6 @@ jobs:
       - name: Build pinned libkeyfinder with FFTW3
         shell: bash
         run: ./scripts/ci/install-libkeyfinder.sh /usr/local
-
-      - name: Install ONNX Runtime for stems
-        shell: bash
-        run: ./scripts/fetch-onnxruntime.sh
 
       - name: Download verified stems test model
         shell: bash
@@ -201,7 +197,7 @@ jobs:
     name: macOS ${{ matrix.label }}
     needs: workflow-lint
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 100
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -240,10 +236,6 @@ jobs:
 
       - name: Install native and deployment dependencies
         run: brew install ccache dylibbundler imagemagick libkeyfinder librsvg ninja pkg-config rubberband sqlcipher taglib
-
-      - name: Install ONNX Runtime for stems
-        shell: bash
-        run: ./scripts/fetch-onnxruntime.sh
 
       - name: Download verified stems test model
         shell: bash
@@ -327,7 +319,7 @@ jobs:
     name: Windows x64
     needs: workflow-lint
     runs-on: windows-2025
-    timeout-minutes: 120
+    timeout-minutes: 180
     env:
       VCPKG_ROOT: ${{ github.workspace }}/vcpkg-pinned
       VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg-binary-cache,readwrite
@@ -399,10 +391,6 @@ jobs:
           $bootstrap = Join-Path $env:GITHUB_WORKSPACE 'vcpkg-pinned\bootstrap-vcpkg.bat'
           & $bootstrap -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed with exit code $LASTEXITCODE" }
-
-      - name: Install ONNX Runtime for stems
-        shell: pwsh
-        run: ./scripts/fetch-onnxruntime.ps1
 
       - name: Download verified stems test model
         shell: bash
@@ -497,7 +485,7 @@ jobs:
     name: Linux x86_64 ASan and UBSan
     needs: workflow-lint
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - name: Check out repository and submodules
         uses: actions/checkout@v6
@@ -518,7 +506,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ccache imagemagick libasound2-dev libfftw3-dev libfontconfig1-dev \
+            ccache patch imagemagick libasound2-dev libfftw3-dev libfontconfig1-dev \
             libfreetype6-dev libgl1-mesa-dev libjack-jackd2-dev librsvg2-bin \
             libsqlcipher-dev libtag1-dev librubberband-dev libusb-1.0-0-dev \
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
@@ -526,9 +514,6 @@ jobs:
             ninja-build pkg-config \
             xvfb xauth libgl1-mesa-dri libxcb-cursor0
           ./scripts/ci/install-libkeyfinder.sh /usr/local
-
-      - name: Install ONNX Runtime for stems
-        run: ./scripts/fetch-onnxruntime.sh
 
       - name: Generate platform icons
         run: ./scripts/generate_icons.sh

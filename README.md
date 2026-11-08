@@ -36,7 +36,8 @@ Explore the [full feature overview](docs/features.md).
 Build BrockDJ from source on Linux or macOS with the
 [installation guide](docs/installation.md). It covers dependencies, building,
 updating and running tests. To enable stem separation, follow the
-[stems setup guide](docs/stems.md).
+[stems setup guide](docs/stems.md). ONNX Runtime is built from its pinned
+submodule; install the separation model inside **Settings → Stems**.
 
 For advanced builds, controller setup and CI presets, see the
 [detailed build guide](docs/building.md). All guides and technical notes are

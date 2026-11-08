@@ -1,6 +1,6 @@
 # Building BrockDJ
 
-BrockDJ uses CMake 3.25 or newer and a portable C++23 baseline; Ninja is
+BrockDJ uses CMake 3.28 or newer and a portable C++23 baseline; Ninja is
 recommended but optional. JUCE,
 Ableton Link, Signalsmith DSP, Signalsmith Linear and Signalsmith Stretch are
 Git submodules. Clone a new checkout with:
@@ -94,12 +94,15 @@ images. The pinned `libkeyfinder` 2.2.8 source is built against FFTW3 with:
 The script verifies the source archive SHA-256 before building and installing
 it under `/usr/local`.
 
-Optional real-time stems need ONNX Runtime. Download the pinned SDK into
-`libs/onnxruntime` once (see [Stems](architecture/stems.md)):
-
-```bash
-./scripts/fetch-onnxruntime.sh
-```
+ONNX Runtime is built automatically from the pinned `libs/onnxruntime-src`
+submodule (CMake 3.28+, Python 3.10+, `patch`). Initialize it with
+`git submodule update --init --recursive` when updating an existing checkout.
+The first build downloads third-party source dependencies. Each build tree
+installs its own runtime under `<build>/onnxruntime`; no binary SDK fetch is
+needed. The runtime build uses two parallel jobs by default; adjust with
+`-DBROCKDJ_ONNXRUNTIME_BUILD_JOBS=4` if memory allows.
+Use `-DBROCKDJ_ENABLE_STEMS=OFF` to omit stems.
+Install the model separately in **Settings → Stems → Install model**.
 
 Build and run with plain CMake. Without `CMAKE_BUILD_TYPE` the project uses
 `RelWithDebInfo`, and only the application is compiled:
@@ -235,7 +238,6 @@ Plain CMake builds for the Mac's own architecture
 (Apple Silicon or Intel). Omit `-G Ninja` to use Makefiles instead:
 
 ```bash
-./scripts/fetch-onnxruntime.sh   # optional, enables stems
 cmake -S . -B build -G Ninja
 cmake --build build
 open build/bin/BrockDJ.app

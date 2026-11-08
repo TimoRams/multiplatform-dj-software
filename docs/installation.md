@@ -7,7 +7,9 @@ There are no prebuilt releases yet, so BrockDJ is built from source with plain
 CMake. You need:
 
 - a C++23 compiler (GCC 13+, or Clang from a recent Xcode)
-- CMake 3.25+ and, optionally, Ninja
+- CMake 3.28+ and, optionally, Ninja
+- `patch` (used to prepare ONNX Runtime dependencies; a fallback executable is included with ONNX Runtime on Windows)
+- Python 3.10+ (used by the ONNX Runtime source build)
 - Qt 6.4+ including Qt Shader Tools
 
 Clone the repository with its submodules:
@@ -17,6 +19,12 @@ git clone --recurse-submodules https://github.com/TimoRams/multiplatform-dj-soft
 cd multiplatform-dj-software
 ```
 
+ONNX Runtime is built automatically from the pinned `libs/onnxruntime-src`
+submodule for the selected platform. The first build needs network access for
+its dependencies and takes longer; no runtime SDK download is needed.
+After starting BrockDJ, open **Settings → Stems → Install model** to install
+the separate 166 MB model. See [Stems](stems.md).
+
 ### Linux
 
 **1. Install the dependencies.**
@@ -24,7 +32,7 @@ cd multiplatform-dj-software
 Fedora:
 
 ```bash
-sudo dnf install -y gcc-c++ cmake ninja-build pkgconf-pkg-config curl \
+sudo dnf install -y gcc-c++ python3 patch cmake ninja-build pkgconf-pkg-config curl \
   qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qtshadertools-devel \
   alsa-lib-devel jack-audio-connection-kit-devel libusb1-devel \
   taglib-devel rubberband-devel sqlcipher-devel fftw-devel
@@ -33,7 +41,7 @@ sudo dnf install -y gcc-c++ cmake ninja-build pkgconf-pkg-config curl \
 Ubuntu 24.04:
 
 ```bash
-sudo apt install -y build-essential cmake ninja-build pkg-config curl \
+sudo apt install -y build-essential python3 patch cmake ninja-build pkg-config curl \
   qt6-base-dev qt6-declarative-dev qt6-shadertools-dev qt6-shader-baker libqt6sql6-sqlite \
   qml6-module-qtqml qml6-module-qtqml-models qml6-module-qtqml-workerscript \
   qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-dialogs qml6-module-qtquick-layouts \
@@ -55,7 +63,6 @@ pinned version once (installs to `/usr/local`, asks for `sudo`):
 **3. Build and run.**
 
 ```bash
-./scripts/fetch-onnxruntime.sh   # optional: enables stems
 cmake -S . -B build -G Ninja
 cmake --build build
 ./build/bin/BrockDJ
@@ -67,14 +74,13 @@ cmake --build build
 (`xcode-select --install`) and [Homebrew](https://brew.sh):
 
 ```bash
-brew install cmake ninja pkg-config qt taglib rubberband libkeyfinder sqlcipher librsvg imagemagick
+brew install python cmake ninja pkg-config qt taglib rubberband libkeyfinder sqlcipher librsvg imagemagick
 export CMAKE_PREFIX_PATH="$(brew --prefix qt)"
 ```
 
 **2. Build and run.**
 
 ```bash
-./scripts/fetch-onnxruntime.sh   # optional: enables stems
 cmake -S . -B build -G Ninja
 cmake --build build
 open build/bin/BrockDJ.app
@@ -100,7 +106,7 @@ cmake --build build
 | *(default)* | `RelWithDebInfo`: optimized, with debug symbols |
 | `-DCMAKE_BUILD_TYPE=Release` | Release build without debug symbols |
 | `-DBUILD_TESTING=ON` | Also build the test suite |
-| `-DBROCKDJ_REQUIRE_STEMS=ON` | Fail configuration if ONNX Runtime is missing |
+| `-DBROCKDJ_REQUIRE_STEMS=ON` | Require stems support |
 | `-DBROCKDJ_ENABLE_STEMS=OFF` | Build without stems |
 
 Run the tests in a separate build directory:

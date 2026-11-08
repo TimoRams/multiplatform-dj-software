@@ -190,7 +190,9 @@ void StemsController::preanalyzePlaylist(const QString& playlistId)
 void StemsController::preanalyzeTracks(const QVariantList& tracks)
 {
     if (!available() || !m_service) {
-        setError(tr("Install the stem model and ONNX Runtime before starting stem preanalysis."));
+        setError(supported()
+            ? tr("Install the stem model in Settings > Stems before starting stem preanalysis.")
+            : tr("Stem separation is unavailable in this build."));
         return;
     }
     if (!m_preanalysisRunning) {

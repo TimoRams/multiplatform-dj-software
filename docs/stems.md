@@ -21,18 +21,18 @@ first), so prepared tracks are ready immediately.
 
 **Setting up stems:**
 
-1. Before configuring CMake, download ONNX Runtime once:
-   `./scripts/fetch-onnxruntime.sh`. In an existing build directory, run
-   `cmake -S . -B build` again afterwards.
-2. Start BrockDJ and open **Settings → DJ / Sync → Stems → Download**. This
-   installs the 166 MB model once; it is not part of the repository.
+1. Build BrockDJ normally. ONNX Runtime is compiled from the pinned submodule
+   along with the application; no separate SDK installation is needed.
+2. Start BrockDJ and open **Settings → Stems → Install model**. This
+   downloads and verifies the 166 MB HTDemucs model once. Progress, cancellation,
+   errors and retry are available on this page. No model ships in the repository
+   or application package, and separation runs locally after installation.
 3. Load a track and open the **STEMS** pad page.
 
-Stems need several GB of RAM while separating. Without ONNX Runtime BrockDJ
-still builds and runs normally, just without stems.
+Stems need several GB of RAM while separating. Builds explicitly configured with `BROCKDJ_ENABLE_STEMS=OFF` run without stems.
 
-GPU acceleration is experimental and off by default (**Settings → DJ / Sync →
-Stems → Experimental GPU acceleration**, takes effect after a restart). If it
+GPU acceleration is experimental and off by default (**Settings → Stems →
+Experimental GPU acceleration**, takes effect after a restart). If it
 fails, BrockDJ falls back to the CPU.
 
 - **Intel iGPU on Linux:** install the OpenVINO plugin once with

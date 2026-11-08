@@ -145,10 +145,12 @@ class PackagingScriptsTests(unittest.TestCase):
                 self.assertIn(error, result.stderr)
                 self.assertFalse(self.log.exists())
 
-    def test_macos_supplies_sdk_search_paths_and_aborts_interactive_lookup(self):
-        sdk = self.root / "libs/onnxruntime/lib"
-        sdk.mkdir(parents=True)
-        app = self.root / "BrockDJ.app"
+    def test_macos_supplies_built_runtime_search_path_and_aborts_interactive_lookup(self):
+        # An SDK left by an older checkout must never enter dependency lookup.
+        (self.root / "libs/onnxruntime/lib").mkdir(parents=True)
+        source_lib = self.root / "build/onnxruntime/lib"
+        source_lib.mkdir(parents=True)
+        app = self.root / "build/bin/BrockDJ.app"
         binary = app / "Contents/MacOS/BrockDJ"
         self.tool(binary, "raise SystemExit(0)")
         self.tool(self.qt / "bin/macdeployqt", "raise SystemExit(0)")
@@ -164,7 +166,7 @@ class PackagingScriptsTests(unittest.TestCase):
         args = invocation["args"]
         search_paths = [args[i + 1] for i, arg in enumerate(args) if arg == "-s"]
         self.assertEqual(search_paths, [
-            str(self.qt / "lib"), str(app / "Contents/Frameworks"), str(sdk),
+            str(self.qt / "lib"), str(app / "Contents/Frameworks"), str(source_lib),
         ])
         self.assertEqual(invocation["stdin"], "quit\n")
 

@@ -25,8 +25,8 @@ Copy-Item (Join-Path $repoRoot 'NOTICE') (Join-Path $stage 'NOTICE')
 if (Test-Path (Join-Path (Split-Path -Parent $Executable) 'onnxruntime.dll')) {
     $runtimeNotices = Join-Path $stage 'onnxruntime'
     New-Item -ItemType Directory -Force $runtimeNotices | Out-Null
-    Copy-Item (Join-Path $repoRoot 'libs/onnxruntime/LICENSE') $runtimeNotices
-    Copy-Item (Join-Path $repoRoot 'libs/onnxruntime/ThirdPartyNotices.txt') $runtimeNotices
+    Copy-Item (Join-Path $repoRoot 'libs/onnxruntime-src/LICENSE') $runtimeNotices
+    Copy-Item (Join-Path $repoRoot 'libs/onnxruntime-src/ThirdPartyNotices.txt') $runtimeNotices
 }
 
 $windeployqt = Join-Path $env:QT_ROOT_DIR 'bin\windeployqt.exe'

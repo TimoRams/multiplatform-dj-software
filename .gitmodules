@@ -13,3 +13,7 @@
 [submodule "libs/signalsmith-stretch"]
 	path = libs/signalsmith-stretch
 	url = https://github.com/Signalsmith-Audio/signalsmith-stretch.git
+[submodule "libs/onnxruntime-src"]
+	path = libs/onnxruntime-src
+	url = https://github.com/microsoft/onnxruntime.git
+	shallow = true

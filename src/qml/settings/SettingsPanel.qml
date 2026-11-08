@@ -233,6 +233,7 @@ Item {
         { label: "DJ / Sync",       icon: "sync" },
         { label: "Legal",           icon: "legal" },
         { label: "Live / Recording", icon: "audio" },
+        { label: "Stems",           icon: "analysis" },
     ]
 
     readonly property bool isJackDeviceSelected: String(pendingAudioDeviceType).toLowerCase().indexOf("jack") >= 0
@@ -2260,126 +2261,6 @@ Item {
                             }
                         }
 
-                        // ── Stems ──────────────────────────────────────────
-                        ColumnLayout {
-                            id: stemsSection
-                            objectName: "stemsSection"
-                            Layout.fillWidth: true
-                            Layout.topMargin: 12
-                            spacing: 10
-                            readonly property var ctl: typeof stems !== "undefined" ? stems : null
-                            visible: ctl !== null
-                            onVisibleChanged: if (visible && ctl) ctl.refreshCacheSize()
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                height: 1
-                                color: UiTheme.separatorSubtle
-                            }
-
-                            Text {
-                                text: "Stems"
-                                color: UiTheme.textPrimary
-                                font.family: UiTheme.uiFontFamily
-                                font.pixelSize: 14
-                                font.bold: true
-                            }
-
-                            ClockStatus {
-                                color: UiTheme.textSecondary
-                                text: "Separates every loaded track into VOCALS, MELODY, BASS and DRUMS in the background, starting at the playhead. Use the STEMS pad page to mute or solo parts. Not-yet-separated sections play unchanged. Results are cached on disk."
-                            }
-
-                            ClockStatus {
-                                color: UiTheme.textSecondary
-                                text: "Separation can take several seconds and require several GB of RAM. Use Stems Preanalysis in the library to prepare tracks before a set; green S badges indicate cached stems."
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 12
-                                visible: stemsSection.ctl && stemsSection.ctl.supported
-                                ClockLabel { text: "Experimental GPU acceleration (restart required)" }
-                                ClockSwitch {
-                                    objectName: "stemsGpuSwitch"
-                                    checked: settingsManager.stemsGpuAcceleration
-                                    onToggled: settingsManager.stemsGpuAcceleration = checked
-                                }
-                            }
-
-                            ClockStatus {
-                                visible: stemsSection.ctl && stemsSection.ctl.supported
-                                color: UiTheme.textSecondary
-                                text: "Active backend: " + (stemsSection.ctl && stemsSection.ctl.backend
-                                    ? stemsSection.ctl.backend : "not loaded")
-                                    + ". Intel GPUs need the optional OpenVINO plugin and compute driver; macOS uses CoreML when available. Unsupported operations may still run on CPU. GPU speed depends on the device and model."
-                            }
-
-                            ClockStatus {
-                                visible: text !== ""
-                                color: UiTheme.cue
-                                text: stemsSection.ctl ? stemsSection.ctl.acceleratorWarning : ""
-                            }
-
-                            ClockStatus {
-                                visible: stemsSection.ctl && !stemsSection.ctl.supported
-                                color: UiTheme.cue
-                                text: "This build has no ONNX Runtime. Run scripts/fetch-onnxruntime.sh and rebuild to enable stems."
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 12
-                                visible: stemsSection.ctl && stemsSection.ctl.supported
-                                ClockLabel {
-                                    text: stemsSection.ctl && stemsSection.ctl.modelInstalled
-                                        ? "Separation model installed (HTDemucs, MIT licence)"
-                                        : stemsSection.ctl && stemsSection.ctl.downloading
-                                            ? "Downloading separation model… " + Math.round(stemsSection.ctl.downloadProgress * 100) + "%"
-                                            : "Separation model not installed (166 MB download)"
-                                }
-                                Button {
-                                    objectName: "stemsDownloadButton"
-                                    visible: stemsSection.ctl && !stemsSection.ctl.modelInstalled
-                                    text: stemsSection.ctl && stemsSection.ctl.downloading ? "Cancel" : "Download"
-                                    onClicked: {
-                                        if (stemsSection.ctl.downloading) stemsSection.ctl.cancelDownload()
-                                        else stemsSection.ctl.downloadModel()
-                                    }
-                                }
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 12
-                                visible: stemsSection.ctl && stemsSection.ctl.supported
-                                ClockLabel { text: "Separate stems automatically when a track is loaded" }
-                                ClockSwitch {
-                                    objectName: "stemsAutoSwitch"
-                                    checked: settingsManager.stemsEnabled
-                                    onToggled: settingsManager.stemsEnabled = checked
-                                }
-                            }
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                spacing: 12
-                                visible: stemsSection.ctl && stemsSection.ctl.supported
-                                ClockLabel {
-                                    text: "Stem cache: " + (stemsSection.ctl ? stemsSection.ctl.cacheSizeMb.toFixed(0) : 0) + " MB (oldest entries are removed above 8 GB)"
-                                }
-                                Button {
-                                    text: "Clear cache"
-                                    onClicked: stemsSection.ctl.clearCache()
-                                }
-                            }
-
-                            ClockStatus {
-                                visible: text !== ""
-                                color: UiTheme.cue
-                                text: stemsSection.ctl ? stemsSection.ctl.error : ""
-                            }
-                        }
                     }
                 }
             }
@@ -2634,6 +2515,159 @@ Item {
                     }
                 }
             }
+            // Stems: user-installed model, independent of runtime packaging.
+            Item {
+                ScrollView {
+                    anchors.fill: parent
+                    anchors.margins: 30
+                    clip: true
+                    contentWidth: availableWidth
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    ColumnLayout {
+                        width: parent.width
+                        // ── Stems ──────────────────────────────────────────
+                        ColumnLayout {
+                            id: stemsSection
+                            objectName: "stemsSection"
+                            Layout.fillWidth: true
+                            Layout.topMargin: 12
+                            spacing: 10
+                            readonly property var ctl: typeof stems !== "undefined" ? stems : null
+                            visible: ctl !== null
+                            onVisibleChanged: if (visible && ctl) ctl.refreshCacheSize()
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 1
+                                color: UiTheme.separatorSubtle
+                            }
+
+                            Text {
+                                text: "Stems"
+                                color: UiTheme.textPrimary
+                                font.family: UiTheme.uiFontFamily
+                                font.pixelSize: 18
+                                font.bold: true
+                            }
+
+                            ClockStatus {
+                                color: UiTheme.textSecondary
+                                text: "Separates every loaded track into VOCALS, MELODY, BASS and DRUMS in the background, starting at the playhead. Use the STEMS pad page to mute or solo parts. Not-yet-separated sections play unchanged. Results are cached on disk."
+                            }
+
+                            ClockStatus {
+                                color: UiTheme.textSecondary
+                                text: "Separation can take several seconds and require several GB of RAM. Use Stems Preanalysis in the library to prepare tracks before a set; green S badges indicate cached stems."
+                            }
+
+                            ClockStatus {
+                                visible: stemsSection.ctl && !stemsSection.ctl.supported
+                                color: UiTheme.cue
+                                text: "This build has no ONNX Runtime. Install a BrockDJ build with stems support to enable separation."
+                            }
+
+                            ClockStatus {
+                                text: "HTDemucs · MIT licence · 166 MB. Downloaded from Hugging Face only when you choose Install model. Audio stays on this computer."
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+                                visible: stemsSection.ctl && stemsSection.ctl.supported
+                                ClockLabel {
+                                    text: stemsSection.ctl && stemsSection.ctl.modelInstalled
+                                        ? "Separation model installed (HTDemucs, MIT licence)"
+                                        : stemsSection.ctl && stemsSection.ctl.downloading
+                                            ? "Downloading separation model… " + Math.round(stemsSection.ctl.downloadProgress * 100) + "%"
+                                            : "Separation model not installed (166 MB download)"
+                                }
+                                Button {
+                                    objectName: "stemsDownloadButton"
+                                    visible: stemsSection.ctl && !stemsSection.ctl.modelInstalled
+                                    text: stemsSection.ctl && stemsSection.ctl.downloading ? "Cancel download" : "Install model"
+                                    onClicked: {
+                                        if (stemsSection.ctl.downloading) stemsSection.ctl.cancelDownload()
+                                        else stemsSection.ctl.downloadModel()
+                                    }
+                                }
+                            }
+
+                            ProgressBar {
+                                objectName: "stemsModelProgress"
+                                Layout.fillWidth: true
+                                visible: stemsSection.ctl && stemsSection.ctl.downloading
+                                value: stemsSection.ctl ? stemsSection.ctl.downloadProgress : 0
+                            }
+
+                            ClockStatus {
+                                objectName: "stemsModelPath"
+                                text: stemsSection.ctl ? "Model location: " + stemsSection.ctl.modelPath : ""
+                                wrapMode: Text.WrapAnywhere
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+                                visible: stemsSection.ctl && stemsSection.ctl.supported
+                                ClockLabel { text: "Separate stems automatically when a track is loaded" }
+                                ClockSwitch {
+                                    objectName: "stemsAutoSwitch"
+                                    enabled: stemsSection.ctl && stemsSection.ctl.modelInstalled
+                                    checked: settingsManager.stemsEnabled
+                                    onToggled: settingsManager.stemsEnabled = checked
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+                                visible: stemsSection.ctl && stemsSection.ctl.supported
+                                ClockLabel { text: "Experimental GPU acceleration (restart required)" }
+                                ClockSwitch {
+                                    objectName: "stemsGpuSwitch"
+                                    checked: settingsManager.stemsGpuAcceleration
+                                    onToggled: settingsManager.stemsGpuAcceleration = checked
+                                }
+                            }
+
+                            ClockStatus {
+                                visible: stemsSection.ctl && stemsSection.ctl.supported
+                                color: UiTheme.textSecondary
+                                text: "Active backend: " + (stemsSection.ctl && stemsSection.ctl.backend
+                                    ? stemsSection.ctl.backend : "not loaded")
+                                    + ". Intel GPUs need the optional OpenVINO plugin and compute driver; macOS uses CoreML when available. Unsupported operations may still run on CPU. GPU speed depends on the device and model."
+                            }
+
+                            ClockStatus {
+                                visible: text !== ""
+                                color: UiTheme.cue
+                                text: stemsSection.ctl ? stemsSection.ctl.acceleratorWarning : ""
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+                                visible: stemsSection.ctl && stemsSection.ctl.supported
+                                ClockLabel {
+                                    text: "Stem cache: " + (stemsSection.ctl ? stemsSection.ctl.cacheSizeMb.toFixed(0) : 0) + " MB (oldest entries are removed above 8 GB)"
+                                }
+                                Button {
+                                    text: "Clear cache"
+                                    onClicked: stemsSection.ctl.clearCache()
+                                }
+                            }
+
+                            ClockStatus {
+                                objectName: "stemsModelError"
+                                visible: text !== ""
+                                color: UiTheme.cue
+                                text: stemsSection.ctl ? stemsSection.ctl.error : ""
+                            }
+                        }
+                    }
+                }
+            }
+
         }
     }
 }

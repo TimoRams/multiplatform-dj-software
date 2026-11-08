@@ -32,8 +32,8 @@ a missing or empty output before upload.
 
 ## Stems in CI and packages
 
-All native builds, including the Linux sanitizer build, install the
-SHA-256-verified ONNX Runtime SDK and configure with
+All native builds, including the Linux sanitizer build, compile the pinned
+ONNX Runtime source submodule and configure with
 `-DBROCKDJ_REQUIRE_STEMS=ON`. A missing runtime is an error, not a successful
 build with stems silently disabled. Linux x86_64 jobs install Qt Shader Tools
 alongside the same Qt version used to build the application.
@@ -75,7 +75,7 @@ It synchronizes with the worker outside the audio callback; the native
 
 Packages contain ONNX Runtime and its license/third-party notices. The model
 is only a CI test input, not part of the uploaded package: users install it
-once through **Settings -> DJ / Sync -> Stems -> Download**. The experimental
+once through **Settings -> Stems -> Install model**. The experimental
 OpenVINO GPU plugin remains optional and is not bundled.
 
 ## Linux AppImage
@@ -147,7 +147,7 @@ copies Qt's Offscreen plugin and supplies it as an additional executable to
 `macdeployqt` so its framework references are rewritten. Both plugins are
 required before the common architecture, dependency and signature checks.
 The extracted ZIP smoke uses that bundled Offscreen plugin, not the runner's.
-The native bundler receives explicit ONNX SDK, Qt and bundle search directories
+The native bundler receives explicit build-local ONNX Runtime, Qt and bundle search directories
 to resolve dependencies such as `@rpath/libonnxruntime.1.dylib`. Any remaining
 interactive lookup receives `quit`, so a missing dependency fails immediately
 instead of looping on CI's closed standard input. Architecture, dependency

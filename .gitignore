@@ -1,7 +1,5 @@
 # --- Build-Ordner ---
-build/
-build-tests/
-build-release/
+/build*/
 cmake-build-*/
 bin/
 out/
@@ -50,5 +48,9 @@ JuceLibraryCode/
 # --- App Icons (generiert durch scripts/generate_icons.sh) ---
 resources/icons/generated/
 
-# --- Optional ONNX Runtime SDK (scripts/fetch-onnxruntime.sh) ---
-libs/onnxruntime/
+# --- Local model copies and Python build/test artifacts ---
+/models/
+/*.onnx
+/*.onnx.data
+__pycache__/
+*.py[cod]

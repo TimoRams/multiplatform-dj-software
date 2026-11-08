@@ -271,7 +271,7 @@ if grep -q 'libonnxruntime\.so' <<< "$binary_dependencies"; then
         exit 1
     }
     mkdir -p "$appdir/usr/share/doc/BrockDJ/onnxruntime"
-    cp "$repo_root/libs/onnxruntime/LICENSE" "$repo_root/libs/onnxruntime/ThirdPartyNotices.txt" \
+    cp "$repo_root/libs/onnxruntime-src/LICENSE" "$repo_root/libs/onnxruntime-src/ThirdPartyNotices.txt" \
         "$appdir/usr/share/doc/BrockDJ/onnxruntime/"
 fi
 

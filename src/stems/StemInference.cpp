@@ -289,7 +289,7 @@ std::unique_ptr<StemInference> createOnnxStemInference(const std::string& modelP
     (void) modelPath;
     (void) threads;
     (void) options;
-    error = "This build has no ONNX Runtime (run scripts/fetch-onnxruntime.sh and reconfigure)";
+    error = "This build has no ONNX Runtime (rebuild with BROCKDJ_ENABLE_STEMS=ON)";
     return nullptr;
 #endif
 }

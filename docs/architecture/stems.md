@@ -15,19 +15,18 @@ the page; a failed job can be retried there.
 
 ## Setup
 
-Release CI builds require and package ONNX Runtime. For a local build, install
-the official CPU SDK and reconfigure:
+ONNX Runtime 1.31.1 is pinned as the `libs/onnxruntime-src` Git submodule.
+CMake builds it as an isolated external project and installs it under
+`<build>/onnxruntime` on Linux x64/ARM64, macOS Intel/Apple Silicon and Windows
+x64. CPU inference is always included; macOS also builds CoreML support.
+CMake 3.28+, Python 3.10+ and `patch` are required. The first build downloads runtime
+source dependencies; it does not download the separation model.
 
-- Linux x64/ARM64 and macOS Apple Silicon/Intel: `scripts/fetch-onnxruntime.sh`.
-- Windows x64: `./scripts/fetch-onnxruntime.ps1` in PowerShell.
+Use `git submodule update --init --recursive` after updating the checkout.
+`BROCKDJ_ENABLE_STEMS=OFF` omits the runtime and separation entirely.
+`BROCKDJ_REQUIRE_STEMS=ON` rejects builds without stems support.
 
-The scripts check SHA-256 and do not replace an existing `libs/onnxruntime`.
-CMake reports `Stems: ONNX Runtime ...`; `-DBROCKDJ_REQUIRE_STEMS=ON` makes
-missing dependencies a configuration error. Without the SDK, or with
-`-DBROCKDJ_ENABLE_STEMS=OFF`, the rest of the application still works and
-the page reports that stems are unavailable.
-
-Open **Settings -> DJ / Sync -> Stems -> Download** once to install the 166 MB HT-Demucs
+Open **Settings -> Stems -> Install model** once to install the 166 MB HT-Demucs
 ONNX model. The download is checked against a pinned SHA-256 and atomically
 installed under `AppLocalDataLocation/models/`; it is not committed to Git.
 `BROCKDJ_STEM_MODEL=/path/model.onnx` selects an existing model instead. The
@@ -64,7 +63,7 @@ its completed cache has been written and retained within the disk budget.
 
 ## Optional GPU acceleration
 
-**Settings -> DJ / Sync -> Stems -> Experimental GPU acceleration** is off by default.
+**Settings -> Stems -> Experimental GPU acceleration** is off by default.
 Changes take effect after restarting BrockDJ. The settings page reports the
 backend actually selected after model loading and any CPU-fallback reason.
 GPU initialization, model compilation or inference failures fall back to CPU;
@@ -76,12 +75,12 @@ missing acceleration never disables ordinary CPU stems.
   `python scripts/fetch-stems-openvino.py`). This installs the SHA-256-pinned
   1.8.1 plugin, OpenVINO/TBB libraries and license notices in the per-user
   `AppLocalDataLocation/stems-providers/openvino/`, without pip or changes to
-  the CPU SDK. `--destination` overrides the installer path;
+  the CPU runtime. `--destination` overrides the installer path;
   `BROCKDJ_STEM_EP_LIBRARY` selects an alternative plugin library. Existing
   provider installations are not overwritten. Linux requires glibc 2.28+.
 - **macOS:** uses CoreML with CPU/GPU compute units if the installed ONNX
   Runtime exposes that provider. CoreML support is not assumed on older Intel
-  Mac SDKs. Native macOS inference has not been benchmarked here.
+  runtime builds. Native macOS inference has not been benchmarked here.
 - **AMD/NVIDIA and Windows DirectML:** not implemented by this optional
   backend. The CPU path continues to work.
 
