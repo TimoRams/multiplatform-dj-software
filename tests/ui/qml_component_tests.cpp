@@ -3479,7 +3479,8 @@ bool qmlMergeRuntimeTests()
         QQuickWindow infoWindow;
         infoWindow.resize(1280, 200);
         infoWindow.setColor(QColor("#10151d"));
-        auto infoEngine = createQmlObject(engine, QStringLiteral(R"(
+        const auto makeInfoEngine = [&] {
+            return createQmlObject(engine, QStringLiteral(R"(
             import QtQml
             QtObject {
                 property bool hasTrack: true
@@ -3504,6 +3505,19 @@ bool qmlMergeRuntimeTests()
                 property bool seekPreviewActive: false
                 property real seekPreviewPosition: 0
                 property real mainCueSec: 0
+                property int stemsState: 0
+                property real stemsProgress: 0
+                property bool beatGridAvailable: false
+                property var currentSegments: []
+                property QtObject trackData: QtObject {
+                    property bool analyzing: false
+                    property real analysisProgress: 0
+                }
+                function beatDisplayInfo() {
+                    return { valid: beatGridAvailable, phraseNumber: 1,
+                             barInPhrase: 2, beatInBar: 1,
+                             barsToNextSegment: -1, nextSegmentLabel: "" }
+                }
                 function getVisualPositionQml() { return visualPosition }
                 function getPlayheadPositionAtomic() { return 49.123 }
                 function beginSeekPreview(value) {}
@@ -3512,6 +3526,11 @@ bool qmlMergeRuntimeTests()
                 function cancelSeekPreview() {}
             }
         )"), "lower deck display fixture instantiates");
+        };
+        auto infoEngine = makeInfoEngine();
+        auto infoEngineB = makeInfoEngine();
+        if (!require(infoEngine && infoEngineB, "both lower deck fixtures instantiate"))
+            return false;
         QQmlComponent infoComponent(&engine, QUrl::fromLocalFile(
             qmlDirectory + QStringLiteral("deck/DeckTrackInfoPanel.qml")));
         std::unique_ptr<QObject> infoA(infoComponent.create(&context));
@@ -3521,8 +3540,9 @@ bool qmlMergeRuntimeTests()
             return false;
         }
         infoA->setProperty("engine", QVariant::fromValue(infoEngine.get()));
-        infoB->setProperty("engine", QVariant::fromValue(infoEngine.get()));
+        infoB->setProperty("engine", QVariant::fromValue(infoEngineB.get()));
         infoB->setProperty("deckName", QStringLiteral("B"));
+        infoWindow.show();
         const auto fit = [&](int viewportWidth) {
             infoWindow.resize(viewportWidth, 200);
             for (auto* object : {infoA.get(), infoB.get()}) {
@@ -3531,7 +3551,7 @@ bool qmlMergeRuntimeTests()
                 item->setSize(QSizeF(viewportWidth / 2, 200));
                 item->setX(object == infoA.get() ? 0 : viewportWidth / 2);
             }
-            QCoreApplication::processEvents();
+            QTest::qWait(30);
         };
         fit(1024);
         auto* title = infoA->findChild<QObject*>("deckInfoTrackTitle");
@@ -3573,7 +3593,227 @@ bool qmlMergeRuntimeTests()
         ok &= require(!infoA->property("trackEnding").toBool(), "a paused deck does not show an end warning");
         infoEngine->setProperty("visualPosition", 49.123);
         QMetaObject::invokeMethod(infoA.get(), "refreshDisplayedPlaybackPosition");
+
+        fit(1024);
+        auto* infoTrackData = infoEngine->property("trackData").value<QObject*>();
+        auto* timeHeading = infoA->findChild<QQuickItem*>("deckTimeHeading");
+        auto* phraseCounter = infoA->findChild<QQuickItem*>("deckPhraseCounter");
+        auto* analysisIndicator = infoA->findChild<QQuickItem*>("deckAnalysisProgress");
+        auto* analysisLabel = infoA->findChild<QObject*>("deckAnalysisLabel");
+        auto* analysisTrack = infoA->findChild<QQuickItem*>("deckAnalysisProgressTrack");
+        auto* analysisFill = infoA->findChild<QQuickItem*>("deckAnalysisProgressFill");
+        auto* stemsIndicator = infoA->findChild<QQuickItem*>("deckStemsProgress");
+        auto* stemsFill = infoA->findChild<QQuickItem*>("deckStemsProgressFill");
+        auto* stemsQueued = infoA->findChild<QQuickItem*>("deckStemsQueuedMarker");
+        auto* stemsHover = infoA->findChild<QQuickItem*>("deckStemsProgressHover");
+        auto* analysisIndicatorB = infoB->findChild<QQuickItem*>("deckAnalysisProgress");
+        auto* stemsIndicatorB = infoB->findChild<QQuickItem*>("deckStemsProgress");
+        ok &= require(infoTrackData && timeHeading && phraseCounter && analysisIndicator
+                          && analysisLabel && analysisTrack && analysisFill
+                          && stemsIndicator && stemsFill && stemsQueued && stemsHover
+                          && analysisIndicatorB && stemsIndicatorB,
+                      "each deck exposes the analysis and stem progress elements");
+        QCoreApplication::processEvents();
+        ok &= require(analysisIndicator && !analysisIndicator->isVisible()
+                          && stemsIndicator && !stemsIndicator->isVisible(),
+                      "idle decks hide the analysis and stem progress indicators");
+        if (infoTrackData) {
+            infoTrackData->setProperty("analysisProgress", 0.42);
+            infoTrackData->setProperty("analyzing", true);
+        }
+        infoEngine->setProperty("stemsState", 2);
+        infoEngine->setProperty("stemsProgress", 0.25);
+        QCoreApplication::processEvents();
+        ok &= require(analysisIndicator && analysisIndicator->isVisible()
+                          && analysisLabel
+                          && analysisLabel->property("text").toString().contains("42%"),
+                      "an unanalysed track shows analysis progress in the phrase slot at normal deck width");
+        ok &= require(stemsIndicator && stemsIndicator->isVisible()
+                          && std::abs(stemsIndicator->property("progress").toDouble() - 0.25) < 1e-9,
+                      "running stem separation shows its progress above the phrase slot");
+        ok &= require(analysisIndicatorB && !analysisIndicatorB->isVisible()
+                          && stemsIndicatorB && !stemsIndicatorB->isVisible(),
+                      "progress from one deck does not leak into another deck");
+        auto* infoTrackDataB = infoEngineB->property("trackData").value<QObject*>();
+        if (infoTrackDataB) {
+            infoTrackDataB->setProperty("analysisProgress", 0.6);
+            infoTrackDataB->setProperty("analyzing", true);
+        }
+        infoEngineB->setProperty("stemsState", 2);
+        infoEngineB->setProperty("stemsProgress", 0.9);
+        QCoreApplication::processEvents();
+        ok &= require(infoTrackDataB && analysisIndicator && stemsIndicator
+                          && analysisIndicatorB && stemsIndicatorB
+                          && analysisIndicatorB->isVisible() && stemsIndicatorB->isVisible()
+                          && std::abs(analysisIndicatorB->property("progress").toDouble() - 0.6) < 1e-9
+                          && std::abs(stemsIndicatorB->property("progress").toDouble() - 0.9) < 1e-9
+                          && std::abs(analysisIndicator->property("progress").toDouble() - 0.42) < 1e-9
+                          && std::abs(stemsIndicator->property("progress").toDouble() - 0.25) < 1e-9,
+                      "each deck displays its own analysis and stem progress");
+        infoA->setProperty("engine", QVariant::fromValue(infoEngineB.get()));
+        QCoreApplication::processEvents();
+        ok &= require(analysisIndicator && stemsIndicator
+                          && std::abs(analysisIndicator->property("progress").toDouble() - 0.6) < 1e-9
+                          && std::abs(stemsIndicator->property("progress").toDouble() - 0.9) < 1e-9,
+                      "changing a panel's deck switches both progress sources");
+        infoA->setProperty("engine", QVariant::fromValue(infoEngine.get()));
+        if (infoTrackDataB)
+            infoTrackDataB->setProperty("analyzing", false);
+        infoEngineB->setProperty("stemsState", 0);
+        QCoreApplication::processEvents();
+        for (const int viewportWidth : {640, 720, 880, 1024, 1280, 1920, 2560}) {
+            fit(viewportWidth);
+            ok &= require(analysisIndicator && analysisIndicator->isVisible()
+                              && analysisLabel
+                              && analysisLabel->property("text").toString().contains("42%")
+                              && !analysisLabel->property("truncated").toBool()
+                              && analysisTrack && analysisTrack->isVisible()
+                              && analysisTrack->width() >= 5.0
+                              && timeHeading
+                              && analysisIndicator->x() >= timeHeading->x() + timeHeading->width()
+                              && analysisIndicator->x() + analysisIndicator->width()
+                                  <= analysisIndicator->parentItem()->width() + 0.01,
+                          "analysis percentage and progress bar fit beside the time heading at every deck width");
+            const bool stemsLayoutFits = stemsIndicator && analysisIndicator
+                && stemsIndicator->isVisible() && stemsIndicator->width() > 0
+                && std::abs(stemsIndicator->x() - analysisIndicator->x()) < 0.01
+                && stemsIndicator->y() + stemsIndicator->height() <= analysisIndicator->y();
+            if (!stemsLayoutFits && stemsIndicator && analysisIndicator) {
+                std::cerr << "Progress geometry at width " << viewportWidth
+                          << ": stems=" << stemsIndicator->x() << "," << stemsIndicator->y()
+                          << " " << stemsIndicator->width() << "x" << stemsIndicator->height()
+                          << ", analysis=" << analysisIndicator->x() << "," << analysisIndicator->y()
+                          << " " << analysisIndicator->width() << "x" << analysisIndicator->height()
+                          << '\n';
+            }
+            ok &= require(stemsLayoutFits,
+                          "stem progress stays above the analysis display at every deck width");
+        }
+        fit(1024);
+        for (const double progress : {0.0, 0.09, 0.1, 0.42, 0.99, 1.0}) {
+            if (infoTrackData)
+                infoTrackData->setProperty("analysisProgress", progress);
+            QCoreApplication::processEvents();
+            ok &= require(analysisLabel
+                              && analysisLabel->property("text").toString()
+                                  .contains(QString::number(qRound(progress * 100)) + QLatin1Char('%'))
+                              && !analysisLabel->property("truncated").toBool(),
+                          "analysis percentages from zero to one hundred remain legible");
+        }
+        if (infoTrackData)
+            infoTrackData->setProperty("analysisProgress", 0.42);
+        ok &= require(QTest::qWaitFor([&] {
+                          return analysisFill && analysisTrack && stemsFill && stemsIndicator
+                              && std::abs(analysisFill->width() - std::round(analysisTrack->width() * 0.42)) < 0.01
+                              && std::abs(stemsFill->width() - std::round(stemsIndicator->width() * 0.25)) < 0.01;
+                      }, 1000),
+                      "both progress bars fill to the reported percentages");
+
+        if (stemsIndicator && stemsHover) {
+            QQmlExpression tooltip(qmlContext(stemsIndicator), stemsIndicator,
+                                   QStringLiteral("ToolTip.text"));
+            const auto tooltipText = tooltip.evaluate().toString();
+            ok &= require(!tooltip.hasError() && tooltipText == "Stems: 25%",
+                          "stem progress tooltip reports the actual percentage");
+            QQmlExpression accessibleName(qmlContext(stemsIndicator), stemsIndicator,
+                                          QStringLiteral("Accessible.name"));
+            const auto name = accessibleName.evaluate().toString();
+            ok &= require(!accessibleName.hasError() && name == "Stems 25%",
+                          "stem progress exposes its percentage to assistive technology");
+            const QPoint hoverPoint = stemsIndicator->mapToScene(
+                QPointF(stemsIndicator->width() * 0.5, stemsIndicator->height() * 0.5)).toPoint();
+            QTest::mouseMove(&infoWindow, hoverPoint, 20);
+            ok &= require(QTest::qWaitFor([&] {
+                              return stemsHover->property("containsMouse").toBool();
+                          }, 500),
+                          "stem progress remains reachable for its hover tooltip");
+            QTest::mouseMove(&infoWindow, QPoint(1, 1), 20);
+        }
+
         const QString captureDir = qEnvironmentVariable("BROCKDJ_UI_CAPTURE_DIR");
+        if (!captureDir.isEmpty())
+            QDir().mkpath(captureDir);
+        const auto captureProgress = [&](const char* name) {
+            if (captureDir.isEmpty())
+                return;
+            QTest::qWait(250);
+            ok &= require(infoWindow.grabWindow().save(captureDir + QLatin1Char('/') + QString::fromLatin1(name)),
+                          "deck progress reference capture saves");
+        };
+        infoEngine->setProperty("stemsState", 1);
+        QCoreApplication::processEvents();
+        ok &= require(stemsIndicator && stemsIndicator->isVisible()
+                          && stemsIndicator->property("progress").toDouble() == 0.0
+                          && stemsQueued && stemsQueued->isVisible() && stemsQueued->width() > 0
+                          && stemsFill && !stemsFill->isVisible(),
+                      "queued stems show a waiting marker rather than false progress");
+        if (stemsIndicator) {
+            QQmlExpression tooltip(qmlContext(stemsIndicator), stemsIndicator,
+                                   QStringLiteral("ToolTip.text"));
+            const auto tooltipText = tooltip.evaluate().toString();
+            ok &= require(!tooltip.hasError() && tooltipText == "Stems: queued",
+                          "the stem tooltip identifies a queued job");
+        }
+        captureProgress("deck-information-stems-queued.png");
+        infoEngine->setProperty("stemsState", 2);
+        QCoreApplication::processEvents();
+        ok &= require(stemsQueued && !stemsQueued->isVisible()
+                          && stemsFill && stemsFill->isVisible(),
+                      "stem separation replaces the waiting marker with its progress fill");
+        if (!captureDir.isEmpty()) {
+            fit(640);
+            captureProgress("deck-information-progress-narrow.png");
+            fit(1024);
+        }
+
+        if (infoTrackData)
+            infoTrackData->setProperty("analysisProgress", 1.5);
+        infoEngine->setProperty("stemsProgress", -0.5);
+        QCoreApplication::processEvents();
+        ok &= require(analysisIndicator && analysisIndicator->property("progress").toDouble() == 1.0
+                          && stemsIndicator && stemsIndicator->property("progress").toDouble() == 0.0,
+                      "progress bars clamp out-of-range values");
+        if (infoTrackData)
+            infoTrackData->setProperty("analysisProgress", 0.42);
+        infoEngine->setProperty("stemsProgress", 0.25);
+        QCoreApplication::processEvents();
+
+        infoEngine->setProperty("hasTrack", false);
+        QCoreApplication::processEvents();
+        ok &= require(analysisIndicator && !analysisIndicator->isVisible()
+                          && stemsIndicator && !stemsIndicator->isVisible(),
+                      "a deck without a track does not display stale progress");
+        infoEngine->setProperty("hasTrack", true);
+        QCoreApplication::processEvents();
+        infoEngine->setProperty("beatGridAvailable", true);
+        infoEngine->setProperty("visualPosition", 49.124);
+        QMetaObject::invokeMethod(infoA.get(), "refreshDisplayedPlaybackPosition");
+        QCoreApplication::processEvents();
+        ok &= require(analysisIndicator && analysisIndicator->isVisible()
+                          && phraseCounter && !phraseCounter->isVisible(),
+                      "an existing BPM tag does not hide an ongoing track analysis");
+        captureProgress("deck-information-analysis-progress.png");
+
+        if (infoTrackData)
+            infoTrackData->setProperty("analyzing", false);
+        QTest::qWait(30);
+        ok &= require(analysisIndicator && !analysisIndicator->isVisible()
+                          && phraseCounter && phraseCounter->isVisible()
+                          && stemsIndicator && stemsIndicator->isVisible()
+                          && std::abs(stemsIndicator->x() - phraseCounter->x()) < 0.01
+                          && stemsIndicator->y() + stemsIndicator->height() <= phraseCounter->y(),
+                      "stem separation remains visible above the restored phrase counter");
+        captureProgress("deck-information-phrase-stems.png");
+        infoEngine->setProperty("stemsState", 3);
+        QCoreApplication::processEvents();
+        ok &= require(analysisIndicator && !analysisIndicator->isVisible()
+                          && stemsIndicator && !stemsIndicator->isVisible()
+                          && phraseCounter && phraseCounter->isVisible(),
+                      "finished analysis and stems restore the phrase counter");
+        infoEngine->setProperty("stemsState", 4);
+        QCoreApplication::processEvents();
+        ok &= require(stemsIndicator && !stemsIndicator->isVisible(),
+                      "failed stem jobs no longer show an active progress bar");
         if (!captureDir.isEmpty()) {
             QDir().mkpath(captureDir);
             fit(1280);

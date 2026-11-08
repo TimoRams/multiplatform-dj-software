@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import DJSoftware
 
@@ -47,6 +48,15 @@ Item {
     readonly property int rulerHeight: Math.round(22 * metricScale)
     readonly property real duration: engine && engine.trackDurationSec > 0 ? engine.trackDurationSec : 0
     readonly property bool hasTrack: engine && engine.hasTrack
+    readonly property var trackData: engine && engine.trackData ? engine.trackData : null
+    readonly property bool analysisRunning: hasTrack && trackData !== null && trackData.analyzing === true
+    readonly property real analysisProgress: trackData
+        ? Math.max(0, Math.min(1, Number(trackData.analysisProgress) || 0)) : 0
+    // StemJobState: 1 = queued, 2 = separating.
+    readonly property int stemsState: engine && engine.stemsState !== undefined ? Number(engine.stemsState) : 0
+    readonly property bool stemsRunning: hasTrack && (stemsState === 1 || stemsState === 2)
+    readonly property real stemsProgress: engine && stemsState === 2
+        ? Math.max(0, Math.min(1, Number(engine.stemsProgress) || 0)) : 0
     // This is deliberately a concrete UI value, refreshed from the visual
     // transport clock.  The atomic audio playhead is only updated at audio
     // callback boundaries, whereas the visual clock extrapolates smoothly.
@@ -352,6 +362,7 @@ Item {
 
                 Text {
                     id: timeLabel
+                    objectName: "deckTimeHeading"
                     anchors.top: parent.top
                     anchors.topMargin: root.valuePx(9, 5)
                     text: root.showRemainingTime ? "REMAIN" : "TIME"
@@ -373,7 +384,8 @@ Item {
                     }
                     readonly property bool hasNext: info.valid && info.barsToNextSegment > 0
                                                     && String(info.nextSegmentLabel || "") !== ""
-                    visible: info.valid && x >= timeLabel.x + timeLabel.width + root.valuePx(8, 4)
+                    visible: !root.analysisRunning && info.valid
+                             && x >= timeLabel.x + timeLabel.width + root.valuePx(8, 4)
                     anchors.right: parent.right
                     anchors.rightMargin: root.valuePx(8, 4)
                     anchors.verticalCenter: timeLabel.verticalCenter
@@ -407,6 +419,138 @@ Item {
                                 opacity: index + 1 === bar && phraseCounter.info.beatInBar !== 1 ? 0.7 : 1
                             }
                         }
+                    }
+                }
+                TextMetrics {
+                    id: fullAnalysisText
+                    font: analysisLabel.font
+                    text: "ANALYZING 100%"
+                }
+                TextMetrics {
+                    id: shortAnalysisText
+                    font: analysisLabel.font
+                    text: "ANL 100%"
+                }
+                TextMetrics {
+                    id: analysisPercentageText
+                    font: analysisLabel.font
+                    text: "100%"
+                }
+                Row {
+                    id: analysisIndicator
+                    objectName: "deckAnalysisProgress"
+                    readonly property real progress: root.analysisProgress
+                    readonly property real availableWidth: Math.max(0,
+                        parent.width - timeLabel.x - timeLabel.width
+                        - 2 * root.valuePx(8, 4))
+                    readonly property real minimumBarWidth: root.valuePx(18, 10)
+                    readonly property int labelMode:
+                        availableWidth >= fullAnalysisText.width + spacing + minimumBarWidth ? 2
+                        : availableWidth >= shortAnalysisText.width + spacing + minimumBarWidth ? 1 : 0
+                    visible: root.analysisRunning && availableWidth > 0
+                    anchors.right: parent.right
+                    anchors.rightMargin: root.valuePx(8, 4)
+                    anchors.verticalCenter: timeLabel.verticalCenter
+                    spacing: root.valuePx(6, 3)
+                    Accessible.role: Accessible.ProgressBar
+                    Accessible.name: "Track analysis " + Math.round(progress * 100) + "%"
+                    Text {
+                        id: analysisLabel
+                        objectName: "deckAnalysisLabel"
+                        anchors.verticalCenter: parent.verticalCenter
+                        readonly property real reservedWidth: analysisIndicator.labelMode === 2
+                            ? fullAnalysisText.width : analysisIndicator.labelMode === 1
+                            ? shortAnalysisText.width : analysisPercentageText.width
+                        width: Math.min(analysisIndicator.availableWidth, reservedWidth)
+                        text: (analysisIndicator.labelMode === 2 ? "ANALYZING "
+                               : analysisIndicator.labelMode === 1 ? "ANL " : "")
+                              + Math.round(analysisIndicator.progress * 100) + "%"
+                        color: root.secondaryText
+                        font.pixelSize: root.valuePx(12, 9)
+                        font.weight: Font.DemiBold
+                        font.family: UiTheme.numericFontFamily
+                        elide: Text.ElideRight
+                    }
+                    Rectangle {
+                        objectName: "deckAnalysisProgressTrack"
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.max(0, Math.min(8 * root.valuePx(7, 4) + 7 * 2,
+                            analysisIndicator.availableWidth - analysisLabel.width - analysisIndicator.spacing))
+                        height: root.valuePx(10, 6)
+                        visible: width > 0
+                        color: UiTheme.knobTrack
+                        Rectangle {
+                            objectName: "deckAnalysisProgressFill"
+                            anchors.left: parent.left
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            width: Math.round(parent.width * analysisIndicator.progress)
+                            color: root.deckAccent
+                            Behavior on width { NumberAnimation { duration: 180 } }
+                        }
+                    }
+                }
+                Rectangle {
+                    id: stemsIndicator
+                    objectName: "deckStemsProgress"
+                    readonly property real progress: root.stemsProgress
+                    readonly property Item anchorItem: phraseCounter.visible ? phraseCounter
+                        : analysisIndicator.visible ? analysisIndicator : null
+                    visible: root.stemsRunning
+                    anchors.right: parent.right
+                    anchors.rightMargin: root.valuePx(8, 4)
+                    anchors.top: parent.top
+                    anchors.topMargin: root.valuePx(2, 1)
+                    width: Math.max(0, Math.min(
+                        parent.width - timeLabel.x - timeLabel.width - 2 * root.valuePx(8, 4),
+                        anchorItem ? anchorItem.width : 8 * root.valuePx(7, 4) + 7 * 2))
+                    height: root.valuePx(3, 2)
+                    radius: height / 2
+                    color: UiTheme.knobTrack
+                    Accessible.role: Accessible.ProgressBar
+                    Accessible.name: root.stemsState === 1 ? "Stems queued"
+                        : "Stems " + Math.round(progress * 100) + "%"
+                    ToolTip.visible: stemsIndicator.visible && stemProgressHover.containsMouse
+                    ToolTip.delay: 400
+                    ToolTip.text: root.stemsState === 1 ? "Stems: queued"
+                        : "Stems: " + Math.round(progress * 100) + "%"
+                    Rectangle {
+                        objectName: "deckStemsProgressFill"
+                        visible: root.stemsState === 2
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        width: Math.round(parent.width * stemsIndicator.progress)
+                        radius: parent.radius
+                        color: root.functionOrange
+                        Behavior on width { NumberAnimation { duration: 180 } }
+                    }
+                    Rectangle {
+                        id: stemQueuedMarker
+                        objectName: "deckStemsQueuedMarker"
+                        visible: root.stemsState === 1
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        width: Math.min(parent.width, root.valuePx(8, 4))
+                        radius: parent.radius
+                        color: root.functionOrange
+                        SequentialAnimation on opacity {
+                            running: stemQueuedMarker.visible && root.visible
+                            loops: Animation.Infinite
+                            onRunningChanged: if (!running) stemQueuedMarker.opacity = 1
+                            NumberAnimation { to: 0.35; duration: 600 }
+                            NumberAnimation { to: 1; duration: 600 }
+                        }
+                    }
+                    MouseArea {
+                        id: stemProgressHover
+                        objectName: "deckStemsProgressHover"
+                        anchors.fill: parent
+                        anchors.topMargin: -root.valuePx(2, 1)
+                        anchors.bottomMargin: -root.valuePx(6, 4)
+                        hoverEnabled: true
+                        acceptedButtons: Qt.NoButton
                     }
                 }
                 Item {

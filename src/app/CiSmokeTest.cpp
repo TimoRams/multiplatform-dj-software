@@ -8,6 +8,7 @@
 #include "audio/cache/AudioPageCache.h"
 #include "ApplicationBootstrap.h"
 #include "controllers/flx10/Flx10ControllerIdentity.h"
+#include "domain/TrackData.h"
 #include "fx/FxManager.h"
 #include "app/ControlClock.h"
 #include "app/SettingsManager.h"
@@ -27,6 +28,7 @@
 #include <QGuiApplication>
 #include <QMetaProperty>
 #include <QQmlComponent>
+#include <QQmlContext>
 #include <QQmlEngine>
 #include <QProcess>
 #include <QSqlDatabase>
@@ -38,6 +40,7 @@
 #include <QtGlobal>
 #include <cmath>
 #include <algorithm>
+#include <memory>
 
 namespace {
 class SmokeStemInference final : public brockdj::stems::StemInference
@@ -93,6 +96,36 @@ bool testLiveDeckFeatures(QString& error)
     };
     {
         DjEngine deck(devices, cache, bus.deck(0), clock, sync, 0);
+        QQmlEngine progressEngine;
+        progressEngine.rootContext()->setContextProperty(QStringLiteral("deckUnderTest"), &deck);
+        QQmlComponent progressComponent(&progressEngine);
+        progressComponent.setData(R"(
+            import QtQml
+            QtObject {
+                readonly property bool analyzing: deckUnderTest.trackData.analyzing
+                readonly property real analysisProgress: deckUnderTest.trackData.analysisProgress
+                readonly property int stemsState: deckUnderTest.stemsState
+                readonly property real stemsProgress: deckUnderTest.stemsProgress
+            }
+        )", QUrl());
+        std::unique_ptr<QObject> progressProbe(progressComponent.create());
+        if (!progressProbe) {
+            error = QStringLiteral("deck progress QML probe failed: %1")
+                        .arg(progressComponent.errorString());
+            return false;
+        }
+        deck.getTrackData()->reportAnalysisProgress(0.42, true);
+        QCoreApplication::processEvents();
+        require(progressProbe->property("analyzing").toBool()
+                    && std::abs(progressProbe->property("analysisProgress").toDouble() - 0.42) < 1e-9,
+                "QML did not receive the live deck analysis progress");
+        deck.getTrackData()->reportAnalysisProgress(1.0, false);
+        QCoreApplication::processEvents();
+        require(!progressProbe->property("analyzing").toBool()
+                    && progressProbe->property("analysisProgress").toDouble() == 1.0
+                    && progressProbe->property("stemsState").toInt() == deck.stemsState()
+                    && progressProbe->property("stemsProgress").toDouble() == deck.stemsProgress(),
+                "QML did not receive completed analysis or initial stem state");
         deck.setLibraryDatabase(&database);
         deck.loadTrack(fixture.filePath());
         if (!require(wait([&] { return deck.hasTrack(); }), "local deck fixture did not load")) return false;
@@ -296,6 +329,9 @@ bool testLiveDeckFeatures(QString& error)
                 settings.setStemsEnabled(true);
                 require(deck.stemsState() != 0,
                         "enabling auto stems did not queue the already loaded track");
+                require(progressProbe->property("stemsState").toInt() == deck.stemsState()
+                            && progressProbe->property("stemsProgress").toDouble() == deck.stemsProgress(),
+                        "QML did not receive the live deck stem state");
                 settings.setStemsEnabled(false);
             }
 

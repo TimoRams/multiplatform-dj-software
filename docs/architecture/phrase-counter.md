@@ -7,6 +7,12 @@ Each deck's track info panel shows, next to the TIME/REMAIN label:
 - either the next analysed section with a bar countdown (e.g. `DROP 4`, orange
   when two bars or fewer remain) or, without segments, the phrase number (`PH 12`).
 
+While track analysis is running, its percentage and progress bar temporarily
+replace the phrase counter, including when a provisional BPM tag is available.
+The counter returns when analysis ends. A thin orange bar above this area shows
+the current deck's stem-separation progress; a pulsing dash indicates that the
+job is queued. Hovering over the bar shows its status and percentage.
+
 ## Data flow
 
 `DjEngine::beatDisplayInfo()` (`src/deck/DjEngineTransport.cpp`) computes the beat
