@@ -92,6 +92,9 @@ if otool -L "$binary" | grep -qi 'onnxruntime'; then
         echo "ONNX Runtime is missing from the macOS bundle" >&2
         exit 1
     }
+    mkdir -p "$app/Contents/Resources/onnxruntime"
+    cp "$repo_root/libs/onnxruntime/LICENSE" "$repo_root/libs/onnxruntime/ThirdPartyNotices.txt" \
+        "$app/Contents/Resources/onnxruntime/"
 fi
 cp "$repo_root/NOTICE" "$app/Contents/Resources/NOTICE"
 

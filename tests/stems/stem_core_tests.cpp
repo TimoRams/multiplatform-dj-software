@@ -299,6 +299,30 @@ struct ServiceFixture {
     }
 };
 
+bool testCacheIdentity()
+{
+    ServiceFixture fx;
+    const auto file = writeWav(fx.dir, "identity.wav", 44100.0, 1000);
+    const auto originalTime = std::filesystem::last_write_time(file);
+    const auto originalKey = fx.service->cacheFileFor(utf8Path(file));
+    bool ok = require(originalKey == fx.service->cacheFileFor(utf8Path(file)),
+                      "unchanged source retains its cache key");
+    std::filesystem::last_write_time(file, originalTime + std::chrono::seconds(1));
+    ok &= require(originalKey != fx.service->cacheFileFor(utf8Path(file)),
+                  "source timestamp changes invalidate the cache key");
+    std::filesystem::last_write_time(file, originalTime);
+    ok &= require(originalKey == fx.service->cacheFileFor(utf8Path(file)),
+                  "restoring the timestamp restores the cache key");
+    {
+        std::ofstream append(file, std::ios::binary | std::ios::app);
+        append.put('\0');
+    }
+    std::filesystem::last_write_time(file, originalTime);
+    ok &= require(originalKey != fx.service->cacheFileFor(utf8Path(file)),
+                  "source size changes invalidate the cache key even with the same timestamp");
+    return ok;
+}
+
 bool checkStoredMatches(const StemTrackData& data, double rate, float tolerance)
 {
     float worst = 0.0f;
@@ -878,7 +902,8 @@ bool testRealModel()
     std::filesystem::remove_all(dir);
     return ok;
 #else
-    return true;
+    const char* model = std::getenv("BROCKDJ_STEM_MODEL");
+    return require(!model || !*model, "real-model test requires ONNX Runtime in this build");
 #endif
 }
 
@@ -1024,6 +1049,7 @@ int main()
 {
     bool ok = true;
     ok &= testChunkPlan();
+    ok &= testCacheIdentity();
     ok &= testRemixAndReadScope();
     ok &= testWaveformEnvelope();
     ok &= testWaveformTransition();

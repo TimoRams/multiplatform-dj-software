@@ -7,7 +7,7 @@
 #include <QQuickWindow>
 #include <QSGGeometryNode>
 #include <QTest>
-#if QT_CONFIG(vulkan)
+#if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>)
 #include <QVulkanInstance>
 #endif
 
@@ -115,11 +115,16 @@ int main(int argc, char** argv)
         std::cout << "GPU shader test requires an RHI backend\n";
         return 77;
     }
-#if QT_CONFIG(vulkan)
+#if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>)
     QVulkanInstance vulkan;
+#else
+    if (qEnvironmentVariable("QSG_RHI_BACKEND") == "vulkan") {
+        std::cout << "Vulkan test requires Vulkan SDK headers\n";
+        return 77;
+    }
 #endif
     QQuickWindow window;
-#if QT_CONFIG(vulkan)
+#if QT_CONFIG(vulkan) && __has_include(<vulkan/vulkan.h>)
     if (qEnvironmentVariable("QSG_RHI_BACKEND") == "vulkan") {
         if (!vulkan.create()) {
             std::cout << "Vulkan renderer is unavailable\n";

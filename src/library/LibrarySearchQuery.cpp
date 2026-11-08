@@ -695,8 +695,9 @@ private:
         const QDate date = QDate::fromString(rest, Qt::ISODate);
         if (!date.isValid())
             return QStringLiteral("0");
-        const qint64 dayStart = QDateTime(date, QTime(0, 0), QTimeZone::LocalTime).toSecsSinceEpoch();
-        const qint64 dayEnd = QDateTime(date.addDays(1), QTime(0, 0), QTimeZone::LocalTime).toSecsSinceEpoch();
+        const auto timeZone = QTimeZone::systemTimeZone();
+        const qint64 dayStart = QDateTime(date, QTime(0, 0), timeZone).toSecsSinceEpoch();
+        const qint64 dayEnd = QDateTime(date.addDays(1), QTime(0, 0), timeZone).toSecsSinceEpoch();
         if (op.isEmpty() || op == QStringLiteral("="))
             return QStringLiteral("(%1%2 >= %3 AND %2 < %4)").arg(guard, column, bind(dayStart), bind(dayEnd));
         if (op == QStringLiteral(">"))

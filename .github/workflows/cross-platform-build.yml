@@ -85,6 +85,7 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: linux_gcc_64
+          modules: qtshadertools
           cache: true
 
       - name: Install native and packaging dependencies
@@ -117,6 +118,10 @@ jobs:
         shell: bash
         run: ./scripts/fetch-onnxruntime.sh
 
+      - name: Download verified stems test model
+        shell: bash
+        run: bash scripts/ci/fetch-stem-model.sh "${{ runner.temp }}/brockdj-stems-model"
+
       - name: Restore compiler cache
         uses: actions/cache@v5
         with:
@@ -147,6 +152,8 @@ jobs:
 
       - name: Test
         id: ctest
+        env:
+          BROCKDJ_STEM_MODEL: ${{ runner.temp }}/brockdj-stems-model/htdemucs_fp16weights.onnx
         run: ctest --preset ${{ matrix.preset }}
 
       - name: Validate architecture and headless startup
@@ -233,6 +240,10 @@ jobs:
         shell: bash
         run: ./scripts/fetch-onnxruntime.sh
 
+      - name: Download verified stems test model
+        shell: bash
+        run: bash scripts/ci/fetch-stem-model.sh "${{ runner.temp }}/brockdj-stems-model"
+
       - name: Restore compiler cache
         uses: actions/cache@v5
         with:
@@ -265,6 +276,8 @@ jobs:
 
       - name: Test
         id: ctest
+        env:
+          BROCKDJ_STEM_MODEL: ${{ runner.temp }}/brockdj-stems-model/htdemucs_fp16weights.onnx
         run: ctest --preset ${{ matrix.preset }}
 
       - name: Validate architecture and headless startup
@@ -385,6 +398,10 @@ jobs:
         shell: pwsh
         run: ./scripts/fetch-onnxruntime.ps1
 
+      - name: Download verified stems test model
+        shell: bash
+        run: bash scripts/ci/fetch-stem-model.sh "${{ runner.temp }}/brockdj-stems-model"
+
       - name: Show Windows toolchain
         shell: pwsh
         run: |
@@ -418,6 +435,8 @@ jobs:
 
       - name: Test
         id: ctest
+        env:
+          BROCKDJ_STEM_MODEL: ${{ runner.temp }}/brockdj-stems-model/htdemucs_fp16weights.onnx
         shell: pwsh
         run: |
           ctest --preset ci-windows-x64
@@ -483,6 +502,7 @@ jobs:
         with:
           version: ${{ env.QT_VERSION }}
           arch: linux_gcc_64
+          modules: qtshadertools
           cache: true
 
       - name: Install native dependencies
@@ -499,11 +519,14 @@ jobs:
             ninja-build pkg-config
           ./scripts/ci/install-libkeyfinder.sh /usr/local
 
+      - name: Install ONNX Runtime for stems
+        run: ./scripts/fetch-onnxruntime.sh
+
       - name: Generate platform icons
         run: ./scripts/generate_icons.sh
 
       - name: Configure
-        run: cmake --preset ci-linux-sanitizers
+        run: cmake --preset ci-linux-sanitizers -DBROCKDJ_REQUIRE_STEMS=ON
 
       - name: Build
         run: |
@@ -518,6 +541,8 @@ jobs:
             BrockDJ_scratch_motion_tests \
             BrockDJ_waveform_motion_tests \
             BrockDJ_control_clock_tests \
+            BrockDJ_stem_core_tests \
+            BrockDJ_stem_waveform_animation_tests \
             BrockDJ_neutral_waveform_analysis_tests \
             BrockDJ_database_worker_tests \
             BrockDJ_media_io_scheduler_tests

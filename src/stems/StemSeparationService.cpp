@@ -231,7 +231,8 @@ std::filesystem::path StemSeparationService::cacheFileFor(const std::string& fil
     const auto size = std::filesystem::file_size(canonical, ec);
     key += '|' + std::to_string(ec ? 0 : size);
     const auto mtime = std::filesystem::last_write_time(canonical, ec);
-    key += '|' + std::to_string(ec ? 0 : mtime.time_since_epoch().count());
+    // libc++ uses a 128-bit file-clock representation; to_string has no such overload.
+    key += '|' + std::to_string(ec ? 0 : static_cast<std::int64_t>(mtime.time_since_epoch().count()));
     // Envelope-format upgrades do not invalidate the separated audio identity.
     key += "|v2";
     char name[40];

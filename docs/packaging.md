@@ -30,6 +30,26 @@ configuration. Linux uses `librsvg` and ImageMagick, macOS uses Homebrew
 Every upload uses `if-no-files-found: error`, and each packaging script rejects
 a missing or empty output before upload.
 
+## Stems in CI and packages
+
+All native builds, including the Linux sanitizer build, install the
+SHA-256-verified ONNX Runtime SDK and configure with
+`-DBROCKDJ_REQUIRE_STEMS=ON`. A missing runtime is an error, not a successful
+build with stems silently disabled. Linux x86_64 jobs install Qt Shader Tools
+alongside the same Qt version used to build the application.
+
+The five native platform jobs also download the application's HT-Demucs model
+with `scripts/ci/fetch-stem-model.sh`, checking the same pinned SHA-256 used by
+the in-app downloader. Their `stem_core` test runs real CPU inference on
+synthetic audio and checks the resulting stems, not just the fake-model tests.
+The sanitizer job covers the stem cache, mixing and waveform tests without
+running the large real model under instrumentation.
+
+Packages contain ONNX Runtime and its license/third-party notices. The model
+is only a CI test input, not part of the uploaded package: users install it
+once through **Settings -> DJ / Sync -> Stems -> Download**. The experimental
+OpenVINO GPU plugin remains optional and is not bundled.
+
 ## Linux AppImage
 
 `scripts/ci/package-appimage.sh` stages a fresh AppDir with `linuxdeploy`, the

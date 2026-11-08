@@ -234,6 +234,9 @@ if ldd "$binary" | grep -q 'libonnxruntime\.so'; then
         echo "ONNX Runtime is missing from the AppDir" >&2
         exit 1
     }
+    mkdir -p "$appdir/usr/share/doc/BrockDJ/onnxruntime"
+    cp "$repo_root/libs/onnxruntime/LICENSE" "$repo_root/libs/onnxruntime/ThirdPartyNotices.txt" \
+        "$appdir/usr/share/doc/BrockDJ/onnxruntime/"
 fi
 
 mkdir -p "$appdir/usr/share/doc/BrockDJ"

@@ -125,7 +125,7 @@
       "configurePreset": "ci-linux-sanitizers",
       "filter": {
         "include": {
-          "name": "^(startup_close_smoke|startup_early_close_smoke|smoke|deck_audio_graph|audio_page_cache|scratch_cache|cached_playback|waveform_cache_repair|scratch_motion|waveform_motion|control_clock|neutral_waveform_analysis|database_worker|media_io_scheduler)$"
+          "name": "^(startup_close_smoke|startup_early_close_smoke|smoke|deck_audio_graph|audio_page_cache|scratch_cache|cached_playback|waveform_cache_repair|scratch_motion|waveform_motion|control_clock|stem_core|stem_waveform_animation|neutral_waveform_analysis|database_worker|media_io_scheduler)$"
         }
       },
       "output": { "outputOnFailure": true },
