@@ -193,6 +193,9 @@ void TimeStretchProcessor::prepareToPlay(int blockSize, double sr)
     m_previousTail.clear();
     resizeBuffer(m_outputHistory, 2, kOutputHistorySamples);
     resizeBuffer(m_seedSnapshot, 2, kOutputHistorySamples);
+    if (!m_readAheadSource)
+        for (auto& bridge : m_seedBridges)
+            resizeBuffer(bridge.audio, 2, kOutputHistorySamples);
     m_outputHistory.clear();
     m_seedSnapshot.clear();
     m_seedState.store(SeedState::Idle, std::memory_order_release);
@@ -475,10 +478,61 @@ bool TimeStretchProcessor::requestKeylockSeed(int slot, std::uint64_t catchupSam
     m_seedValid = true;
     m_seedHistoryEnd = m_historySamples;
     m_seedStamp = positionStamp();
+    for (auto& bridge : m_seedBridges)
+        bridge.ready.store(false, std::memory_order_relaxed);
+    m_seedBridgeWrite = m_seedBridgeRead = 0;
+    m_seedBridgeQueuedEnd = m_historySamples;
     m_seedSlot.store(slot, std::memory_order_relaxed);
     m_seedState.store(SeedState::Requested, std::memory_order_release);
     wakeWorker();
     return true;
+}
+
+void TimeStretchProcessor::queueSeedBridge() noexcept
+{
+    auto& bridge = m_seedBridges[m_seedBridgeWrite % m_seedBridges.size()];
+    if (bridge.ready.load(std::memory_order_acquire))
+        return;
+    const auto length = m_historySamples - m_seedBridgeQueuedEnd;
+    if (length == 0 || length > static_cast<std::uint64_t>(bridge.audio.getNumSamples()))
+        return;
+    bridge.length = static_cast<int>(length);
+    readOutputHistory(bridge.audio, bridge.length);
+    bridge.historyEnd = m_historySamples;
+    bridge.stamp = positionStamp();
+    m_seedBridgeQueuedEnd = m_historySamples;
+    bridge.ready.store(true, std::memory_order_release);
+    ++m_seedBridgeWrite;
+}
+
+void TimeStretchProcessor::seedSignalsmithPipeline(
+    Pipeline& p, const juce::AudioBuffer<float>& audio, int length) noexcept
+{
+    for (int offset = 0; offset < length;) {
+        const int count = std::min(kMaxPullSize, length - offset);
+        for (int sample = 0; sample < count;) {
+            const double tempo = m_readAheadSource
+                ? m_seedTempos[static_cast<std::size_t>(offset + sample)] : 0.0;
+            updateSignalsmithPitch(p, tempo);
+            int run = 1;
+            if (p.tempoRampRemaining == 0 && p.semitoneRampRemaining == 0) {
+                while (sample + run < count
+                       && (!m_readAheadSource
+                           || m_seedTempos[static_cast<std::size_t>(offset + sample + run)] == tempo))
+                    ++run;
+            }
+            run = std::min(run, p.signalsmith->intervalSamples() - p.signalsmithHopOffset);
+            const float* input[2] { audio.getReadPointer(0, offset + sample),
+                                    audio.getReadPointer(1, offset + sample) };
+            float* output[2] { p.trim.getWritePointer(0), p.trim.getWritePointer(1) };
+            p.signalsmith->process(input, run, output, run);
+            p.signalsmithHopOffset += run;
+            if (p.signalsmithHopOffset == p.signalsmith->intervalSamples())
+                p.signalsmithHopOffset = 0;
+            sample += run;
+        }
+        offset += count;
+    }
 }
 
 bool TimeStretchProcessor::serviceSeedRequest() noexcept
@@ -523,39 +577,38 @@ bool TimeStretchProcessor::serviceSeedRequest() noexcept
         // synthesizes a new onset, which is not a continuation of past audio.
         // Catch-up batches cover every direct bridge sample emitted while the
         // worker was busy, so live input never jumps over a missing block.
-        for (int offset = 0; offset < m_seedSnapshotLength;) {
-            const int count = std::min(kMaxPullSize, m_seedSnapshotLength - offset);
-            const float* input[2] { m_seedSnapshot.getReadPointer(0, offset),
-                                    m_seedSnapshot.getReadPointer(1, offset) };
-            if (p.signalsmith) {
-                for (int sample = 0; sample < count;) {
-                    const double tempo = m_readAheadSource
-                        ? m_seedTempos[static_cast<std::size_t>(offset + sample)] : 0.0;
-                    updateSignalsmithPitch(p, tempo);
-                    int run = 1;
-                    if (p.tempoRampRemaining == 0 && p.semitoneRampRemaining == 0) {
-                        while (sample + run < count
-                               && (!m_readAheadSource
-                                   || m_seedTempos[static_cast<std::size_t>(offset + sample + run)] == tempo))
-                            ++run;
-                    }
-                    run = std::min(run, p.signalsmith->intervalSamples() - p.signalsmithHopOffset);
-                    const float* sampleInput[2] { input[0] + sample, input[1] + sample };
-                    float* sampleOutput[2] { p.trim.getWritePointer(0), p.trim.getWritePointer(1) };
-                    p.signalsmith->process(sampleInput, run, sampleOutput, run);
-                    p.signalsmithHopOffset += run;
-                    if (p.signalsmithHopOffset == p.signalsmith->intervalSamples()) p.signalsmithHopOffset = 0;
-                    sample += run;
+        if (p.signalsmith) {
+            seedSignalsmithPipeline(p, m_seedSnapshot, m_seedSnapshotLength);
+            // Plain streaming sources cannot provide lookahead. Keep consuming
+            // their bridge audio on the worker instead of waiting another
+            // callback between catch-up batches (which can prevent convergence).
+            if (!m_readAheadSource) {
+                while (!m_stopRequested.load(std::memory_order_acquire)) {
+                    auto& bridge = m_seedBridges[m_seedBridgeRead % m_seedBridges.size()];
+                    if (!bridge.ready.load(std::memory_order_acquire))
+                        break;
+                    beginParameterRamp(p, p.config.maximumBlockSize);
+                    seedSignalsmithPipeline(p, bridge.audio, bridge.length);
+                    m_seedHistoryEnd = bridge.historyEnd;
+                    m_seedStamp.outputFrame = bridge.stamp.outputFrame;
+                    m_seedStamp.trackPosition = bridge.stamp.trackPosition;
+                    bridge.ready.store(false, std::memory_order_release);
+                    ++m_seedBridgeRead;
                 }
-            } else if (p.rubberBand) {
+            }
+        } else if (p.rubberBand) {
+            for (int offset = 0; offset < m_seedSnapshotLength;) {
+                const int count = std::min(kMaxPullSize, m_seedSnapshotLength - offset);
+                const float* input[2] { m_seedSnapshot.getReadPointer(0, offset),
+                                        m_seedSnapshot.getReadPointer(1, offset) };
                 p.rubberBand->process(input, count, false);
                 for (int available = p.rubberBand->available(); available > 0;
                      available = p.rubberBand->available()) {
                     p.rubberBand->retrieve(p.trim.getArrayOfWritePointers(),
                                           std::min(available, p.trim.getNumSamples()));
                 }
+                offset += count;
             }
-            offset += count;
         }
         if (m_seedNeedsReset)
             recordSeedDuration(started);
@@ -706,6 +759,9 @@ void TimeStretchProcessor::getNextAudioBlock(const juce::AudioSourceChannelInfo&
             if (requestSeed)
                 (void) requestKeylockSeed(
                     active, catchupSeed ? m_historySamples - m_seedHistoryEnd : 0);
+            else if (pipeline.signalsmith && !m_readAheadSource
+                     && m_seedState.load(std::memory_order_acquire) != SeedState::Ready)
+                queueSeedBridge();
             return;
         }
 

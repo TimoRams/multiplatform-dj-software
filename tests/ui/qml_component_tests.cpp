@@ -1,4 +1,5 @@
 #include <QGuiApplication>
+#include <QFontDatabase>
 #include <QDir>
 #include <QMouseEvent>
 #include <QColor>
@@ -1836,9 +1837,10 @@ bool stemPreanalysisUiTests(const std::string& library)
     ok &= require(controller->property("allRequests").toInt() == 1 && topProgress->isVisible(),
                   "starting stems invokes the library queue and shows top progress");
     controller->setProperty("preanalysisProgress", 0.5);
-    QTest::qWait(180);
-    ok &= require(std::abs(fill->width() - (stemButton->width() - 2) * 0.5) < 1.0
-                      && std::abs(topProgress->childItems().first()->width() - item->width() * 0.5) < 1.0,
+    ok &= require(QTest::qWaitFor([&] {
+                      return std::abs(fill->width() - (stemButton->width() - 2) * 0.5) < 1.0
+                          && std::abs(topProgress->childItems().first()->width() - item->width() * 0.5) < 1.0;
+                  }),
                   "button and top header display the real aggregate queue fraction");
     ok &= clickItem(window, stemButton, "running stem button cancels the queue");
     ok &= require(controller->property("stops").toInt() == 1 && !topProgress->isVisible(),
@@ -4431,6 +4433,13 @@ int main(int argc, char** argv)
         qputenv("QT_QUICK_BACKEND", "software");
     qputenv("QT_QUICK_CONTROLS_STYLE", "Basic");
     QGuiApplication app(argc, argv);
+    if (!require(QFontDatabase::addApplicationFont(QString::fromUtf8(BROCKDJ_SOURCE_DIR)
+                     + QStringLiteral("/assets/fonts/InterVariable.ttf")) >= 0,
+                 "the component fixtures load the application's Inter font"))
+        return 1;
+    auto defaultFont = app.font();
+    defaultFont.setFamily(QStringLiteral("Inter"));
+    app.setFont(defaultFont);
     qmlRegisterType(QUrl::fromLocalFile(QString::fromUtf8(BROCKDJ_SOURCE_DIR)
         + QStringLiteral("/src/qml/components/UiIcon.qml")), "DJSoftware", 1, 0, "UiIcon");
     bool ok = sliderCleanupTests();

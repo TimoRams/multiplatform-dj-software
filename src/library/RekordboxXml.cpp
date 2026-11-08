@@ -68,7 +68,7 @@ RekordboxXmlTrack readTrack(const QXmlStreamAttributes& a)
     t.playCount = std::max(0, a.value(QStringLiteral("PlayCount")).toInt());
     const QDate added = QDate::fromString(a.value(QStringLiteral("DateAdded")).toString(), Qt::ISODate);
     if (added.isValid())
-        t.dateAdded = added.startOfDay(QTimeZone::UTC).toSecsSinceEpoch();
+        t.dateAdded = added.startOfDay(QTimeZone::utc()).toSecsSinceEpoch();
     t.bpm = toDouble(a.value(QStringLiteral("AverageBpm")));
     return t;
 }

@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QStringList>
 #include <QTemporaryDir>
+#include <QUrl>
 
 #include <cstdlib>
 #include <iostream>
@@ -77,8 +78,9 @@ int main()
     // Hand-written M3U: BOM, CRLF, relative and URL entries, remote stream.
     writeRaw(dir.filePath(QStringLiteral("hand.m3u8")),
              QByteArray("\xEF\xBB\xBF#EXTM3U\r\n#EXTINF:123,Artist - Title\r\nmusic/a.mp3\r\n"
-                        "\r\nhttp://radio.example/stream\r\nfile://") +
-                 QFile::encodeName(dir.filePath(QStringLiteral("music/b%20c.mp3"))) + "\r\n");
+                        "\r\nhttp://radio.example/stream\r\n") +
+                 QUrl::fromLocalFile(dir.filePath(QStringLiteral("music/b c.mp3")))
+                     .toEncoded(QUrl::FullyEncoded) + "\r\n");
     QList<PlaylistFileEntry> hand = read(dir.filePath(QStringLiteral("hand.m3u8")));
     require(hand.size() == 2, QStringLiteral("hand count ") + QString::number(hand.size()));
     require(hand[0].path == dir.filePath(QStringLiteral("music/a.mp3")), QStringLiteral("relative ") + hand[0].path);

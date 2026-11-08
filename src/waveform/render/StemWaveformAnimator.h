@@ -13,8 +13,10 @@ class StemWaveformAnimator final : public QObject {
 public:
     using Overlay = brockdj::stems::StemWaveformOverlay;
 
-    StemWaveformAnimator(QObject* parent, std::function<void()> repaint)
-        : QObject(parent), m_repaint(std::move(repaint))
+    StemWaveformAnimator(QObject* parent, std::function<void()> repaint,
+                        std::function<double()> timeSourceMilliseconds = {})
+        : QObject(parent), m_repaint(std::move(repaint)),
+          m_timeSourceMilliseconds(std::move(timeSourceMilliseconds))
     {
         m_clock.start();
         m_timer.setTimerType(Qt::PreciseTimer);
@@ -37,7 +39,10 @@ public:
     [[nodiscard]] const std::shared_ptr<const Overlay>& frame() const noexcept { return m_frame; }
 
 private:
-    [[nodiscard]] double now() const noexcept { return m_clock.nsecsElapsed() / 1'000'000.0; }
+    [[nodiscard]] double now() const
+    {
+        return m_timeSourceMilliseconds ? m_timeSourceMilliseconds() : m_clock.nsecsElapsed() / 1'000'000.0;
+    }
 
     void advance()
     {
@@ -64,4 +69,5 @@ private:
     std::shared_ptr<const Overlay> m_target;
     std::shared_ptr<const Overlay> m_frame;
     std::function<void()> m_repaint;
+    std::function<double()> m_timeSourceMilliseconds;
 };

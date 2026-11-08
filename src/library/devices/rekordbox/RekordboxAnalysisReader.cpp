@@ -9,6 +9,12 @@
 #ifdef Q_OS_UNIX
 #include <sys/stat.h>
 #endif
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -321,6 +327,34 @@ QByteArray sourceFingerprint(const QString& path)
             fields.append(qint64(status.st_ctim.tv_nsec));
 #endif
         }
+#elif defined(Q_OS_WIN)
+        if (!info.exists())
+            continue;
+        const auto nativePath = QDir::toNativeSeparators(candidate).toStdWString();
+        const HANDLE file = ::CreateFileW(nativePath.c_str(), FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+            OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (file == INVALID_HANDLE_VALUE) {
+            qWarning("[Rekordbox] Cannot read analysis file identity (Windows error %lu)",
+                     ::GetLastError());
+            return {};
+        }
+        FILE_BASIC_INFO times {};
+        BY_HANDLE_FILE_INFORMATION identity {};
+        const bool valid = ::GetFileInformationByHandleEx(file, FileBasicInfo, &times, sizeof(times))
+            && ::GetFileInformationByHandle(file, &identity);
+        const DWORD error = valid ? ERROR_SUCCESS : ::GetLastError();
+        ::CloseHandle(file);
+        if (!valid) {
+            qWarning("[Rekordbox] Cannot read analysis file metadata (Windows error %lu)", error);
+            return {};
+        }
+        // Qt does not expose Windows change time; retain NTFS's 100 ns precision.
+        fields.append(qint64(times.ChangeTime.QuadPart));
+        fields.append(qint64(times.LastWriteTime.QuadPart));
+        fields.append(qint64(identity.dwVolumeSerialNumber));
+        fields.append(qint64(identity.nFileIndexHigh));
+        fields.append(qint64(identity.nFileIndexLow));
 #endif
     }
     return QCborValue(fields).toCbor();
@@ -480,12 +514,12 @@ AnalysisReader::Result AnalysisCache::readReadOnly(
     const QString key = index->deviceId + QLatin1Char('\n') + trackId;
     const QByteArray before = sourceFingerprint(path);
     if (auto* cached = m_entries.object(key)) {
-        if (cached->index.lock() == index && cached->fingerprint == before)
+        if (!before.isEmpty() && cached->index.lock() == index && cached->fingerprint == before)
             return cached->result;
         m_entries.remove(key);
     }
     auto result = DeviceSource{}.readAnalysisReadOnly(*index, trackId);
-    if (result.ok && before == sourceFingerprint(path)) {
+    if (result.ok && !before.isEmpty() && before == sourceFingerprint(path)) {
         const auto& a = result.analysis;
         qint64 cost = sizeof(Entry) + 128 + before.size() + key.size() * 2
             + a.beats.size() * sizeof(Beat) + a.waveformPreview.size();

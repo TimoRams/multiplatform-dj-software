@@ -96,6 +96,10 @@ public:
     // reported position is timestamped so the callback can render the pointer
     // path continuously instead of chasing each frame-rate report.
     void submitPointerDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept;
+    // Set only with audio stopped; tests advance pointer and audio time together.
+    void setPointerScratchClockForTesting(double (&clock)() noexcept) noexcept {
+        m_pointerScratchClock = &clock;
+    }
     void submitReleaseDeltaSeconds(double deltaSeconds, double dtSeconds) noexcept;
     void syncScratchReadPosition(double displaySec, double trackSampleRate) noexcept;
     void publishScratchDisplay(double displaySec) noexcept;
@@ -196,6 +200,7 @@ private:
     engine::scratch::ScratchController m_controller;
     engine::scratch::VirtualTurntable m_platter;
     engine::scratch::PointerScratchTrajectory m_pointerTrajectory;
+    double (*m_pointerScratchClock)() noexcept = engine::scratch::RealtimeScratchInput::clockSeconds;
     ScratchResampler m_scratchResampler;
     ScratchResampler m_scratchExitResampler;
     brockdj::stems::StemMixState* m_readAheadStems = nullptr;

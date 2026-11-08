@@ -725,7 +725,7 @@ qt_add_shaders(BrockDJ_stem_waveform_animation_tests "test_stem_waveform_shaders
     BASE "src/waveform/render"
     FILES "src/waveform/render/stemwaveform.vert" "src/waveform/render/stemwaveform.frag")
 add_test(NAME stem_waveform_animation COMMAND BrockDJ_stem_waveform_animation_tests)
-set_tests_properties(stem_waveform_animation PROPERTIES SKIP_RETURN_CODE 77)
+set_tests_properties(stem_waveform_animation PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
 
 add_executable(BrockDJ_waveform_visual_style_tests
     tests/waveform/waveform_visual_style_tests.cpp
@@ -1334,6 +1334,10 @@ target_link_libraries(BrockDJ_time_stretch_tests PRIVATE
 target_compile_definitions(BrockDJ_time_stretch_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
 target_compile_features(BrockDJ_time_stretch_tests PRIVATE cxx_std_23)
 add_test(NAME time_stretch COMMAND BrockDJ_time_stretch_tests)
+add_test(NAME streaming_seed_catchup COMMAND BrockDJ_time_stretch_tests)
+set_tests_properties(streaming_seed_catchup PROPERTIES
+    ENVIRONMENT "BROCKDJ_STREAMING_SEED_ONLY=1"
+    TIMEOUT 40)
 
 add_executable(BrockDJ_database_worker_tests
     tests/library/database_worker_tests.cpp

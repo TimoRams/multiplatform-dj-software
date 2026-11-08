@@ -319,7 +319,8 @@ bool testSpinHandoffs(const QString& path)
         graph.seekToSeconds(2.0);
         graph.timeStretch().setSeedPreparationGateForTesting(&gate);
         juce::AudioBuffer<float> output(2, blockSize);
-        for (int block = 0; block < 80; ++block) {
+        const auto readyDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        for (int block = 0; std::chrono::steady_clock::now() < readyDeadline; ++block) {
             graph.getNextAudioBlock({&output, 0, blockSize});
             if (block >= 3 && (!keylock || graph.timeStretch().getLatencySamples() > 0))
                 break;
@@ -466,7 +467,8 @@ bool testLoopRealtimeScratch(const QString& path)
 {
     bool ok = true;
     {
-        engine::audio::RenderModeRouter router(nullptr);
+        auto routerStorage = std::make_unique<engine::audio::RenderModeRouter>(nullptr);
+        auto& router = *routerStorage;
         engine::scratch::ScratchSession pointer;
         const engine::scratch::ScratchLoopCtx loop {true, 4.0, 5.0};
         router.configureTrack(48'000.0, 12.0);
@@ -585,6 +587,13 @@ struct UiScratchMetrics {
     double restErrorMs = 0.0;
 };
 
+double pointerScratchTime = 0.0;
+
+double pointerScratchClock() noexcept
+{
+    return pointerScratchTime;
+}
+
 UiScratchMetrics runUiPointerScratch(DeckAudioPipeline& graph,
                                      const std::function<double(double)>& hand,
                                      double durationSec,
@@ -601,6 +610,8 @@ UiScratchMetrics runUiPointerScratch(DeckAudioPipeline& graph,
     constexpr double kAnchor = 2.0;
 
     auto& router = graph.renderModeRouter();
+    pointerScratchTime = 1000.0;
+    router.setPointerScratchClockForTesting(pointerScratchClock);
     router.configureTrack(kSampleRate, 12.0);
     router.beginScratch(kAnchor, kSampleRate, 12.0, false, 1.0);
     router.syncScratchReadPosition(kAnchor, kSampleRate);
@@ -627,10 +638,11 @@ UiScratchMetrics runUiPointerScratch(DeckAudioPipeline& graph,
     std::size_t next = 0;
     double lastPixel = 0.0;
     const int blocks = static_cast<int>((durationSec + 0.35) / kBlockSec);
-    const auto start = std::chrono::steady_clock::now();
     for (int block = 0; block < blocks; ++block) {
-        const double now = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - start).count();
+        // OS sleep coalescing is not audio-clock jitter. Deliver the jittered
+        // pointer reports against the exact callback clock on every platform.
+        const double now = block * kBlockSec;
+        pointerScratchTime = 1000.0 + now;
         while (next < events.size() && events[next].deliverSec <= now) {
             const double deltaPx = events[next].pixel - lastPixel;
             lastPixel = events[next].pixel;
@@ -640,9 +652,6 @@ UiScratchMetrics runUiPointerScratch(DeckAudioPipeline& graph,
         }
         graph.getNextAudioBlock({&output, 0, kBlock});
         positions.push_back(router.readPositionSeconds(kSampleRate) - kAnchor);
-        std::this_thread::sleep_until(
-            start + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                std::chrono::duration<double>((block + 1) * kBlockSec)));
     }
 
     UiScratchMetrics metrics;
@@ -703,6 +712,7 @@ UiScratchMetrics runUiPointerScratch(DeckAudioPipeline& graph,
     const auto release = router.requestScratchRelease(0.0, false, false);
     for (int block = 0; block < 64 && !router.scratchReleaseComplete(release); ++block)
         graph.getNextAudioBlock({&output, 0, kBlock});
+    router.setPointerScratchClockForTesting(engine::scratch::RealtimeScratchInput::clockSeconds);
     return metrics;
 }
 

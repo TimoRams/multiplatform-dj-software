@@ -135,7 +135,7 @@ void RenderModeRouter::beginScratch(double anchorSeconds,
         : std::abs(normalPlaybackSpeed);
     m_controller.setTrackSampleRate(trackSampleRate);
     m_platter.reset(targetSamples, trackSampleRate);
-    m_pointerTrajectory.reset(engine::scratch::RealtimeScratchInput::clockSeconds(),
+    m_pointerTrajectory.reset(m_pointerScratchClock(),
                               targetSamples);
     m_controller.startScratch(audioAnchorSamples, wasPlayingBeforeScratch, playbackSpeed);
     m_controller.setHandPositionSec(anchorSeconds);
@@ -281,7 +281,7 @@ void RenderModeRouter::submitPointerDeltaSeconds(double deltaSeconds,
                                                  double dtSeconds) noexcept
 {
     submitHandDeltaSeconds(deltaSeconds, dtSeconds);
-    m_pointerTrajectory.push(engine::scratch::RealtimeScratchInput::clockSeconds(),
+    m_pointerTrajectory.push(m_pointerScratchClock(),
                              m_platter.targetSamplePosition());
 }
 
@@ -1393,7 +1393,7 @@ void RenderModeRouter::getNextAudioBlock(const juce::AudioSourceChannelInfo& buf
             tickCorrectionTimeSeconds = 0.015;
         } else if (engine::scratch::PointerScratchTrajectory::Estimate pointer;
                    m_pointerTrajectory.evaluate(
-                       engine::scratch::RealtimeScratchInput::clockSeconds(), pointer)) {
+                       m_pointerScratchClock(), pointer)) {
             // The rendered pointer path is already continuous in position and
             // speed and is evaluated at the time it represents: no age to
             // extrapolate across, no stepped report to spread out.

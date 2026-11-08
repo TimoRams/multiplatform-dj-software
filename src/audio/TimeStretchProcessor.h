@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <thread>
@@ -154,6 +155,14 @@ private:
         // without one, so every later pitch update has to pass it again.
         double tonalityLimit = 0.0;
     };
+    struct SeedBridgeBlock {
+        juce::AudioBuffer<float> audio;
+        // A published slot stays worker-owned until all its audio is consumed.
+        std::atomic<bool> ready { false };
+        int length = 0;
+        std::uint64_t historyEnd = 0;
+        TimeStretchPositionStamp stamp;
+    };
 
     void publishDesiredConfiguration() noexcept;
     [[nodiscard]] TimeStretchConfiguration desiredConfiguration() const noexcept;
@@ -173,6 +182,9 @@ private:
     void beginTransitionFade() noexcept;
     [[nodiscard]] bool requestKeylockSeed(int slot, std::uint64_t catchupSamples = 0) noexcept;
     bool serviceSeedRequest() noexcept;
+    void queueSeedBridge() noexcept;
+    void seedSignalsmithPipeline(Pipeline& pipeline,
+                                const juce::AudioBuffer<float>& audio, int length) noexcept;
     void recordSeedDuration(std::chrono::steady_clock::time_point started) noexcept;
     void wakeWorker() noexcept
     {
@@ -215,6 +227,10 @@ private:
     std::atomic<SeedState> m_seedState { SeedState::Idle };
     std::atomic<int> m_seedSlot { -1 };
     juce::AudioBuffer<float> m_seedSnapshot;
+    std::array<SeedBridgeBlock, 2> m_seedBridges;
+    std::size_t m_seedBridgeWrite = 0;
+    std::size_t m_seedBridgeRead = 0;
+    std::uint64_t m_seedBridgeQueuedEnd = 0;
     std::array<double, kOutputHistorySamples> m_seedTempos {};
     int m_seedSnapshotLength = 0;
     bool m_seedNeedsReset = true; // published with the seed snapshot

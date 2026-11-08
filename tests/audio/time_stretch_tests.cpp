@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <memory>
 #include <random>
 #include <thread>
 #include <cstdlib>
@@ -115,7 +116,8 @@ bool checkKeylockToneQuality()
         ToneSource tone;
         tone.rightGain = -0.5f;
         tone.frequency = frequency * 0.8;
-        TimeStretchProcessor source(&tone);
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&tone);
+        auto& source = *sourceStorage;
         source.setTempoRatio(0.8);
         source.setPitchLockEnabled(true);
         source.prepareToPlay(blockSize, sampleRate);
@@ -214,7 +216,8 @@ bool checkKeyShiftTonalitySwitch()
 {
     ToneSource tone;
     tone.frequency = 10000.0;
-    TimeStretchProcessor source(&tone);
+    auto sourceStorage = std::make_unique<TimeStretchProcessor>(&tone);
+    auto& source = *sourceStorage;
     source.setKeySemitoneOffset(12.0 * std::log2(1.2));
     source.setPitchLockEnabled(true);
     source.prepareToPlay(128, 48000.0);
@@ -254,15 +257,78 @@ bool checkKeyShiftTonalitySwitch()
 }
 }
 
+bool checkStreamingSeedCatchup()
+{
+    bool ok = true;
+    for (const bool discontinuity : {false, true}) {
+        ToneSource tone;
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&tone);
+        auto& source = *sourceStorage;
+        std::atomic<bool> gate { false };
+        source.prepareToPlay(128, 48'000.0);
+        juce::AudioBuffer<float> block(2, 128);
+        for (int i = 0; i < 128; ++i)
+            source.getNextAudioBlock({&block, 0, 128});
+        source.setSeedPreparationGateForTesting(&gate);
+        source.setTempoRatio(0.8);
+        source.setPitchLockEnabled(true);
+        source.getNextAudioBlock({&block, 0, 128});
+        const auto startedDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (source.realtimeStats().seedJobsStarted == 0
+               && std::chrono::steady_clock::now() < startedDeadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        ok &= require(source.realtimeStats().seedJobsStarted == 1,
+                      "streaming seed fixture holds a worker-owned seed");
+        if (discontinuity)
+            source.notifyTransportDiscontinuity();
+        // Overflow both bridge slots while the worker is held, without losing
+        // the direct stream or making the audio callback wait.
+        for (int i = 0; i < 128; ++i) {
+            source.getNextAudioBlock({&block, 0, 128});
+            ok &= require(finite(block) && block.getRMSLevel(0, 0, 128) > 0.07f,
+                          "full bridge slots preserve the complete audible direct stream");
+        }
+        const auto waitForJob = [&](std::uint64_t count) {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            while (source.realtimeStats().seedJobsCompleted < count
+                   && std::chrono::steady_clock::now() < deadline)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            return require(source.realtimeStats().seedJobsCompleted >= count,
+                           "streaming seed worker finishes outside the audio callback");
+        };
+        gate.store(true, std::memory_order_release);
+        ok &= waitForJob(1);
+        source.getNextAudioBlock({&block, 0, 128});
+        if (discontinuity)
+            ok &= require(source.getLatencySamples() == 0
+                              && source.realtimeStats().discardedSeedResults == 1,
+                          "queued bridge stamps cannot validate a pre-discontinuity seed");
+        ok &= waitForJob(2);
+        source.getNextAudioBlock({&block, 0, 128});
+        ok &= require(source.getLatencySamples() > 0 && finite(block)
+                          && block.getRMSLevel(0, 0, 128) > 0.07f,
+                      "streaming keylock catches up after slot overflow or transport change");
+        const auto stats = source.realtimeStats();
+        ok &= require(stats.prepareCallsFromAudioThread + stats.resetCallsFromAudioThread
+                          + stats.prewarmCallsFromAudioThread + stats.bufferGrowthsFromAudioThread
+                          + stats.blockingLockAttempts + stats.keylockSeedsOnAudioThread == 0,
+                      "streaming bridge catch-up stays entirely off the audio callback");
+    }
+    return ok;
+}
+
 static_assert(noexcept(std::declval<TimeStretchProcessor&>().getNextAudioBlock(
     std::declval<const juce::AudioSourceChannelInfo&>())));
 
 int main(){
-    bool ok=true;
+    if (std::getenv("BROCKDJ_STREAMING_SEED_ONLY"))
+        return checkStreamingSeedCatchup() ? 0 : 1;
+    bool ok = true;
     {
         std::atomic<bool> gate { false };
         PositionedSource input;
-        TimeStretchProcessor source(&input);
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&input);
+        auto& source = *sourceStorage;
         source.prepareToPlay(128, 48'000.0);
         source.setSeedPreparationGateForTesting(&gate);
         source.setTempoRatio(0.8);
@@ -313,7 +379,8 @@ int main(){
         std::atomic<bool> gate { false };
         PositionedSource input;
         input.ramp = true;
-        TimeStretchProcessor source(&input);
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&input);
+        auto& source = *sourceStorage;
         source.prepareToPlay(128, 48'000.0);
         source.setSeedPreparationGateForTesting(&gate);
         source.setTempoRatio(0.8);
@@ -350,7 +417,8 @@ int main(){
     {
         PositionedSource input;
         input.pulses = true;
-        TimeStretchProcessor source(&input);
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&input);
+        auto& source = *sourceStorage;
         source.prepareToPlay(128, 48'000.0);
         source.setTempoRatio(0.8);
         source.setPitchLockEnabled(true);
@@ -410,7 +478,8 @@ int main(){
     }
     if (std::getenv("BROCKDJ_REQUIRE_KEYLOCK_ALIGNMENT") != nullptr) {
         TransientSource input;
-        TimeStretchProcessor source(&input);
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&input);
+        auto& source = *sourceStorage;
         source.prepareToPlay(128, 48000.0);
         source.setTempoRatio(0.8);
         juce::AudioBuffer<float> block(2, 128);
@@ -438,8 +507,10 @@ int main(){
     for (const auto backend : {TimeStretchBackend::Signalsmith, TimeStretchBackend::RubberBand}) {
         ToneSource referenceTone;
         ToneSource lockedTone;
-        TimeStretchProcessor reference(&referenceTone);
-        TimeStretchProcessor locked(&lockedTone);
+        auto referenceStorage = std::make_unique<TimeStretchProcessor>(&referenceTone);
+        auto lockedStorage = std::make_unique<TimeStretchProcessor>(&lockedTone);
+        auto& reference = *referenceStorage;
+        auto& locked = *lockedStorage;
         locked.setBackend(backend);
         reference.prepareToPlay(128, 48000.0);
         locked.prepareToPlay(128, 48000.0);
@@ -459,7 +530,8 @@ int main(){
     }
     {
         ToneSource tone;
-        TimeStretchProcessor source(&tone);
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&tone);
+        auto& source = *sourceStorage;
         source.prepareToPlay(128, 48000.0);
         source.setPitchLockEnabled(true);
         source.setTempoRatio(0.8);
@@ -482,7 +554,8 @@ int main(){
     }
     {
         ToneSource tone;
-        TimeStretchProcessor source(&tone);
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&tone);
+        auto& source = *sourceStorage;
         source.prepareToPlay(128, 48000.0);
         source.setPitchLockEnabled(true);
         source.setTempoRatio(0.8);
@@ -502,7 +575,8 @@ int main(){
     }
     {
         ToneSource tone;
-        TimeStretchProcessor source(&tone);
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&tone);
+        auto& source = *sourceStorage;
         source.prepareToPlay(128, 48000.0);
         source.setPitchLockEnabled(true);
         source.setTempoRatio(0.8);
@@ -530,7 +604,8 @@ int main(){
     ok &= checkKeyShiftTonalitySwitch();
     for (const auto backend : {TimeStretchBackend::Signalsmith, TimeStretchBackend::RubberBand}) {
         ToneSource tone;
-        TimeStretchProcessor source(&tone);
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&tone);
+        auto& source = *sourceStorage;
         source.setBackend(backend);
         source.prepareToPlay(128, 48000.0);
         source.setPitchLockEnabled(true);
@@ -570,7 +645,8 @@ int main(){
     for (const double rate : {44100.0, 48000.0, 96000.0})
     for (const int samples : {64, 128, 512, 2048}) {
         ToneSource tone;
-        TimeStretchProcessor source(&tone);
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&tone);
+        auto& source = *sourceStorage;
         source.setBackend(backend);
         source.prepareToPlay(samples, rate);
         source.setTempoRatio(0.92);
@@ -630,7 +706,8 @@ int main(){
     }
     {
         ToneSource tone;
-        TimeStretchProcessor source(&tone);
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&tone);
+        auto& source = *sourceStorage;
         source.prepareToPlay(128, 48000.0);
         source.setTempoRatio(0.9);
         juce::AudioBuffer<float> block(2, 128);
@@ -662,7 +739,8 @@ int main(){
     }
     {
         ToneSource tone;
-        TimeStretchProcessor source(&tone);
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&tone);
+        auto& source = *sourceStorage;
         source.prepareToPlay(128, 48000.0);
         source.setTempoRatio(0.92);
         juce::AudioBuffer<float> block(2, 128);
@@ -700,7 +778,10 @@ int main(){
     {   // A loaded but paused deck still passes through this processor. It must
         // pull the silent router once, not spend FFT work filling a keylock
         // pipeline with silence on every callback.
-        ToneSource tone; TimeStretchProcessor source(&tone); source.prepareToPlay(512, 48000.0);
+        ToneSource tone;
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&tone);
+        auto& source = *sourceStorage;
+        source.prepareToPlay(512, 48000.0);
         source.setPitchLockEnabled(true);
         source.setTempoRatio(0.8);
         source.setInputPlaybackActive(false);
@@ -713,7 +794,10 @@ int main(){
                       "paused keylock bypasses the stretcher");
         source.setInputPlaybackActive(true);
     }
-    { ToneSource tone; TimeStretchProcessor source(&tone); source.prepareToPlay(512, 48000.0);
+    { ToneSource tone;
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&tone);
+        auto& source = *sourceStorage;
+        source.prepareToPlay(512, 48000.0);
         source.setPitchLockEnabled(true);
         juce::AudioBuffer<float> settle(2,256);
         source.getNextAudioBlock({&settle,0,256});
@@ -739,7 +823,10 @@ int main(){
                       "Signalsmith becomes active after switching back");
     }
     for(double rate:{44100.0,48000.0,96000.0,192000.0}){
-        ToneSource tone; TimeStretchProcessor source(&tone); source.prepareToPlay(8192,rate);
+        ToneSource tone;
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&tone);
+        auto& source = *sourceStorage;
+        source.prepareToPlay(8192,rate);
         for(int size:{64,128,256,512,1024,2048,4096,8192}){juce::AudioBuffer<float>b(2,size);source.getNextAudioBlock({&b,0,size});ok&=require(finite(b),"bypass finite");}
         { juce::AudioBuffer<float> mono(1,512); source.getNextAudioBlock({&mono,0,512}); ok&=require(finite(mono),"mono output finite"); }
         auto generation=source.activeConfigurationGeneration();
@@ -789,6 +876,16 @@ int main(){
             source.getNextAudioBlock({&b,0,8192});
             ++scratchReleaseBlocks;
         }
+        if (source.getLatencySamples() == 0) {
+            const auto diagnostics = source.realtimeStats();
+            std::cerr << "scratch-release rate=" << rate << " blocks=" << scratchReleaseBlocks
+                      << " generation=" << source.activeConfigurationGeneration()
+                      << " seeds=" << diagnostics.keylockSeeds
+                      << " jobs-started=" << diagnostics.seedJobsStarted
+                      << " jobs-completed=" << diagnostics.seedJobsCompleted
+                      << " worst-seed-us=" << diagnostics.worstKeylockSeedMicros
+                      << " discarded=" << diagnostics.discardedSeedResults << '\n';
+        }
         ok&=require(source.getLatencySamples()>0,
                     "scratch release restores keylock after a bounded bridge");
         auto stats=source.realtimeStats();
@@ -803,7 +900,10 @@ int main(){
         // built stretcher runs silent for its own latency — over 30 ms — unless
         // it is handed the audio that was just playing as pre-roll, and that
         // dropout is audible as a click on every toggle.
-        ToneSource tone; TimeStretchProcessor source(&tone); source.prepareToPlay(512,48000.0);
+        ToneSource tone;
+        auto sourceStorage = std::make_unique<TimeStretchProcessor>(&tone);
+        auto& source = *sourceStorage;
+        source.prepareToPlay(512,48000.0);
         juce::AudioBuffer<float> warm(2,512);
         for(int i=0;i<8;++i) source.getNextAudioBlock({&warm,0,512});
         const auto generation=source.activeConfigurationGeneration();
@@ -853,7 +953,10 @@ int main(){
         ok&=require(rms>0.07,"enabling keylock does not silence the output");
         ok&=require(peak<1.0f,"enabling keylock does not overshoot");
     }
-    std::mt19937 rng(0xB40CD5u); ToneSource tone; TimeStretchProcessor stress(&tone);stress.prepareToPlay(8192,48000);
+    std::mt19937 rng(0xB40CD5u); ToneSource tone;
+    auto stressStorage = std::make_unique<TimeStretchProcessor>(&tone);
+    auto& stress = *stressStorage;
+    stress.prepareToPlay(8192,48000);
     for(int i=0;i<1000;++i){if(i%7==0)stress.setPitchLockEnabled((i/7)%2);stress.setTempoRatio(0.25+(rng()%700)/100.0);if(i%31==0)stress.enterScratchBypass();if(i%31==2)stress.endScratchBypass();const int sizes[]={64,128,256,512,1024,2048,4096,8192};juce::AudioBuffer<float>b(2,sizes[rng()%8]);stress.getNextAudioBlock({&b,0,b.getNumSamples()});ok&=require(finite(b),"stress finite");}
     const auto stats=stress.realtimeStats();ok&=require(stats.prepareCallsFromAudioThread+stats.resetCallsFromAudioThread+stats.prewarmCallsFromAudioThread+stats.bufferGrowthsFromAudioThread+stats.blockingLockAttempts==0,"all realtime counters zero");
     if(std::getenv("BROCKDJ_TIME_STRETCH_BENCHMARK")){
@@ -909,7 +1012,9 @@ int main(){
         // Pace it like a real device: the seed budget is expressed in audio
         // time, so a free-running loop would burn through it instantly.
         for (int blockSize : {128, 512}) {
-            ToneSource benchTone; TimeStretchProcessor bench(&benchTone);
+            ToneSource benchTone;
+            auto benchStorage = std::make_unique<TimeStretchProcessor>(&benchTone);
+            auto& bench = *benchStorage;
             bench.prepareToPlay(blockSize, 48000.0);
             bench.setPitchLockEnabled(true); bench.setTempoRatio(0.92);
             juce::AudioBuffer<float> rb(2, blockSize);

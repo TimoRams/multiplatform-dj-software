@@ -62,7 +62,7 @@ sudo apt install -y \
   qt6-base-dev qt6-declarative-dev qt6-shadertools-dev qt6-shader-baker libqt6sql6-sqlite \
   qml6-module-qtqml qml6-module-qtqml-models \
   qml6-module-qtqml-workerscript qml6-module-qtquick \
-  qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+  qml6-module-qtquick-controls qml6-module-qtquick-dialogs qml6-module-qtquick-layouts \
   qml6-module-qtquick-templates qml6-module-qtquick-window \
   libasound2-dev libjack-jackd2-dev libusb-1.0-0-dev \
   libtag1-dev librubberband-dev libsqlcipher-dev libfftw3-dev \

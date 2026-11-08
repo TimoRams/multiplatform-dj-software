@@ -100,13 +100,14 @@ jobs:
             librubberband-dev librsvg2-bin libusb-1.0-0-dev \
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
             libxinerama-dev libxkbcommon-x11-dev libxrandr-dev libxrender-dev \
-            ninja-build pkg-config patchelf
+            ninja-build pkg-config patchelf \
+            xvfb xauth libgl1-mesa-dri libxcb-cursor0
           if [[ "${{ matrix.cache_arch }}" == arm64 ]]; then
             sudo apt-get install -y --no-install-recommends \
               qt6-base-dev qt6-declarative-dev qt6-shadertools-dev qt6-shader-baker libqt6sql6-sqlite \
               qml6-module-qtqml qml6-module-qtqml-models \
               qml6-module-qtqml-workerscript qml6-module-qtquick \
-              qml6-module-qtquick-controls qml6-module-qtquick-layouts \
+              qml6-module-qtquick-controls qml6-module-qtquick-dialogs qml6-module-qtquick-layouts \
               qml6-module-qtquick-templates qml6-module-qtquick-window
           fi
 
@@ -154,7 +155,10 @@ jobs:
         id: ctest
         env:
           BROCKDJ_STEM_MODEL: ${{ runner.temp }}/brockdj-stems-model/htdemucs_fp16weights.onnx
-        run: ctest --preset ${{ matrix.preset }}
+        run: |
+          QT_QPA_PLATFORM=offscreen ctest --preset ${{ matrix.preset }} -E '^stem_waveform_animation$'
+          xvfb-run -a env QT_QPA_PLATFORM=xcb QSG_RHI_BACKEND=opengl LIBGL_ALWAYS_SOFTWARE=1 \
+            ctest --preset ${{ matrix.preset }} -R '^stem_waveform_animation$' --no-tests=error
 
       - name: Validate architecture and headless startup
         shell: bash
@@ -278,6 +282,7 @@ jobs:
         id: ctest
         env:
           BROCKDJ_STEM_MODEL: ${{ runner.temp }}/brockdj-stems-model/htdemucs_fp16weights.onnx
+          QT_QPA_PLATFORM: offscreen
         run: ctest --preset ${{ matrix.preset }}
 
       - name: Validate architecture and headless startup
@@ -437,6 +442,7 @@ jobs:
         id: ctest
         env:
           BROCKDJ_STEM_MODEL: ${{ runner.temp }}/brockdj-stems-model/htdemucs_fp16weights.onnx
+          QT_QPA_PLATFORM: offscreen
         shell: pwsh
         run: |
           ctest --preset ci-windows-x64
@@ -516,7 +522,8 @@ jobs:
             libsqlcipher-dev libtag1-dev librubberband-dev libusb-1.0-0-dev \
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
             libxinerama-dev libxkbcommon-x11-dev libxrandr-dev libxrender-dev \
-            ninja-build pkg-config
+            ninja-build pkg-config \
+            xvfb xauth libgl1-mesa-dri libxcb-cursor0
           ./scripts/ci/install-libkeyfinder.sh /usr/local
 
       - name: Install ONNX Runtime for stems
@@ -534,6 +541,7 @@ jobs:
             BrockDJ \
             BrockDJ_smoke_tests \
             BrockDJ_deck_audio_graph_tests \
+            BrockDJ_time_stretch_tests \
             BrockDJ_audio_page_cache_tests \
             BrockDJ_scratch_cache_tests \
             BrockDJ_cached_playback_tests \
@@ -548,7 +556,11 @@ jobs:
             BrockDJ_media_io_scheduler_tests
 
       - name: Test
-        run: ctest --preset ci-linux-sanitizers --no-tests=error
+        run: |
+          QT_QPA_PLATFORM=offscreen ctest --preset ci-linux-sanitizers \
+            -E '^stem_waveform_animation$' --no-tests=error
+          xvfb-run -a env QT_QPA_PLATFORM=xcb QSG_RHI_BACKEND=opengl LIBGL_ALWAYS_SOFTWARE=1 \
+            ctest --preset ci-linux-sanitizers -R '^stem_waveform_animation$' --no-tests=error
 
       - name: Smoke-test application startup and shutdown
         env:

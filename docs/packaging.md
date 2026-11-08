@@ -45,6 +45,34 @@ synthetic audio and checks the resulting stems, not just the fake-model tests.
 The sanitizer job covers the stem cache, mixing and waveform tests without
 running the large real model under instrumentation.
 
+Normal CTest runs use Qt's Offscreen platform. Linux jobs run the GPU-only
+stem-waveform test separately under Xvfb with Qt's XCB plugin and Mesa software
+OpenGL. This exercises its shaders without a physical GPU or desktop;
+`libxcb-cursor0` is explicitly installed for the Qt 6.8 XCB plugin. macOS and
+Windows report a skip for this GPU-only test in Offscreen mode, while its
+shaders and C++ code are still compiled. Running it manually without a display
+on Linux also reports a skip before Qt initializes a platform plugin.
+
+Scratch quality tests use a controlled callback clock while retaining pointer
+sampling/delivery jitter and the existing quality limits. The GPU animation
+test similarly controls animation time, so a slow runner cannot skip past
+the intermediate frame being checked. UI progress tests wait for the bound
+geometry to reach its expected value rather than assuming animations finish
+within a fixed wall-clock sleep.
+
+Component fixtures load the same bundled Inter font as the application instead
+of measuring platform-dependent fallback fonts. Large audio-test objects are
+heap-owned so they also run with Windows' default 1 MiB stack. For plain
+streaming sources without lookahead, the keylock worker consumes preallocated
+bridge-audio slots continuously; catch-up does not wait for another callback
+between batches. The existing 192 kHz recovery limit and realtime-safety
+checks remain unchanged. Windows analysis-cache fingerprints include native
+file identity and high-resolution change times, including rewrites that restore
+the original modification time. The dedicated `streaming_seed_catchup` test
+also covers full bridge slots and stale transport generations under ASan/UBSan.
+It synchronizes with the worker outside the audio callback; the native
+`time_stretch` suite separately retains its full timing and audio-quality checks.
+
 Packages contain ONNX Runtime and its license/third-party notices. The model
 is only a CI test input, not part of the uploaded package: users install it
 once through **Settings -> DJ / Sync -> Stems -> Download**. The experimental
@@ -58,7 +86,9 @@ tags, and the Type-2 runtime is pinned to release `20251108`; the workflow never
 downloads a mutable `continuous` asset while packaging.
 
 Qt deployment scans `src/qml`, so Qt Quick Controls and other imported plugins
-are included. A temporary plugin view excludes unrelated system Qt plugins
+are included. System-Qt ARM64 builds explicitly install the Qt Quick Dialogs
+QML module used by the sampler editor. A temporary plugin view excludes unrelated
+system Qt plugins
 whose own optional dependencies are unresolved. Cleanup is confined to that
 staging area and the AppDir, and removes only unused SQL drivers; QSQLITE
 remains. Nothing is deleted from the runner's global Qt installation. Optional
