@@ -1,6 +1,7 @@
 # Building BrockDJ
 
-BrockDJ uses CMake 3.25 or newer, Ninja and a portable C++23 baseline. JUCE,
+BrockDJ uses CMake 3.25 or newer and a portable C++23 baseline; Ninja is
+recommended but optional. JUCE,
 Ableton Link, Signalsmith DSP, Signalsmith Linear and Signalsmith Stretch are
 Git submodules. Clone a new checkout with:
 
@@ -93,24 +94,35 @@ images. The pinned `libkeyfinder` 2.2.8 source is built against FFTW3 with:
 The script verifies the source archive SHA-256 before building and installing
 it under `/usr/local`.
 
-For normal local development, use the app-only build. It does not compile test
-binaries, so incremental UI/audio work stays fast:
+Optional real-time stems need ONNX Runtime. Download the pinned SDK into
+`libs/onnxruntime` once (see [Stems](architecture/stems.md)):
 
 ```bash
-./build-fast
+./scripts/fetch-onnxruntime.sh
+```
+
+Build and run with plain CMake. Without `CMAKE_BUILD_TYPE` the project uses
+`RelWithDebInfo`, and only the application is compiled:
+
+```bash
+cmake -S . -B build -G Ninja
+cmake --build build
 ./build/bin/BrockDJ
 ```
 
-Tests use their own `build-tests/` directory and never invalidate the app
-build. The first test invocation has its own one-time dependency configure;
-later runs are incremental. `BUILD_TESTING=ON` also requires Qt Test (included
-in the Qt base development packages above). The QML component test uses it
-for native mouse/touch event delivery and defaults to offscreen software rendering.
-Run the complete local suite with:
+Tests are opt-in. Keep them in a separate directory so they never invalidate
+the app build. `BUILD_TESTING=ON` also requires Qt Test (included in the Qt
+base development packages above). The QML component test uses it for native
+mouse/touch event delivery and defaults to offscreen software rendering:
 
 ```bash
-./test-fast
+cmake -S . -B build-tests -G Ninja -DBUILD_TESTING=ON -DBROCKDJ_TESTS_ONLY=ON
+cmake --build build-tests
+ctest --test-dir build-tests --output-on-failure
 ```
+
+`BROCKDJ_TESTS_ONLY=ON` skips the GUI application and the tests that launch it;
+omit it to also run the app smoke tests.
 
 CI-equivalent native release builds use one of these presets, according to the
 host architecture:
@@ -163,8 +175,8 @@ apply CPU-specific tuning. For builds that stay on a machine where they were
 compiled, native CPU tuning can be enabled explicitly:
 
 ```bash
-cmake --preset linux-release -DBROCKDJ_ENABLE_NATIVE_ARCH=ON
-cmake --build --preset linux-release --parallel 2
+cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release -DBROCKDJ_ENABLE_NATIVE_ARCH=ON
+cmake --build build-release
 ```
 
 ARM64 builds use a 16 MiB scrolling-waveform CPU cache per active deck instead
@@ -219,7 +231,17 @@ Expose Qt to CMake if Homebrew did not do so already:
 export CMAKE_PREFIX_PATH="$(brew --prefix qt@6)"
 ```
 
-Then select the architecture-native preset:
+Plain CMake builds for the Mac's own architecture
+(Apple Silicon or Intel). Omit `-G Ninja` to use Makefiles instead:
+
+```bash
+./scripts/fetch-onnxruntime.sh   # optional, enables stems
+cmake -S . -B build -G Ninja
+cmake --build build
+open build/bin/BrockDJ.app
+```
+
+CI-equivalent release builds with tests use the architecture-specific presets:
 
 ```bash
 cmake --preset ci-macos-arm64
@@ -236,14 +258,6 @@ ctest --preset ci-macos-x86_64
 Both presets create a real `BrockDJ.app` bundle under the preset's `bin/`
 directory. The architecture is explicit through `CMAKE_OSX_ARCHITECTURES`, and
 the supported deployment baseline is macOS 13.0.
-
-For local macOS builds without Ninja, use the matching Makefiles fallback
-preset:
-
-```bash
-cmake --preset macos-dev-x86_64-make
-cmake --build --preset macos-dev-x86_64-make --parallel 4
-```
 
 ### DDJ-FLX10 jog displays on macOS
 

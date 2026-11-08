@@ -13,9 +13,9 @@ see [AIO interface](../design/aio-interface.md).
 Run the repository entry points:
 
 ```bash
-cmake -S . -B build
-cmake --build build -j
-./test-fast
+cmake -S . -B build-tests -DBUILD_TESTING=ON
+cmake --build build-tests
+ctest --test-dir build-tests --output-on-failure
 ```
 
 The complete CTest suite covers the following relevant focused groups:
@@ -650,11 +650,15 @@ worker shutdown. There is no cross-launch parsed-analysis cache.
   POSIX. Verify one shutdown request, no late callback, no repeated recovery
   warning, and no QML use-after-destruction warning.
 
-For AIO/desktop-sensitive UI changes also run:
+For AIO/desktop-sensitive UI changes, also check in DESK mode unless noted:
 
-```bash
-./scripts/desktop-regression-checklist.sh
-```
+- Library side-by-side: the panel opens and the track list scrolls; P toggles
+  preview and the scrub bar stops/scrubs; tracks load to decks A/B by keyboard
+  and context menu.
+- AIO -> DESK: mixer and FX bar visibility return to the pre-AIO state.
+- AIO at 1280x800 and 1024x600: Performance / LIB / settings tabs, load a track,
+  return to Performance; no clipped controls.
+- Play deck A, SYNC two decks, and verify master handoff when sync is disabled.
 
 FLX10 input ownership (hardware): with the USB port set, move each channel's
 INPUT SELECT between PC-A, LINE and PC-B. Verify the deck pauses, dims and is

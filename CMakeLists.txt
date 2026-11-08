@@ -8,6 +8,13 @@ endif()
 project(${PROJECT_NAME} VERSION 0.0.1 LANGUAGES C CXX)
 set(BROCKDJ_PROJECT_VERSION "${PROJECT_VERSION}" CACHE STRING "BrockDJ project version" FORCE)
 
+# A plain `cmake -B build` must produce an optimized, debuggable app: an
+# unoptimized audio engine is not usable for DJing.
+get_property(_brockdj_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT _brockdj_multi_config AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -646,6 +653,8 @@ else()
 endif()
 
 # ── Smoke tests ───────────────────────────────────────────────────────────────
+# Tests are opt-in (-DBUILD_TESTING=ON) so a normal build only compiles the app.
+option(BUILD_TESTING "Build the BrockDJ test suite" OFF)
 include(CTest)
 
 if(BUILD_TESTING)

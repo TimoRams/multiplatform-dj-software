@@ -7,132 +7,6 @@
   },
   "configurePresets": [
     {
-      "name": "linux-dev-fast",
-      "displayName": "Linux dev fast",
-      "description": "Fast local Linux build: Ninja, RelWithDebInfo, QML cachegen disabled.",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "BUILD_TESTING": "OFF",
-        "BROCKDJ_TESTS_ONLY": "OFF",
-        "BROCKDJ_AUTOGEN_PARALLEL": "4",
-        "RDBJ_ENABLE_QML_CACHEGEN": "OFF"
-      },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Linux"
-      }
-    },
-    {
-      "name": "linux-tests-fast",
-      "displayName": "Linux tests fast",
-      "description": "Separate local test build: Ninja, RelWithDebInfo, application excluded from all.",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build-tests",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "BUILD_TESTING": "ON",
-        "BROCKDJ_TESTS_ONLY": "ON",
-        "BROCKDJ_AUTOGEN_PARALLEL": "4",
-        "RDBJ_ENABLE_QML_CACHEGEN": "OFF"
-      },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Linux"
-      }
-    },
-    {
-      "name": "linux-release",
-      "displayName": "Linux release",
-      "description": "Release-like Linux build with QML cachegen enabled.",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build-release",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "RDBJ_ENABLE_QML_CACHEGEN": "ON"
-      },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Linux"
-      }
-    },
-    {
-      "name": "macos-dev-arm64",
-      "displayName": "macOS dev (Apple Silicon)",
-      "description": "Local macOS ARM64 dev build.",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build-macos-arm64",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "CMAKE_OSX_ARCHITECTURES": "arm64",
-        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0",
-        "RDBJ_ENABLE_QML_CACHEGEN": "OFF"
-      },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Darwin"
-      }
-    },
-    {
-      "name": "macos-dev-x86_64",
-      "displayName": "macOS dev (Intel)",
-      "description": "Local Intel Mac dev build.",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build-macos-x86_64",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "CMAKE_OSX_ARCHITECTURES": "x86_64",
-        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0",
-        "RDBJ_ENABLE_QML_CACHEGEN": "OFF"
-      },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Darwin"
-      }
-    },
-    {
-      "name": "macos-dev-arm64-make",
-      "displayName": "macOS dev (Apple Silicon, Makefiles)",
-      "description": "Local macOS ARM64 dev build using Unix Makefiles when Ninja is unavailable.",
-      "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build-macos-arm64-make",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "CMAKE_OSX_ARCHITECTURES": "arm64",
-        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0",
-        "RDBJ_ENABLE_QML_CACHEGEN": "OFF"
-      },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Darwin"
-      }
-    },
-    {
-      "name": "macos-dev-x86_64-make",
-      "displayName": "macOS dev (Intel, Makefiles)",
-      "description": "Local Intel Mac dev build using Unix Makefiles when Ninja is unavailable.",
-      "generator": "Unix Makefiles",
-      "binaryDir": "${sourceDir}/build-macos-x86_64-make",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
-        "CMAKE_OSX_ARCHITECTURES": "x86_64",
-        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0",
-        "RDBJ_ENABLE_QML_CACHEGEN": "OFF"
-      },
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Darwin"
-      }
-    },
-    {
       "name": "ci-base",
       "hidden": true,
       "generator": "Ninja",
@@ -226,13 +100,6 @@
     }
   ],
   "buildPresets": [
-    { "name": "linux-dev-fast", "configurePreset": "linux-dev-fast" },
-    { "name": "linux-tests-fast", "configurePreset": "linux-tests-fast" },
-    { "name": "linux-release", "configurePreset": "linux-release" },
-    { "name": "macos-dev-arm64", "configurePreset": "macos-dev-arm64" },
-    { "name": "macos-dev-x86_64", "configurePreset": "macos-dev-x86_64" },
-    { "name": "macos-dev-arm64-make", "configurePreset": "macos-dev-arm64-make" },
-    { "name": "macos-dev-x86_64-make", "configurePreset": "macos-dev-x86_64-make" },
     { "name": "ci-linux-x64", "configurePreset": "ci-linux-x64" },
     { "name": "ci-linux-arm64", "configurePreset": "ci-linux-arm64" },
     { "name": "ci-linux-sanitizers", "configurePreset": "ci-linux-sanitizers" },
@@ -241,18 +108,6 @@
     { "name": "ci-windows-x64", "configurePreset": "ci-windows-x64" }
   ],
   "testPresets": [
-    {
-      "name": "linux-dev-fast",
-      "configurePreset": "linux-tests-fast",
-      "output": { "outputOnFailure": true },
-      "execution": { "noTestsAction": "error" }
-    },
-    {
-      "name": "linux-tests-fast",
-      "configurePreset": "linux-tests-fast",
-      "output": { "outputOnFailure": true },
-      "execution": { "noTestsAction": "error" }
-    },
     {
       "name": "ci-linux-x64",
       "configurePreset": "ci-linux-x64",

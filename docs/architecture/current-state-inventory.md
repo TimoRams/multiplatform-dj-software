@@ -161,7 +161,7 @@ share one constant-size local component rather than content-dependent widths.
 
 ## Build and test shape
 
-Use `./build-fast` for the application. Final validation must also configure a
+Use a plain `cmake -S . -B build && cmake --build build` for the application. Final validation must also configure a
 fresh `BUILD_TESTING=ON` tree and run full CTest; existing binaries are not an
 acceptable result after source moves. Manual UI/controller/audio checks remain
 in `docs/testing/regression-checklist.md`.

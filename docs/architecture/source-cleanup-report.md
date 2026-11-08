@@ -194,6 +194,6 @@ reduction, not a claimed Raspberry Pi performance improvement.
 
 ## Validation
 
-Each consolidation batch passed `git diff --check`, `./build-fast`, and focused
+Each consolidation batch passed `git diff --check`, an application build, and focused
 freshly rebuilt tests. The final clean build and full CTest result are recorded
 in the task handoff report rather than frozen into this architecture document.

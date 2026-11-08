@@ -7,8 +7,9 @@ set -euo pipefail
 #   ./scripts/run-audio-cache-stress.sh
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# Keep this harness on the same configure/build path as the normal test gate.
-# `test-fast` builds the stress executable as part of the test build and checks
-# the cache regressions before the long-running performance reproduction.
-"${repo_root}/test-fast" -R '^(audio_page_cache|scratch_cache|cached_playback)$'
-exec "${repo_root}/build-tests/BrockDJ_audio_cache_stress"
+build_dir="${repo_root}/build-tests"
+cmake -S "${repo_root}" -B "${build_dir}" -DBUILD_TESTING=ON -DBROCKDJ_TESTS_ONLY=ON
+cmake --build "${build_dir}" --parallel
+# Check the cache regressions before the long-running performance reproduction.
+ctest --test-dir "${build_dir}" -R '^(audio_page_cache|scratch_cache|cached_playback)$' --output-on-failure
+exec "${build_dir}/BrockDJ_audio_cache_stress"

@@ -27,7 +27,7 @@ missing dependencies a configuration error. Without the SDK, or with
 `-DBROCKDJ_ENABLE_STEMS=OFF`, the rest of the application still works and
 the page reports that stems are unavailable.
 
-Open **Settings -> Stems -> Download** once to install the 166 MB HT-Demucs
+Open **Settings -> DJ / Sync -> Stems -> Download** once to install the 166 MB HT-Demucs
 ONNX model. The download is checked against a pinned SHA-256 and atomically
 installed under `AppLocalDataLocation/models/`; it is not committed to Git.
 `BROCKDJ_STEM_MODEL=/path/model.onnx` selects an existing model instead. The
@@ -64,7 +64,7 @@ its completed cache has been written and retained within the disk budget.
 
 ## Optional GPU acceleration
 
-**Settings -> Stems -> Experimental GPU acceleration** is off by default.
+**Settings -> DJ / Sync -> Stems -> Experimental GPU acceleration** is off by default.
 Changes take effect after restarting BrockDJ. The settings page reports the
 backend actually selected after model loading and any CPU-fallback reason.
 GPU initialization, model compilation or inference failures fall back to CPU;

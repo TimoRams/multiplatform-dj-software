@@ -318,5 +318,5 @@ lifetime must:
 
 1. identify the producer and consumer thread;
 2. state why no forbidden operation becomes callback-reachable;
-3. run the relevant focused tests and the complete `./test-fast` suite;
+3. run the relevant focused tests and the complete CTest suite (`-DBUILD_TESTING=ON`);
 4. record any remaining accepted risk in `risk-register.md`.
