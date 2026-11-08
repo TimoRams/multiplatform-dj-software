@@ -1882,8 +1882,9 @@ bool stemPreanalysisUiTests(const std::string& library)
                   "filtered collection stem preanalysis uses its own track list");
     host->setProperty("width", 640);
     host->setProperty("touchMode", true);
-    QTest::qWait(30);
-    ok &= require(stemButton->width() == 88 && stemButton->height() == 40,
+    ok &= require(QTest::qWaitFor([&] {
+                      return stemButton->width() == 88 && stemButton->height() == 40;
+                  }),
                   "narrow AIO uses a compact stem button with a touch-sized target");
     host->setProperty("activeTab", "streaming");
     QCoreApplication::processEvents();
@@ -1964,6 +1965,7 @@ bool performancePadsThemeRuntimeTests()
             property int deckBPadMode: 0
             property int deckAKeyShiftRange: 1
             property int deckBKeyShiftRange: 1
+            function performanceSlipLoopPad(deckId) { return -1 }
             function performancePadFxMomentary(deckId) { return -1 }
             function performancePadFxToggle(deckId) { return -1 }
             signal performancePadStateChanged(string changedDeckId)
@@ -2794,6 +2796,14 @@ bool qmlMergeRuntimeTests()
             property bool hasTrack: true
             property bool readOnlyExternalTrack: false
             property bool isPlaying: false
+            property bool inputExternal: false
+            property bool scratchVisualActive: false
+            property bool slipPreviewActive: false
+            signal playingChanged()
+            signal progressChanged()
+            signal scrubbingChanged()
+            signal slipPreviewChanged()
+            signal trackMetadataChanged()
             property string externalSourceId: ""
             property string trackTitle: "After Hours / Extended Mix"
             property string trackArtist: "Northbound"
@@ -2820,8 +2830,18 @@ bool qmlMergeRuntimeTests()
         import QtQml
         QtObject {
             property bool isPlaying: false
+            property bool inputExternal: false
             property bool scratchVisualActive: false
             property bool slipPreviewActive: true
+            signal playingChanged()
+            signal progressChanged()
+            signal scrubbingChanged()
+            signal slipPreviewChanged()
+            signal trackMetadataChanged()
+            property bool beatgridLocked: false
+            property bool hasTrack: true
+            property bool readOnlyExternalTrack: false
+            property var trackData: ({ isBpmAnalyzed: false })
             property real pixelsPerSecond: 0
         }
     )"), "slip-preview test engine instantiates");
@@ -2831,6 +2851,14 @@ bool qmlMergeRuntimeTests()
             property bool hasTrack: true
             property bool readOnlyExternalTrack: false
             property bool isPlaying: false
+            property bool inputExternal: false
+            property bool scratchVisualActive: false
+            property bool slipPreviewActive: false
+            signal playingChanged()
+            signal progressChanged()
+            signal scrubbingChanged()
+            signal slipPreviewChanged()
+            signal trackMetadataChanged()
             property string externalSourceId: ""
             property string trackTitle: "Night Drive"
             property string trackArtist: "Coastal Lines"
@@ -2867,7 +2895,12 @@ bool qmlMergeRuntimeTests()
     )"), "waveform settings context instantiates");
     auto pressure = createQmlObject(engine, QStringLiteral(R"(
         import QtQml
-        QtObject { property string tier: "normal" }
+        QtObject {
+            property string tier: "normal"
+            property int interactiveWaveformUpdateIntervalMs: 16
+            property int waveformUpdateIntervalMs: 16
+            property bool waveformRasterWorkEnabled: true
+        }
     )"), "backdrop pressure context instantiates");
     if (!windowContext || !fxManager || !waveformZoom || !deviceLibrary
         || !deckA || !deckB || !settingsManager || !slipEngine || !pressure)
@@ -3485,6 +3518,8 @@ bool qmlMergeRuntimeTests()
             QtObject {
                 property bool hasTrack: true
                 property bool isPlaying: false
+                signal playingChanged()
+                signal trackMetadataChanged()
                 property bool loopActive: false
                 property real visualPosition: 49.123
                 property string trackTitle: "After Hours / Extended Mix"

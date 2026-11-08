@@ -645,11 +645,13 @@ Item {
                         }
 
                         Text {
+                            id: padIndexText
                             objectName: "padIndex" + index
                             anchors.top: parent.top; anchors.left: parent.left
                             anchors.topMargin: parent.height < 38 ? 0 : 3
                             anchors.leftMargin: 6
-                            height: parent.height < 38 ? parent.height : implicitHeight
+                            height: parent.height < 38 ? parent.height : metrics.height
+                            FontMetrics { id: metrics; font: padIndexText.font }
                             verticalAlignment: Text.AlignVCenter
                             text: (index + 1).toString()
                             color: padRect.padActive ? UiTheme.textPrimary : UiTheme.textLabel
@@ -673,12 +675,14 @@ Item {
                         }
 
                         Text {
+                            id: padLabelText
                             objectName: "padLabel" + index
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.leftMargin: parent.height < 38 ? 18 : 6
                             anchors.rightMargin: kind === "loop" ? 14 : 4
-                            height: parent.height < 38 ? parent.height : implicitHeight
+                            height: parent.height < 38 ? parent.height : labelMetrics.height
+                            FontMetrics { id: labelMetrics; font: padLabelText.font }
                             anchors.bottom: parent.bottom
                             anchors.bottomMargin: parent.height < 38 ? 0 : 6
                             horizontalAlignment: Text.AlignHCenter

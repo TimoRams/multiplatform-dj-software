@@ -426,7 +426,11 @@ bool testSpinHandoffs(const QString& path)
             double minimumRms = 1.0;
             bool reentered = false;
             const int blocks = static_cast<int>(48'000.0 * 0.18 / blockSize) + 1;
-            for (int block = 0; block < blocks; ++block) {
+            // Seed preparation runs on a worker. Sanitizers and busy CI runners
+            // can exceed the audio observation window without an audio defect.
+            const auto reentryDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            for (int block = 0; block < blocks
+                 || (!reentered && std::chrono::steady_clock::now() < reentryDeadline); ++block) {
                 graph.getNextAudioBlock({&output, 0, blockSize});
                 for (int sample = 0; sample < blockSize; ++sample) {
                     maximumStep = std::max(maximumStep, std::abs(output.getSample(0, sample) - previous));
