@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "audio/cache/AudioPageCache.h"
+#include "stems/StemMixState.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -61,8 +62,15 @@ public:
         return m_landingSamples > 0 && m_landingFrame < m_landingSamples;
     }
     [[nodiscard]] double rateLandingTarget() const noexcept { return m_landingTarget; }
-    void invalidatePrefetch() noexcept { m_sourceSize = 0; }
+    void invalidatePrefetch() noexcept
+    {
+        m_sourceSize = 0;
+        m_previousSourceSize = 0;
+        m_stemFadeRemaining = 0;
+    }
     void setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle);
+    // Per-deck stem gains, baked into the local source window on refill.
+    void setStemMixState(brockdj::stems::StemMixState* state) noexcept { m_stems = state; }
     void prefetchAround(double readPositionSamples) noexcept;
 
     void setTrackLengthSamples(double lengthSamples) noexcept {
@@ -106,6 +114,7 @@ private:
     bool ensureWindow(double rate, int outputBlockSize) noexcept;
     bool refillWindowFromCache(double rate, int outputBlockSize) noexcept;
     [[nodiscard]] bool positionInWindow(double position) const noexcept;
+    [[nodiscard]] bool positionInWindow(double position, double origin, int size) const noexcept;
     void prepareSincTable();
     void writeScratchOutput(float* out0, float* out1, int index, bool ready,
                             double rate) noexcept;
@@ -113,9 +122,20 @@ private:
                                float& left, float& right) const noexcept;
     double wrapPosition(double pos) const noexcept;
 
+    [[nodiscard]] std::uint64_t currentStemSignature() const noexcept;
+
     AudioPageCache* m_cache = nullptr;
     AudioCacheHandle m_cacheHandle;
+    brockdj::stems::StemMixState* m_stems = nullptr;
+    brockdj::stems::StemGainSmoother m_stemSmoother;
+    // Stem state baked into the current window; 0 = raw mix.
+    std::uint64_t m_stemSignature = 0;
     juce::AudioBuffer<float> m_sourceBuffer;
+    juce::AudioBuffer<float> m_previousSourceBuffer;
+    int m_previousSourceSize = 0;
+    double m_previousBufferOriginSample = 0.0;
+    int m_stemFadeRemaining = 0;
+    int m_stemFadeSamples = 1;
     int m_channels = 2;
     int m_deviceBufferSize = 512;
     int m_blockSize = 512;

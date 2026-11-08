@@ -87,6 +87,13 @@ fi
     echo "SQLCipher runtime is missing from the macOS bundle" >&2
     exit 1
 }
+if otool -L "$binary" | grep -qi 'onnxruntime'; then
+    [[ -n "$(find "$app/Contents" -type f -iname '*onnxruntime*.dylib' -print -quit)" ]] || {
+        echo "ONNX Runtime is missing from the macOS bundle" >&2
+        exit 1
+    }
+fi
+cp "$repo_root/NOTICE" "$app/Contents/Resources/NOTICE"
 
 load_rpaths() {
     otool -arch "$expected_arch" -l "$1" | awk '

@@ -38,7 +38,11 @@ void ScratchResampler::prepare(int numChannels, int maxBlockSize, double outputS
     const int capacity = requiredSourceBufferCapacity(m_trackSampleRate);
     m_sourceBuffer.setSize(m_channels, capacity, false, true, true);
     m_sourceBuffer.clear();
+    m_previousSourceBuffer.setSize(m_channels, capacity, false, true, true);
     m_sourceSize = 0;
+    m_previousSourceSize = 0;
+    m_stemFadeSamples = std::max(1, static_cast<int>(std::lround(m_outputSampleRate * 0.015)));
+    m_stemFadeRemaining = 0;
     m_readPos = 0.0;
     m_bufferOriginSample = 0.0;
     m_lastRate = 0.0;
@@ -149,6 +153,8 @@ void ScratchResampler::reset(double readPositionSamples) noexcept
     m_readPos = readPositionSamples;
     m_bufferOriginSample = readPositionSamples;
     m_sourceSize = 0;
+    m_previousSourceSize = 0;
+    m_stemFadeRemaining = 0;
     m_lastRate = 0.0;
     m_smoothedRate = 0.0;
     m_previousRateStep = 0.0;
@@ -192,6 +198,8 @@ void ScratchResampler::setLoopRange(double loopInSample,
     if (m_referenceValid)
         m_referencePos += shift;
     m_sourceSize = 0;
+    m_previousSourceSize = 0;
+    m_stemFadeRemaining = 0;
 
     if (!active || !m_cache || !m_cacheHandle.isValid())
         return;
@@ -227,6 +235,8 @@ void ScratchResampler::beginContinuation(const ScratchResampler& source) noexcep
     m_lastRate = source.m_smoothedRate;
     m_previousRateStep = 0.0;
     m_sourceSize = 0;
+    m_previousSourceSize = 0;
+    m_stemFadeRemaining = 0;
     m_starvationGain = source.m_starvationGain;
     m_lastOutputL = source.m_lastOutputL;
     m_lastOutputR = source.m_lastOutputR;
@@ -271,8 +281,27 @@ void ScratchResampler::primeTrackerVelocity(double ratePerOutputSample) noexcept
     m_trackVel = ratePerOutputSample * m_outputSampleRate;
 }
 
+std::uint64_t ScratchResampler::currentStemSignature() const noexcept
+{
+    if (!m_stems)
+        return 0;
+    const auto targets = m_stems->targetGains();
+    if (brockdj::stems::isUnity(targets))
+        return 0;
+    std::uint64_t ready = 0;
+    {
+        brockdj::stems::StemGainSmoother scratch;
+        brockdj::stems::StemReadScope scope(m_stems, scratch, m_cacheHandle.id());
+        if (!scope.data())
+            return 0;
+        ready = scope.data()->readyEpoch();
+    }
+    return ((m_stems->epoch() + 1) * 0x9e3779b97f4a7c15ull) ^ (ready + 1);
+}
+
 void ScratchResampler::setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle)
 {
+    m_stemSmoother.prepare(handle.sampleRate() > 0.0 ? handle.sampleRate() : 44100.0);
     m_cache = cache;
     m_cacheHandle = handle;
     m_trackSampleRate = handle.isValid() && handle.sampleRate() > 0.0
@@ -285,8 +314,11 @@ void ScratchResampler::setTrackCacheSource(AudioPageCache* cache, AudioCacheHand
         // path is only a bounded fallback for a larger source or device block.
         m_sourceBuffer.setSize(m_channels, requiredCapacity, false, true, true);
         m_sourceBuffer.clear();
+        m_previousSourceBuffer.setSize(m_channels, requiredCapacity, false, true, true);
     }
     m_sourceSize = 0;
+    m_previousSourceSize = 0;
+    m_stemFadeRemaining = 0;
     m_bufferOriginSample = m_readPos;
     m_starvationGain = 0.0f;
 }
@@ -369,20 +401,24 @@ bool ScratchResampler::needsWindowReload(double minAbsPos, double maxAbsPos) con
 
 bool ScratchResampler::positionInWindow(double position) const noexcept
 {
-    if (m_sourceSize < kMinWindowSamples)
+    return positionInWindow(position, m_bufferOriginSample, m_sourceSize);
+}
+
+bool ScratchResampler::positionInWindow(double position, double origin, int size) const noexcept
+{
+    if (size < kMinWindowSamples)
         return false;
 
     // At a real track boundary the sinc reader can use its reflected extension;
     // a local cache-window boundary cannot, because audio outside that window
     // exists and must be loaded instead of mirrored.
-    const bool ownsTrackStart = !m_loopActive && m_bufferOriginSample <= 0.0;
+    const bool ownsTrackStart = !m_loopActive && origin <= 0.0;
     const bool ownsTrackEnd = !m_loopActive && m_trackLengthSamples > 1.0
-        && m_bufferOriginSample + static_cast<double>(m_sourceSize)
-            >= m_trackLengthSamples;
-    const double firstReadable = m_bufferOriginSample
+        && origin + static_cast<double>(size) >= m_trackLengthSamples;
+    const double firstReadable = origin
         + (ownsTrackStart ? 0.0 : static_cast<double>(kSincRadius));
-    const double endReadable = m_bufferOriginSample
-        + static_cast<double>(m_sourceSize)
+    const double endReadable = origin
+        + static_cast<double>(size)
         - (ownsTrackEnd ? 0.0 : static_cast<double>(kSincRadius + 1));
     return position >= firstReadable && position < endReadable;
 }
@@ -506,6 +542,16 @@ bool ScratchResampler::refillWindowFromCache(double rate, int outputBlockSize) n
     if (!complete)
         return false;
 
+    const auto nextStemSignature = currentStemSignature();
+    if (m_sourceSize > 0 && nextStemSignature != m_stemSignature) {
+        for (int channel = 0; channel < m_channels; ++channel)
+            std::copy_n(m_sourceBuffer.getReadPointer(channel), m_sourceSize,
+                        m_previousSourceBuffer.getWritePointer(channel));
+        m_previousSourceSize = m_sourceSize;
+        m_previousBufferOriginSample = m_bufferOriginSample;
+        m_stemFadeRemaining = m_stemFadeSamples;
+    }
+
     int destinationOffset = 0;
     for (int spanIndex = 0; spanIndex < spanCount; ++spanIndex) {
         const auto& span = spans[static_cast<std::size_t>(spanIndex)];
@@ -527,6 +573,23 @@ bool ScratchResampler::refillWindowFromCache(double rate, int outputBlockSize) n
             }
         }
         destinationOffset += static_cast<int>(span.count);
+    }
+    m_stemSignature = nextStemSignature;
+    if (m_stemSignature != 0) {
+        brockdj::stems::StemReadScope stems(m_stems, m_stemSmoother, m_cacheHandle.id());
+        if (stems.active()) {
+            stems.snapToTargets();
+            int offset = 0;
+            for (int spanIndex = 0; spanIndex < spanCount; ++spanIndex) {
+                const auto& span = spans[static_cast<std::size_t>(spanIndex)];
+                for (int channel = 0; channel < m_channels; ++channel) {
+                    float* window = m_sourceBuffer.getWritePointer(channel) + offset;
+                    for (std::int64_t i = 0; i < span.count; ++i)
+                        window[i] = stems.apply(span.firstSample + i, channel, window[i]);
+                }
+                offset += static_cast<int>(span.count);
+            }
+        }
     }
     // Tiny loops may repeat many times inside one window. Copy one complete
     // cycle from the cache, then double the prepared prefix instead of
@@ -566,7 +629,10 @@ bool ScratchResampler::ensureWindow(double rate, int outputBlockSize) noexcept
         ? std::min(m_trackLengthSamples - 1.0, maxPos)
         : maxPos;
 
-    if (!needsWindowReload(clampedMin, clampedMax))
+    // A stem edit (or newly separated audio while stems are in use) makes the
+    // baked window stale; refresh it, but keep the old one if pages are missing.
+    const bool stemsStale = m_sourceSize > 0 && currentStemSignature() != m_stemSignature;
+    if (!stemsStale && !needsWindowReload(clampedMin, clampedMax))
         return true;
 
     // Bias a same-direction move toward its destination. A reversal needs both
@@ -602,14 +668,24 @@ void ScratchResampler::readBandlimitedStereo(double position, double rate,
     const float* sourceLeft = m_sourceBuffer.getReadPointer(0);
     const float* sourceRight = m_sourceBuffer.getReadPointer(
         std::min(1, m_sourceBuffer.getNumChannels() - 1));
-    const auto reflectedIndex = [this](int idx) noexcept {
+    const auto reflectedIndex = [](int idx, int size) noexcept {
         if (idx < 0)
             idx = -idx;
-        else if (idx >= m_sourceSize)
-            idx = 2 * (m_sourceSize - 1) - idx;
+        else if (idx >= size)
+            idx = 2 * (size - 1) - idx;
 
-        return std::clamp(idx, 0, m_sourceSize - 1);
+        return std::clamp(idx, 0, size - 1);
     };
+    const bool fadingStems = m_stemFadeRemaining > 0 && m_previousSourceSize > 0;
+    const float previousWeight = fadingStems
+        ? static_cast<float>(m_stemFadeRemaining) / static_cast<float>(m_stemFadeSamples)
+        : 0.0f;
+    const int previousCentre = fadingStems
+        ? static_cast<int>(std::floor(position - m_previousBufferOriginSample)) : 0;
+    const float* previousLeft = fadingStems ? m_previousSourceBuffer.getReadPointer(0) : nullptr;
+    const float* previousRight = fadingStems
+        ? m_previousSourceBuffer.getReadPointer(std::min(1, m_previousSourceBuffer.getNumChannels() - 1))
+        : nullptr;
 
     const double phasePosition = fraction * kSincPhaseCount;
     const int phase0 = std::clamp(static_cast<int>(phasePosition),
@@ -649,9 +725,17 @@ void ScratchResampler::readBandlimitedStereo(double position, double rate,
                 bandMix)
             : band0Coefficient;
         const int sourceIndex = reflectedIndex(
-            centre + tap - (kSincRadius - 1));
-        left += sourceLeft[sourceIndex] * coefficient;
-        right += sourceRight[sourceIndex] * coefficient;
+            centre + tap - (kSincRadius - 1), m_sourceSize);
+        float leftSample = sourceLeft[sourceIndex];
+        float rightSample = sourceRight[sourceIndex];
+        if (fadingStems) {
+            const int previousIndex = reflectedIndex(
+                previousCentre + tap - (kSincRadius - 1), m_previousSourceSize);
+            leftSample = std::lerp(leftSample, previousLeft[previousIndex], previousWeight);
+            rightSample = std::lerp(rightSample, previousRight[previousIndex], previousWeight);
+        }
+        left += leftSample * coefficient;
+        right += rightSample * coefficient;
     }
 }
 
@@ -662,7 +746,12 @@ void ScratchResampler::writeScratchOutput(float* out0, float* out1, int index,
     if (ready) {
         if (m_starvationGain <= 0.0f) m_recoveryEvents.fetch_add(1, std::memory_order_relaxed);
         m_starvationGain = std::min(1.0f, m_starvationGain + step);
+        if (m_stemFadeRemaining > 0
+            && !positionInWindow(m_readPos, m_previousBufferOriginSample, m_previousSourceSize))
+            m_stemFadeRemaining = 0;
         readBandlimitedStereo(m_readPos, rate, m_lastOutputL, m_lastOutputR);
+        if (m_stemFadeRemaining > 0)
+            --m_stemFadeRemaining;
     } else {
         m_starvationGain = std::max(0.0f, m_starvationGain - step);
     }

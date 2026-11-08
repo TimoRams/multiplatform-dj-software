@@ -16,6 +16,7 @@ class TimeStretchProcessor;
 enum class TimeStretchBackend : std::uint8_t;
 namespace juce { class AudioTransportSource; }
 namespace engine::audio { class RenderModeRouter; }
+namespace brockdj::stems { class StemMixState; }
 
 class DeckAudioPipeline final : public juce::AudioSource {
 public:
@@ -106,6 +107,8 @@ public:
     [[nodiscard]] TransportSnapshot transportSnapshot() const noexcept;
     [[nodiscard]] bool hasEverHadTrack() const noexcept;
     [[nodiscard]] RealtimeStats realtimeStats() const noexcept;
+    // Stem gains and separated audio for this deck; lives as long as the pipeline.
+    [[nodiscard]] std::shared_ptr<brockdj::stems::StemMixState> stemMixState() const noexcept;
 
     [[nodiscard]] juce::AudioTransportSource& transport() noexcept;
     [[nodiscard]] const juce::AudioTransportSource& transport() const noexcept;

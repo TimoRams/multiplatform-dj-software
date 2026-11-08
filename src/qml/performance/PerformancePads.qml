@@ -21,7 +21,7 @@ Item {
     property bool hotCueHoldHadCue: false
     property bool hotCueHoldReturnOnRelease: false
 
-    readonly property var tabs: hotCueOnly ? ["HOT CUE"] : ["HOT CUE", "PAD FX", "BEATJUMP", "SAMPLER", "BEAT LOOP", "SLIP LOOP"]
+    readonly property var tabs: hotCueOnly ? ["HOT CUE"] : ["HOT CUE", "PAD FX", "BEATJUMP", "SAMPLER", "BEAT LOOP", "SLIP LOOP", "STEMS"]
     readonly property real tabBarHeight: 28
     readonly property real padsContentHeight: Math.max(0, root.height - tabBarHeight - 9)
     readonly property var beatJumpPads: [-16, -8, -4, -2, 2, 4, 8, 16]
@@ -29,6 +29,55 @@ Item {
     readonly property var beatLoopPads: [0.25, 0.5, 1, 2, 4, 8, 16, 32]
     readonly property var slipLoopPads: [1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4]
     property int slipLoopHeld: -1
+    // Serato-style STEMS page: pads 1-4 mute, 5-8 solo VOCALS/MELODY/BASS/DRUMS.
+    readonly property var stemNames: ["VOCALS", "MELODY", "BASS", "DRUMS"]
+    readonly property var stemShortNames: ["VOC", "MEL", "BASS", "DRUM"]
+    readonly property var stemAccents: [UiTheme.cue, UiTheme.sync, UiTheme.blue, UiTheme.deckC]
+    readonly property var stemGains: root.engine && root.engine.stemGains !== undefined
+        ? root.engine.stemGains : [1, 1, 1, 1]
+    readonly property int stemsState: root.engine && root.engine.stemsState !== undefined ? root.engine.stemsState : 0
+    readonly property var stemsController: typeof stems !== "undefined" ? stems : null
+    readonly property bool stemsPlayheadReady: root.engine && root.engine.stemsPlayheadReady !== undefined
+        && root.engine.stemsPlayheadReady
+    readonly property string stemsError: root.engine && root.engine.stemsError !== undefined
+        ? root.engine.stemsError : ""
+    function stemSoloed(stem) {
+        for (var i = 0; i < 4; ++i)
+            if ((i === stem) !== (root.stemGains[i] > 0.5)) return false
+        return true
+    }
+    readonly property var compactTabs: ["CUE", "FX", "JUMP", "SMPL", "LOOP", "SLIP", "STEM"]
+    function stemsTabLabel(compact) {
+        var name = compact ? "STEM" : "STEMS"
+        if (!root.stemsController || !root.stemsController.available) return compact ? "OFF" : name + " OFF"
+        if (root.stemsState === 1 || (root.stemsState === 2 && !root.stemsPlayheadReady))
+            return compact ? "WAIT" : name + " WAIT"
+        if (root.stemsState === 2)
+            return (compact ? "S " : name + " ") + Math.round(root.engine.stemsProgress * 100) + "%"
+        if (root.stemsState === 4) return name + " ERR"
+        return name
+    }
+    function stemsStatusMessage() {
+        if (!root.stemsController || !root.stemsController.supported)
+            return "Stems are not supported by this build."
+        if (!root.stemsController.modelInstalled) {
+            if (root.stemsController.error) return root.stemsController.error
+            if (root.stemsController.downloading)
+                return "Downloading model: " + Math.round(root.stemsController.downloadProgress * 100) + "%"
+            return "Download the 166 MB stem model once to enable stems."
+        }
+        if (!root.engine || !root.engine.hasTrack)
+            return "Load a track to use stems."
+        return root.stemsError || "Stem separation failed."
+    }
+    // Narrow decks get short captions so all seven pages stay readable.
+    function tabCaption(index, compact) {
+        if (root.keyShiftMode && index === 3) return compact ? "KEY" : "KEY SHIFT"
+        if (index === 3 && root.samplerController)
+            return (compact ? "SMP " : "SAMPLER ") + "ABCD"[root.samplerController.bank]
+        if (index === 6) return root.stemsTabLabel(compact)
+        return compact ? root.compactTabs[index] : root.tabs[index]
+    }
     readonly property bool usesSharedPadRouter:
         (deckId === "deckA" || deckId === "deckB")
         && typeof midiManager !== "undefined" && midiManager
@@ -347,6 +396,10 @@ Item {
             root.slipLoopHeld = index
             root.engine.beginSlipLoop(root.slipLoopPads[index])
         }
+        else if (root.activeTab === 6) {
+            if (index < 4) root.engine.toggleStemMute(index)
+            else root.engine.soloStem(index - 4)
+        }
     }
 
     function endPadPress(index) {
@@ -473,7 +526,7 @@ Item {
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                         elide: Text.ElideRight
-                        text: root.keyShiftMode && index === 3 ? "KEY SHIFT" : index === 3 && root.samplerController ? "SAMPLER " + "ABCD"[root.samplerController.bank] : modelData
+                        text: root.hotCueOnly ? modelData : root.tabCaption(index, parent.width < 84)
                         color: root.activeTab === index ? UiTheme.textPrimary : UiTheme.textSecondary
                         font.family: UiTheme.uiFontFamily
                         font.pixelSize: 10
@@ -514,6 +567,7 @@ Item {
             spacing: 4
 
             GridLayout {
+                id: padsGrid
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 columns: 4
@@ -539,6 +593,8 @@ Item {
                         readonly property bool isSamplerTab:  root.activeTab === 3 && !isKeyShiftTab
                         readonly property bool isBeatLoopTab: root.activeTab === 4
                         readonly property bool isSlipLoopTab: root.activeTab === 5
+                        readonly property bool isStemsTab:    root.activeTab === 6
+                        readonly property int stemIndex:      index % 4
                         readonly property bool isCuePlaybackTab: isHotCueTab
                         readonly property var sample: root.sampleEntries[index] || ({})
                         readonly property string kind:        root.padKind(index)
@@ -558,6 +614,7 @@ Item {
                             if (isBeatJumpTab) return UiTheme.cue
                             if (isBeatLoopTab) return UiTheme.play
                             if (isSlipLoopTab) return UiTheme.sync
+                            if (isStemsTab)    return root.stemAccents[stemIndex]
                             if (isPadFxTab)    return root.padFxDefs[index].accent
                             return root.accentColor
                         }
@@ -567,8 +624,9 @@ Item {
                             || (isKeyShiftTab && root.keyShiftPadSelected(index))
                             || (isBeatLoopTab && root.beatLoopPadActive(index))
                             || (isSlipLoopTab && root.slipLoopHeld === index)
+                            || (isStemsTab && (index < 4 ? root.stemGains[stemIndex] > 0.5 : root.stemSoloed(stemIndex)))
                         readonly property bool populated: padSet || isPadFxTab || isBeatJumpTab || isKeyShiftTab
-                            || isBeatLoopTab || isSlipLoopTab || (isSamplerTab && !!sample.loaded)
+                            || isBeatLoopTab || isSlipLoopTab || isStemsTab || (isSamplerTab && !!sample.loaded)
 
                         radius: 0
                         color: UiTheme.padBackground(padAccent, populated, padActive, padMouse.containsMouse)
@@ -634,6 +692,7 @@ Item {
                                 if (isPadFxTab)    return root.padFxDefs[index].name
                                 if (isBeatLoopTab) return root.loopLengthLabel(root.beatLoopPads[index])
                                 if (isSlipLoopTab) return root.loopLengthLabel(root.slipLoopPads[index])
+                                if (isStemsTab)    return index < 4 ? root.stemNames[stemIndex] : root.stemShortNames[stemIndex] + " SOLO"
                                 return "—"
                             }
                             color: populated || padActive ? UiTheme.textPrimary : UiTheme.textSecondary
@@ -733,6 +792,53 @@ Item {
         }
 
         Item { Layout.fillWidth: true; Layout.fillHeight: true }
+    }
+
+    Rectangle {
+        id: stemsStatusOverlay
+        objectName: "stemsStatusOverlay"
+        x: contentRow.x + padsGrid.x
+        y: contentRow.y + padsGrid.y
+        width: padsGrid.width
+        height: padsGrid.height
+        z: 2
+        color: UiTheme.panelInset
+        border.color: UiTheme.borderSubtle
+        visible: root.activeTab === 6
+            && (!root.stemsController || !root.stemsController.available
+                || !root.engine || !root.engine.hasTrack || root.stemsState === 4)
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.margins: 6
+            spacing: 6
+            Text {
+                objectName: "stemsStatusText"
+                Layout.fillWidth: true
+                color: UiTheme.textPrimary
+                font.family: UiTheme.uiFontFamily
+                font.pixelSize: 10
+                wrapMode: Text.WordWrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+                text: root.stemsStatusMessage()
+            }
+            Button {
+                objectName: "stemsStatusAction"
+                visible: root.stemsController && root.stemsController.supported
+                    && (!root.stemsController.modelInstalled || root.stemsState === 4)
+                text: root.stemsController && root.stemsController.downloading ? "Cancel"
+                    : root.stemsController && !root.stemsController.modelInstalled ? "Download" : "Retry"
+                onClicked: {
+                    if (!root.stemsController.modelInstalled) {
+                        if (root.stemsController.downloading) root.stemsController.cancelDownload()
+                        else root.stemsController.downloadModel()
+                    } else if (root.engine) {
+                        root.engine.separateStems()
+                    }
+                }
+            }
+        }
     }
 
     Popup {

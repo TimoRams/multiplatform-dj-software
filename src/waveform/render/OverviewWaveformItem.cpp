@@ -1,8 +1,12 @@
 #include "OverviewWaveformItem.h"
+
+#include "stems/StemWaveformOverlay.h"
+#include "StemWaveformAnimator.h"
 #include "waveform/WaveformVisualStyle.h"
 
 #include <QPainter>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <vector>
 
@@ -38,6 +42,8 @@ void paintVisualColumn(QPainter* painter, int x, double top, double bottom,
     }
 }
 
+const QColor kMutedStemGrey(92, 95, 104, 150);
+
 struct OverviewBin {
     float rms    = 0.0f;   // max rms in bin (peak energy)
     float rmsSum = 0.0f;   // sum for mean — used for transient detection
@@ -67,6 +73,18 @@ OverviewWaveformItem::OverviewWaveformItem(QQuickItem* parent)
     // settle. Prefer the cheap FBO resize path for the final transition rather
     // than preserving pixels that will be repainted immediately afterwards.
     setPerformanceHint(QQuickPaintedItem::FastFBOResizing, true);
+
+    m_stemAnimator = new StemWaveformAnimator(this, [this] {
+        m_stemOverlay = m_stemAnimator->frame();
+        if (!m_stemOverlay) {
+            m_stemEnergyData.reset();
+            m_stemEnergy.clear();
+        }
+        update();
+    });
+    m_stemOverlayPoll = new QTimer(this);
+    m_stemOverlayPoll->setInterval(250);
+    connect(m_stemOverlayPoll, &QTimer::timeout, this, &OverviewWaveformItem::refreshStemOverlay);
 
     m_updateThrottle = new QTimer(this);
     m_updateThrottle->setSingleShot(true);
@@ -98,8 +116,11 @@ void OverviewWaveformItem::setEngine(DjEngine* engine)
         connect(m_engine, &DjEngine::trackLoaded,    this, &OverviewWaveformItem::onTrackLoaded,    Qt::UniqueConnection);
         connect(m_engine, &DjEngine::trackEjected,   this, &OverviewWaveformItem::onTrackEjected,   Qt::UniqueConnection);
         connect(m_engine, &DjEngine::hotCuesChanged,  this, &OverviewWaveformItem::onHotCuesChanged,  Qt::UniqueConnection);
+        connect(m_engine, &DjEngine::stemGainsChanged, this, &OverviewWaveformItem::refreshStemOverlay);
+        connect(m_engine, &DjEngine::stemsStateChanged, this, &OverviewWaveformItem::refreshStemOverlay);
     }
 
+    refreshStemOverlay();
     emit engineChanged();
     update();
 }
@@ -156,12 +177,14 @@ void OverviewWaveformItem::onTrackEjected()
     if (m_engine && m_engine->getTrackData())
         disconnect(m_engine->getTrackData(), nullptr, this, nullptr);
     m_frameCache = QImage();
+    refreshStemOverlay();
     update();
 }
 
 void OverviewWaveformItem::onTrackLoaded()
 {
     m_frameCache = QImage();
+    refreshStemOverlay();
 
     if (!m_engine || !m_engine->hasTrack() || !m_engine->getTrackData()) {
         update();
@@ -191,6 +214,60 @@ void OverviewWaveformItem::onRgbDataChanged()
 void OverviewWaveformItem::onOverviewRgbUpdated()
 {
     update();
+}
+
+void OverviewWaveformItem::refreshStemOverlay()
+{
+    auto next = m_engine ? m_engine->stemWaveformOverlay() : nullptr;
+    const bool polling = next && next->data && !next->data->envelopeComplete();
+    if (polling != m_stemOverlayPoll->isActive()) {
+        if (polling)
+            m_stemOverlayPoll->start();
+        else
+            m_stemOverlayPoll->stop();
+    }
+    m_stemAnimator->setTarget(std::move(next));
+}
+
+float OverviewWaveformItem::stemAudibleRatio(int x, int w) const
+{
+    if (!m_stemOverlay || !m_stemOverlay->data || w <= 0)
+        return 1.0f;
+    const auto data = m_stemOverlay->data;
+    const auto epoch = data->envelopeEpoch();
+    if (m_stemEnergyData != data || m_stemEnergyEpoch != epoch || m_stemEnergy.size() != w) {
+        m_stemEnergyData = data;
+        m_stemEnergyEpoch = epoch;
+        m_stemEnergy.fill({}, w);
+        for (int column = 0; column < w; ++column) {
+            auto& energy = m_stemEnergy[column];
+            if (!data->envelopeEnergy(data->length() * column / w,
+                                      data->length() * (column + 1) / w, energy))
+                energy.fill(0.0f);
+        }
+    }
+    return brockdj::stems::stemAudibleAmplitudeRatio(m_stemEnergy[x], m_stemOverlay->gains);
+}
+
+void OverviewWaveformItem::paintColumn(QPainter* painter, int x, float baseline, float barH,
+                                       float energy, float audibleRatio,
+                                       const waveform_visual::WaveformVisual& visual,
+                                       float opacityScale) const
+{
+    if (audibleRatio >= 1.0f) {
+        paintVisualColumn(painter, x, baseline - barH, baseline, visual, opacityScale);
+        return;
+    }
+    // Muted stems leave a grey ghost of the full mix; the coloured bar shows
+    // only what is still audible, on the same logarithmic height scale.
+    QColor ghost = kMutedStemGrey;
+    ghost.setAlphaF(ghost.alphaF() * std::clamp((1.0f - audibleRatio) * 8.0f, 0.0f, 1.0f));
+    painter->fillRect(QRectF(x, baseline - barH, 1.0, barH), ghost);
+    const float fullAmplitude = waveform_visual::logarithmicAmplitude(energy);
+    const float audibleAmplitude = waveform_visual::logarithmicAmplitude(energy * audibleRatio);
+    const float audibleH = fullAmplitude > 0.0f ? barH * audibleAmplitude / fullAmplitude : 0.0f;
+    if (audibleH >= 0.5f)
+        paintVisualColumn(painter, x, baseline - audibleH, baseline, visual, opacityScale);
 }
 
 void OverviewWaveformItem::onHotCuesChanged()
@@ -251,7 +328,8 @@ void OverviewWaveformItem::paintCompactOverview(QPainter* painter,
             waveform_visual::normalizeStyle(m_renderStyle),
             {weightedBass * invWeight, weightedMid * invWeight,
              weightedTreble * invWeight, energy});
-        paintVisualColumn(painter, x, baseline - barH, baseline, visual, 0.95f);
+        paintColumn(painter, x, baseline, barH, energy,
+                    drawWidth == w ? stemAudibleRatio(x, w) : 1.0f, visual, 0.95f);
     }
 
     // Cue markers
@@ -283,8 +361,15 @@ void OverviewWaveformItem::paintCompactOverviewLines(QPainter* painter,
 {
     if (!snapshot.chunks || snapshot.totalLineCount == 0)
         return;
+    if (m_lineOverviewTrackGeneration == snapshot.trackGeneration
+        && m_lineOverviewDataGeneration == snapshot.dataGeneration
+        && m_lineOverviewSize == QSize(w, h) && m_lineOverviewStyle == m_renderStyle) {
+        paintPreparedOverviewLines(painter, w, h);
+        return;
+    }
     m_overviewHeights.resize(w);
     m_overviewVisuals.resize(w);
+    m_overviewEnergies.resize(w);
     std::fill(m_overviewHeights.begin(), m_overviewHeights.end(), 0.0f);
 
     const auto lineAt = [&snapshot](std::uint32_t index) -> const WaveformLine* {
@@ -324,6 +409,7 @@ void OverviewWaveformItem::paintCompactOverviewLines(QPainter* painter,
         const float energy = waveform_visual::foldedEnergy(
             meanAmplitude, peakAmplitude);
         m_overviewHeights[x] = waveform_visual::logarithmicAmplitude(energy) * maxBarH;
+        m_overviewEnergies[x] = energy;
         const auto visual = waveform_visual::map(
             waveform_visual::normalizeStyle(m_renderStyle), {
                 static_cast<float>(bass / weight) / 255.0f,
@@ -333,14 +419,23 @@ void OverviewWaveformItem::paintCompactOverviewLines(QPainter* painter,
         m_overviewVisuals[x] = visual;
     }
 
+    m_lineOverviewTrackGeneration = snapshot.trackGeneration;
+    m_lineOverviewDataGeneration = snapshot.dataGeneration;
+    m_lineOverviewSize = QSize(w, h);
+    m_lineOverviewStyle = m_renderStyle;
+    paintPreparedOverviewLines(painter, w, h);
+}
+
+void OverviewWaveformItem::paintPreparedOverviewLines(QPainter* painter, int w, int h)
+{
     const float baseline = static_cast<float>(h - 1);
     painter->setRenderHint(QPainter::Antialiasing, false);
     painter->setBrush(Qt::NoBrush);
     for (int x = 0; x < w; ++x) {
         const float barH = m_overviewHeights[x];
         if (barH <= 0.5f) continue;
-        paintVisualColumn(painter, x, baseline - barH, baseline,
-                          m_overviewVisuals[x], 0.92f);
+        paintColumn(painter, x, baseline, barH, m_overviewEnergies[x],
+                    stemAudibleRatio(x, w), m_overviewVisuals[x], 0.92f);
     }
 }
 

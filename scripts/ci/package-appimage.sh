@@ -229,6 +229,15 @@ done < <(find "$appdir" -type f \( -name '*.so*' -o -name BrockDJ \) -print0)
     echo "RubberBand runtime is missing from AppDir" >&2
     exit 1
 }
+if ldd "$binary" | grep -q 'libonnxruntime\.so'; then
+    [[ -n "$(find "$appdir" -type f -name 'libonnxruntime.so*' -print -quit)" ]] || {
+        echo "ONNX Runtime is missing from the AppDir" >&2
+        exit 1
+    }
+fi
+
+mkdir -p "$appdir/usr/share/doc/BrockDJ"
+cp "$repo_root/NOTICE" "$appdir/usr/share/doc/BrockDJ/NOTICE"
 
 mkdir -p "$appdir/usr/share/metainfo"
 cp "$repo_root/resources/packaging/net.ramsbrock.BrockDJ.metainfo.xml" \

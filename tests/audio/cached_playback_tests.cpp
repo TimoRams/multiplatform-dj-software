@@ -1,4 +1,5 @@
 #include "audio/cache/CachedPlaybackAudioSource.h"
+#include "StemAudioFixtures.h"
 
 #include <QCoreApplication>
 #include <QTemporaryDir>
@@ -51,6 +52,73 @@ bool finite(const juce::AudioBuffer<float>& b) {
     for (int c=0;c<b.getNumChannels();++c) for(int i=0;i<b.getNumSamples();++i)
         if(!std::isfinite(b.getSample(c,i))) return false; return true;
 }
+
+bool checkStemPlayback(AudioPageCache& cache, const AudioCacheHandle& handle,
+                       const AudioCacheHandle& otherHandle)
+{
+    using namespace brockdj::stems;
+    bool ok = true;
+    auto data = makeHalfVocalStemData(cache, handle);
+    if (!require(static_cast<bool>(data), "stem playback fixture is resident"))
+        return false;
+    StemMixState state;
+    state.publish(data);
+    CachedPlaybackAudioSource reference(cache, handle), stemmed(cache, handle);
+    stemmed.setStemMixState(&state);
+    reference.setNextReadPosition(6000);
+    stemmed.setNextReadPosition(6000);
+    juce::AudioBuffer<float> original(2, 512), output(2, 512);
+    const auto render = [&] {
+        reference.getNextAudioBlock({&original, 0, 512});
+        stemmed.getNextAudioBlock({&output, 0, 512});
+    };
+    const auto differsFrom = [&](float ratio, float tolerance) {
+        for (int channel = 0; channel < 2; ++channel)
+            for (int i = 0; i < 512; ++i)
+                if (std::abs(output.getSample(channel, i)
+                             - ratio * original.getSample(channel, i)) > tolerance)
+                    return true;
+        return false;
+    };
+
+    render();
+    ok &= require(!differsFrom(1.0f, 0.0f), "unity stems preserve normal playback bit-for-bit");
+    state.setGain(Stem::Vocals, 0.0f);
+    render();
+    ok &= require(std::abs(output.getSample(0, 0) - original.getSample(0, 0)) < 0.001f,
+                  "normal playback starts a stem mute without a jump");
+    render();
+    render();
+    ok &= require(!differsFrom(0.5f, 0.00004f), "vocal mute removes vocals in normal playback");
+
+    for (auto* source : {&reference, &stemmed}) {
+        source->setLoopRangeSamples(15000, 16000, 48000);
+        source->setReverse(true);
+        source->setCommandedReadPosition(15020);
+    }
+    render();
+    ok &= require(!differsFrom(0.5f, 0.00004f), "stem mute follows reverse loop wrapping");
+
+    auto partial = makeHalfVocalStemData(cache, handle, false);
+    if (!require(static_cast<bool>(partial), "partial stem fixture is resident"))
+        return false;
+    partial->markFinal(0, kReadyBlockSamples);
+    state.publish(partial);
+    for (auto* source : {&reference, &stemmed}) {
+        source->clearLoopRangeSamples();
+        source->setReverse(false);
+        source->setNextReadPosition(12000);
+    }
+    render();
+    ok &= require(!differsFrom(1.0f, 0.0f), "unready regions play the original mix");
+
+    CachedPlaybackAudioSource otherReference(cache, otherHandle), otherStemmed(cache, otherHandle);
+    otherStemmed.setStemMixState(&state);
+    otherReference.getNextAudioBlock({&original, 0, 512});
+    otherStemmed.getNextAudioBlock({&output, 0, 512});
+    ok &= require(!differsFrom(1.0f, 0.0f), "stem data from a previous track is ignored");
+    return ok;
+}
 }
 
 static_assert(noexcept(std::declval<CachedPlaybackAudioSource&>().getNextAudioBlock(
@@ -88,6 +156,7 @@ int main(int argc, char** argv)
                   "reverse loop wraps");
 
     auto hm = cache.openTrack({mono}); ok &= require(waitPages(cache, hm), "mono ready");
+    ok &= checkStemPlayback(cache, h, hm);
     CachedPlaybackAudioSource monoSource(cache, hm); juce::AudioBuffer<float> mo(2,512);
     monoSource.getNextAudioBlock({&mo,0,512}); ok &= require(finite(mo), "mono to stereo finite");
     for (const auto& path : {highRate, ultraRate}) {

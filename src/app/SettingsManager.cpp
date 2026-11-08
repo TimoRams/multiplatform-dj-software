@@ -651,6 +651,34 @@ void SettingsManager::setInstantDoubles(bool enabled)
     emit instantDoublesChanged();
 }
 
+bool SettingsManager::stemsEnabled() const
+{
+    return getUiState(QStringLiteral("stemsEnabled"), QStringLiteral("1")) == QLatin1String("1");
+}
+
+void SettingsManager::setStemsEnabled(bool enabled)
+{
+    const QString value = enabled ? QStringLiteral("1") : QStringLiteral("0");
+    if (getUiState(QStringLiteral("stemsEnabled"), QStringLiteral("1")) == value)
+        return;
+    setUiState(QStringLiteral("stemsEnabled"), value);
+    emit stemsEnabledChanged();
+}
+
+bool SettingsManager::stemsGpuAcceleration() const
+{
+    return getUiState(QStringLiteral("stemsGpuAcceleration"), QStringLiteral("0")) == QLatin1String("1");
+}
+
+void SettingsManager::setStemsGpuAcceleration(bool enabled)
+{
+    const QString value = enabled ? QStringLiteral("1") : QStringLiteral("0");
+    if (getUiState(QStringLiteral("stemsGpuAcceleration"), QStringLiteral("0")) == value)
+        return;
+    setUiState(QStringLiteral("stemsGpuAcceleration"), value);
+    emit stemsGpuAccelerationChanged();
+}
+
 QString SettingsManager::timeStretchBackend() const
 {
     const auto backend = readStringSetting(*this, "Audio/TimeStretchBackend", "signalsmith").trimmed().toLower();

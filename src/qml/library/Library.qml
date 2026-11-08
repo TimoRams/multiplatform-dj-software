@@ -8,6 +8,7 @@ Rectangle {
     id: libraryRoot
     color: libraryRoot.bgBase
     focus: true
+    readonly property var stemsController: typeof stems !== "undefined" ? stems : null
 
     Text {
         z: 100
@@ -1520,6 +1521,108 @@ Rectangle {
             libraryAnalyzer.analyzeAll(false)
     }
 
+    function startStemPreanalysisCurrentView() {
+        if (!stemsController) return
+        if (activeTab === "playlist" && currentPlaylistId)
+            stemsController.preanalyzePlaylist(currentPlaylistId)
+        else if (activeTab === "library")
+            stemsController.preanalyzeAll()
+        else if (activeTab === "files") {
+            var tracks = []
+            for (var i = 0; i < filteredFileTracks.length; ++i)
+                tracks.push({filePath: libraryManager.currentFolder + "/" + filteredFileTracks[i],
+                             title: filteredFileTracks[i]})
+            stemsController.preanalyzeTracks(tracks)
+        } else if (activeTab === "usb")
+            stemsController.preanalyzeTracks(deviceLibraryManager ? deviceLibraryManager.currentTracks : [])
+        else
+            stemsController.preanalyzeTracks(currentListTracks)
+    }
+
+    component StemCacheBadge: Rectangle {
+        id: badge
+        property string filePath: ""
+        readonly property bool ready: {
+            var ctl = libraryRoot.stemsController
+            if (!ctl || !filePath) return false
+            ctl.cacheRevision
+            return ctl.hasCachedStems(filePath)
+        }
+        objectName: "stemCacheBadge"
+        width: 16; height: 14
+        visible: ready
+        color: Design.UiTheme.greenDim
+        border.color: libraryRoot.accentGreen
+        Text {
+            anchors.centerIn: parent
+            text: "S"
+            color: libraryRoot.accentGreen
+            font.pixelSize: window.sp(9)
+            font.bold: true
+        }
+        MouseArea { id: badgeHover; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
+        ToolTip.visible: badgeHover.containsMouse
+        ToolTip.text: "Stems cached: ready without separating the track again"
+    }
+
+    component StemPreanalysisButton: Rectangle {
+        id: stemButton
+        readonly property var ctl: libraryRoot.stemsController
+        readonly property bool running: ctl && ctl.preanalysisRunning
+        readonly property bool compact: libraryRoot.width < 760
+        Layout.preferredWidth: compact ? 88 : 164
+        Layout.preferredHeight: libraryRoot.touchMode ? 40 : 32
+        Layout.alignment: Qt.AlignVCenter
+        objectName: "stemPreanalysisButton"
+        visible: ctl !== null && libraryRoot.activeTab !== "streaming" && libraryRoot.activeTab !== "health"
+        color: stemHover.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+        border.color: running ? libraryRoot.accentGreen : libraryRoot.borderSub
+        clip: true
+        Rectangle {
+            objectName: "stemPreanalysisFill"
+            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+            anchors.margins: 1
+            width: Math.max(0, parent.width - 2) * (stemButton.ctl ? stemButton.ctl.preanalysisProgress : 0)
+            visible: stemButton.running
+            color: Design.UiTheme.greenDim
+            Behavior on width { NumberAnimation { duration: 120 } }
+        }
+        Row {
+            anchors.centerIn: parent
+            spacing: 6
+            Text {
+                text: stemButton.compact
+                    ? (stemButton.running ? "Stop" : "Stems")
+                    : (stemButton.running ? "Stems Stop" : "Stems Preanalysis")
+                color: libraryRoot.textPrimary
+                font.pixelSize: window.sp(10)
+                font.weight: Font.Medium
+            }
+            Text {
+                visible: stemButton.running
+                text: Math.round(stemButton.ctl ? stemButton.ctl.preanalysisProgress * 100 : 0) + "%"
+                color: libraryRoot.accentGreen
+                font.pixelSize: window.sp(9)
+                font.family: Design.UiTheme.numericFontFamily
+            }
+        }
+        MouseArea {
+            id: stemHover
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+                if (!stemButton.ctl) return
+                if (stemButton.running) stemButton.ctl.cancelPreanalysis()
+                else libraryRoot.startStemPreanalysisCurrentView()
+            }
+        }
+        ToolTip.visible: stemHover.containsMouse
+        ToolTip.text: ctl ? (ctl.error || (running
+            ? ctl.preanalysisCompleted + "/" + ctl.preanalysisTotal + " · " + ctl.preanalysisTitle
+            : "Preanalyse stems for this view. Cached tracks are skipped; live decks have priority.")) : ""
+    }
+
     // ── Cursor navigation ──────────────────────────────────────────────────
 
     function sidebarTotalCount() {
@@ -3004,6 +3107,11 @@ Rectangle {
                         color: Qt.rgba(1, 1, 1, 0.55)
                         font.pixelSize: window.sp(9); font.bold: true
                     }
+                    StemCacheBadge {
+                        anchors.right: parent.right; anchors.bottom: parent.bottom
+                        filePath: tr.rowFilePath
+                        z: 3
+                    }
                 }
             }
             Text {
@@ -3119,6 +3227,12 @@ Rectangle {
                     text: (tr.rowTitle || tr.rowArtist || "?").charAt(0).toUpperCase()
                     color: Qt.rgba(1, 1, 1, 0.60)
                     font.pixelSize: window.sp(tr.touchMode ? 19 : 17); font.bold: true
+                }
+                StemCacheBadge {
+                    anchors.right: parent.right; anchors.bottom: parent.bottom
+                    anchors.margins: 3
+                    filePath: tr.rowFilePath
+                    z: 3
                 }
             }
 
@@ -4501,6 +4615,8 @@ Rectangle {
                         }
                     }
 
+                    StemPreanalysisButton {}
+
                     Item { Layout.fillWidth: true }
 
                     // ── View mode toggle ───────────────────────────────────
@@ -5756,8 +5872,15 @@ Rectangle {
                                     Text {
                                         anchors.verticalCenter: parent.verticalCenter
                                         anchors.left: parent.left; anchors.leftMargin: 12
-                                        anchors.right: parent.right; anchors.rightMargin: 8
+                                        anchors.right: fileStemBadge.visible ? fileStemBadge.left : parent.right
+                                        anchors.rightMargin: 8
                                         text: trackDelegate.modelData; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); elide: Text.ElideRight
+                                    }
+                                    StemCacheBadge {
+                                        id: fileStemBadge
+                                        anchors.right: parent.right; anchors.rightMargin: 8
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        filePath: (libraryManager ? libraryManager.currentFolder : "") + "/" + trackDelegate.modelData
                                     }
                                     Rectangle { anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right; height: 1; color: libraryRoot.borderSub }
 
@@ -6508,6 +6631,15 @@ Rectangle {
                                                  libraryRoot.ctxFilePath,
                                                  libraryRoot.ctxTitle)
             }
+        }
+        MenuItem {
+            objectName: "stemPreanalysisTrackAction"
+            text: "Stems Preanalysis"
+            enabled: libraryRoot.stemsController && libraryRoot.stemsController.available
+                     && libraryRoot.ctxFilePath.length > 0
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
+            onTriggered: libraryRoot.stemsController.preanalyzeTrack(libraryRoot.ctxFilePath, libraryRoot.ctxTitle)
         }
         MenuSeparator {
             contentItem: Rectangle { height: 1; color: libraryRoot.borderSub }

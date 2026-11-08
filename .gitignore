@@ -49,3 +49,6 @@ JuceLibraryCode/
 
 # --- App Icons (generiert durch scripts/generate_icons.sh) ---
 resources/icons/generated/
+
+# --- Optional ONNX Runtime SDK (scripts/fetch-onnxruntime.sh) ---
+libs/onnxruntime/

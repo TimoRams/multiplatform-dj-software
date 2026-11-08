@@ -12,6 +12,9 @@
 #include "app/ControlClock.h"
 #include "app/SettingsManager.h"
 #include "library/LibraryDatabase.h"
+#include "stems/StemTrackData.h"
+#include "stems/StemSeparationService.h"
+#include "stems/Utf8Path.h"
 #include <QThread>
 #include <QElapsedTimer>
 #include "controllers/midi/MidiControllerManager.h"
@@ -31,10 +34,22 @@
 #include <QSqlQuery>
 #include <QTemporaryDir>
 #include <QUrl>
+#include <QStandardPaths>
 #include <QtGlobal>
 #include <cmath>
+#include <algorithm>
 
 namespace {
+class SmokeStemInference final : public brockdj::stems::StemInference
+{
+public:
+    bool separate(const float*, const float*, float* output, std::string&) override
+    {
+        std::fill_n(output, kModelStems * 2 * kWindow, 0.0f);
+        return true;
+    }
+};
+
 int fail(const QString& message)
 {
     qCritical().noquote() << "[ci-smoke]" << message;
@@ -261,6 +276,149 @@ bool testLiveDeckFeatures(QString& error)
             for (int i = 0; i < 4; ++i) bus.getNextAudioBlock({&renderedSample,0,512});
             require(bus.sampler().state(9) == SamplerAudioEngine::Playing,
                 "MIDI sampler pad depends on a deck connection or track instead of global sampler");
+
+            const bool hadModelOverride = qEnvironmentVariableIsSet("BROCKDJ_STEM_MODEL");
+            const QByteArray previousModelOverride = qgetenv("BROCKDJ_STEM_MODEL");
+            const QString fakeModel = directory.filePath("invalid-stem-model.onnx");
+            QFile modelFile(fakeModel);
+            require(modelFile.open(QIODevice::WriteOnly) && modelFile.write("invalid model") > 0,
+                    "stem controller fixture could not be written");
+            modelFile.close();
+            qputenv("BROCKDJ_STEM_MODEL", fakeModel.toUtf8());
+            settings.setStemsEnabled(false);
+            settings.setStemsGpuAcceleration(false);
+            StemsController stemController(&settings);
+            stemController.setLibraryDatabase(&database);
+            deck.attachStemsController(&stemController);
+            require(stemController.modelInstalled() && deck.stemsState() == 0,
+                    "loaded deck separated despite auto stems being disabled");
+            if (stemController.supported()) {
+                settings.setStemsEnabled(true);
+                require(deck.stemsState() != 0,
+                        "enabling auto stems did not queue the already loaded track");
+                settings.setStemsEnabled(false);
+            }
+
+            midi.connectDecks(&deck, nullptr, nullptr, nullptr);
+            midi.selectPerformancePadMode("deckA", static_cast<int>(MidiPadMode::Stems));
+            for (const int note : {0x00, 0x10, 0x20, 0x30, 0x70, 0x78}) {
+                deck.resetStemGains();
+                sendMidi(juce::MidiMessage::noteOn(8, note, static_cast<juce::uint8>(127)));
+                sendMidi(juce::MidiMessage::noteOff(8, note));
+                require(midi.deckAPadMode() == static_cast<int>(MidiPadMode::Stems),
+                        "physical pad bank replaced the selected stems mode");
+                if (stemController.supported())
+                    require(deck.stemGains().first().toDouble() == 0.0,
+                            "physical pad did not mute the expected stem");
+            }
+            if (stemController.supported()) {
+                require(wait([&] {
+                    clock.advanceForTesting(0.02);
+                    return deck.stemsState() == static_cast<int>(brockdj::stems::StemJobState::Failed);
+                }) && !deck.stemsError().isEmpty(),
+                        "invalid model failure was not reported on the deck");
+            } else {
+                require(!deck.stemsError().isEmpty(),
+                        "physical stems pad did not report that stems are unsupported");
+            }
+            sendMidi(juce::MidiMessage::noteOn(1, 0x1B, static_cast<juce::uint8>(127)));
+            require(midi.deckAPadMode() == static_cast<int>(MidiPadMode::HotCue),
+                    "physical pad-mode button did not exit stems mode");
+
+            MidiFeedbackController feedback;
+            int hotcueMessages = 0;
+            feedback.setDecks(&deck, nullptr, nullptr, nullptr);
+            feedback.setMidiSender([&](uint8_t status, uint8_t, uint8_t, const QString&) {
+                if (status == 0x97 || status == 0x98)
+                    ++hotcueMessages;
+                return true;
+            });
+            feedback.setEnabled(true);
+            hotcueMessages = 0;
+            feedback.setHotcueFeedbackEnabled(1, false);
+            feedback.refreshHotcuePads(1);
+            require(hotcueMessages == 0, "hotcue feedback overwrote stems pad LEDs");
+            feedback.setHotcueFeedbackEnabled(1, true);
+            require(hotcueMessages == 16, "hotcue feedback did not resume after stems mode");
+            deck.attachStemsController(nullptr);
+            if (stemController.supported()) {
+                const QString stemSource = fixture.filePath();
+                const QVariantMap track {{ "filePath", stemSource }, { "title", "Preanalysis fixture" }};
+                stemController.preanalyzeTracks({ track, track,
+                    QVariantMap {{ "filePath", QUrl::fromLocalFile(stemSource).toString() }},
+                    QVariantMap {{ "filePath", directory.filePath("missing-preanalysis.wav") },
+                                  { "title", "Missing fixture" }} });
+                require(stemController.preanalysisRunning() && stemController.preanalysisTotal() == 2,
+                        "stem preanalysis did not deduplicate canonical paths and file URLs");
+                require(wait([&] { return !stemController.preanalysisRunning(); })
+                            && stemController.preanalysisCompleted() == 2
+                            && stemController.preanalysisFailed() == 2
+                            && stemController.preanalysisProgress() == 1.0
+                            && !stemController.error().isEmpty()
+                            && !stemController.hasCachedStems(stemSource),
+                        "stem preanalysis did not finish failures, continue its queue, or report real progress");
+                stemController.preanalyzeTrack(stemSource);
+                stemController.preanalyzeTrack(stemSource);
+                require(stemController.preanalysisTotal() == 1,
+                        "adding a duplicate to a running stem queue inflated its total");
+                stemController.cancelPreanalysis();
+                require(!stemController.preanalysisRunning() && stemController.preanalysisTotal() == 0
+                            && stemController.preanalysisProgress() == 0.0,
+                        "cancelling stem preanalysis did not clear its queue and status");
+                stemController.preanalyzeTracks({});
+                require(!stemController.preanalysisRunning() && !stemController.error().isEmpty(),
+                        "empty stem preanalysis selection was not reported");
+                brockdj::stems::StemSeparationService cacheFixture(
+                    { brockdj::stems::pathFromUtf8(QDir(QStandardPaths::writableLocation(
+                        QStandardPaths::CacheLocation)).filePath("stems").toStdString()) },
+                    [](std::string&) { return std::make_unique<SmokeStemInference>(); });
+                auto cachedStatus = std::make_shared<brockdj::stems::StemJobStatus>();
+                cacheFixture.submitPreanalysis(stemSource.toStdString(), cachedStatus);
+                require(wait([&] {
+                    return cachedStatus->state.load() == brockdj::stems::StemJobState::Ready;
+                }), "stem cache fixture did not complete");
+                stemController.refreshCacheSize();
+                require(stemController.hasCachedStems(stemSource),
+                        "prepared track was not included in the controller cache inventory");
+                stemController.preanalyzeTrack(stemSource);
+                require(wait([&] { return !stemController.preanalysisRunning(); })
+                            && stemController.preanalysisCompleted() == 1
+                            && stemController.preanalysisFailed() == 0
+                            && stemController.preanalysisProgress() == 1.0,
+                        "cached preanalysis did not skip the invalid inference model");
+                const auto cachePath = QString::fromStdString(brockdj::stems::pathToUtf8(
+                    cacheFixture.cacheFileFor(stemSource.toStdString())));
+                QFile cachedFile(cachePath);
+                require(cachedFile.open(QIODevice::ReadWrite)
+                            && cachedFile.seek(cachedFile.size() - 1)
+                            && cachedFile.write("\x7f", 1) == 1,
+                        "cached preanalysis corruption fixture could not be written");
+                cachedFile.close();
+                stemController.preanalyzeTrack(stemSource);
+                require(wait([&] { return !stemController.preanalysisRunning(); })
+                            && stemController.preanalysisFailed() == 1
+                            && !stemController.hasCachedStems(stemSource),
+                        "controller skipped invalid cached payloads or retained a false ready badge");
+                cachedStatus = std::make_shared<brockdj::stems::StemJobStatus>();
+                cacheFixture.submitPreanalysis(stemSource.toStdString(), cachedStatus);
+                require(wait([&] {
+                    return cachedStatus->state.load() == brockdj::stems::StemJobState::Ready
+                        && stemController.hasCachedStems(stemSource);
+                }), "controller did not observe a cache installed by the worker");
+                require(QFile::remove(cachePath)
+                            && wait([&] { return !stemController.hasCachedStems(stemSource); }),
+                        "externally removed cache retained a stale ready badge");
+                cacheFixture.shutdown();
+                settings.setStemsGpuAcceleration(true);
+                require(settings.stemsGpuAcceleration(),
+                        "GPU stems preference did not persist");
+                settings.setStemsGpuAcceleration(false);
+            }
+            settings.setStemsEnabled(true);
+            if (hadModelOverride)
+                qputenv("BROCKDJ_STEM_MODEL", previousModelOverride);
+            else
+                qunsetenv("BROCKDJ_STEM_MODEL");
         }
         {
             const QString legacyDirectory = directory.filePath("legacy-sampler");

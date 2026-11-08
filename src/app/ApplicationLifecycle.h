@@ -32,6 +32,7 @@ class LibraryPreviewPlayer;
 class SamplerController;
 class AutomixController;
 class MidiClockController;
+class StemsController;
 class MixTracklistController;
 class SettingsManager;
 class AppConfig;
@@ -76,6 +77,7 @@ enum class QmlContextProperty : std::uint8_t {
     Automix,
     MidiClock,
     MixTracklist,
+    Stems,
     Count
 };
 
@@ -117,7 +119,8 @@ inline constexpr std::array<QmlContextPropertyContract,
         {"sampler"},
         {"automix"},
         {"midiClock"},
-        {"mixTracklist"}
+        {"mixTracklist"},
+        {"stems"}
     }};
 
 // QML entry point for ordered app teardown before Qt.quit().
@@ -176,6 +179,7 @@ struct ApplicationRuntime {
     std::unique_ptr<SamplerController> sampler;
     std::unique_ptr<AutomixController> automix;
     std::unique_ptr<MidiClockController> midiClock;
+    std::unique_ptr<StemsController> stems;
     std::unique_ptr<MixTracklistController> mixTracklist;
 
     std::unique_ptr<FxManager> fxManager;

@@ -15,11 +15,13 @@ if (-not (Test-Path $QtBin -PathType Container)) {
 }
 $Output = [IO.Path]::GetFullPath($Output)
 $stage = Join-Path ([IO.Path]::GetDirectoryName($Output)) 'BrockDJ-Windows-x64'
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force $stage | Out-Null
 $stagedExe = Join-Path $stage 'BrockDJ.exe'
 Copy-Item $Executable $stagedExe
+Copy-Item (Join-Path $repoRoot 'NOTICE') (Join-Path $stage 'NOTICE')
 
 $windeployqt = Join-Path $env:QT_ROOT_DIR 'bin\windeployqt.exe'
 if (-not (Test-Path $windeployqt)) {
@@ -111,7 +113,7 @@ function Add-DependencyToStage([string]$Name, [string]$FromPath) {
 
     $lowerName = $Name.ToLowerInvariant()
     $requiresAppLocalRuntime = $lowerName -match '^(vcruntime|msvcp|concrt).+\.dll$'
-    $sourceDirectories = @($VcpkgBin, $QtBin)
+    $sourceDirectories = @((Split-Path -Parent $Executable), $VcpkgBin, $QtBin)
     if ($requiresAppLocalRuntime) {
         # windeployqt may ship only vc_redist.x64.exe, not app-local CRT DLLs.
         $sourceDirectories += $crtDirectories

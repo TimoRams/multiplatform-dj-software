@@ -37,6 +37,8 @@ class SettingsManager : public QObject
     Q_PROPERTY(int endWarningSeconds READ endWarningSeconds WRITE setEndWarningSeconds NOTIFY liveSettingsChanged)
     Q_PROPERTY(bool tightDoubleSync READ tightDoubleSync WRITE setTightDoubleSync NOTIFY tightDoubleSyncChanged)
     Q_PROPERTY(bool instantDoubles READ instantDoubles WRITE setInstantDoubles NOTIFY instantDoublesChanged)
+    Q_PROPERTY(bool stemsEnabled READ stemsEnabled WRITE setStemsEnabled NOTIFY stemsEnabledChanged)
+    Q_PROPERTY(bool stemsGpuAcceleration READ stemsGpuAcceleration WRITE setStemsGpuAcceleration NOTIFY stemsGpuAccelerationChanged)
     Q_PROPERTY(bool soundColorAdjustEnabled READ soundColorAdjustEnabled WRITE setSoundColorAdjustEnabled NOTIFY soundColorAdjustEnabledChanged)
     Q_PROPERTY(QString timeStretchBackend READ timeStretchBackend WRITE setTimeStretchBackend NOTIFY timeStretchBackendChanged)
     Q_PROPERTY(int waveformRenderStyle READ waveformRenderStyle WRITE setWaveformRenderStyle
@@ -164,6 +166,10 @@ public:
     bool tightDoubleSync() const;
     bool instantDoubles() const;
     void setInstantDoubles(bool enabled);
+    bool stemsEnabled() const;
+    void setStemsEnabled(bool enabled);
+    bool stemsGpuAcceleration() const;
+    void setStemsGpuAcceleration(bool enabled);
     void setTightDoubleSync(bool enabled);
     bool soundColorAdjustEnabled() const;
     void setSoundColorAdjustEnabled(bool enabled);
@@ -213,6 +219,8 @@ signals:
     void controllerSettingsChanged();
     void tightDoubleSyncChanged();
     void instantDoublesChanged();
+    void stemsEnabledChanged();
+    void stemsGpuAccelerationChanged();
     void soundColorAdjustEnabledChanged();
     void timeStretchBackendChanged();
     void waveformRenderStyleChanged();

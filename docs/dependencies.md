@@ -57,6 +57,8 @@ after the configure check succeeds.
 | ALSA | Linux only, required | native audio/MIDI backend |
 | JACK | Linux only, optional when discovered | JACK audio backend |
 | libusb | Linux only, optional when discovered | direct FLX10 HID support |
+| ONNX Runtime 1.31.1 (Intel macOS: 1.20.1) | optional locally; SHA-256-pinned SDK via `scripts/fetch-onnxruntime.sh` or `scripts/fetch-onnxruntime.ps1`, pkg-config or system | background stem separation (`docs/architecture/stems.md`); MIT |
+| OpenVINO execution-provider plugin 1.8.1 | optional per-user SHA-256-pinned wheel via `scripts/fetch-stems-openvino.py`; Linux/Windows x64, ORT 1.23+ | experimental Intel GPU stems; plugin MIT, OpenVINO/TBB Apache-2.0 and bundled third-party notices |
 
 The repository records the JUCE, Link and Signalsmith commits in Git. CI always
 checks out submodules recursively and never tracks their branches. A regular
@@ -86,6 +88,21 @@ d015e31e90838a4c9dfa3eed45979bc70d9357fc  (vcpkg 2026.05.25)
 It resolves only `libkeyfinder`, `rubberband` and `taglib`; their transitive
 runtime DLLs are handled by vcpkg. Qt is deliberately supplied by the matching
 official MSVC Qt package, not by vcpkg, so one Qt ABI is used throughout.
+ONNX Runtime is downloaded separately from its pinned official release.
+
+The release CI builds require ONNX Runtime with `BROCKDJ_REQUIRE_STEMS=ON`.
+Local builds can omit the SDK or explicitly set `BROCKDJ_ENABLE_STEMS=OFF`;
+they remain usable but cannot separate stems. The fetch scripts refuse to
+overwrite an existing SDK. For platform support and model setup, see
+`docs/architecture/stems.md`.
+
+The OpenVINO plugin is installed separately and is not part of release
+packaging or a required build dependency. The installer preserves its
+OpenVINO/TBB libraries and `third-party-programs.txt`. Intel GPUs also need
+a compatible system compute driver; merely having `/dev/dri/renderD128`
+does not establish GPU inference support. macOS GPU selection uses CoreML
+only when it is present in the linked runtime. CPU remains the reliable
+default, with visible fallback diagnostics for experimental acceleration.
 
 ## Updating dependencies
 

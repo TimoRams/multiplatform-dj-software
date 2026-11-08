@@ -63,6 +63,18 @@ void MidiFeedbackController::setEnabled(bool enabled)
         stop();
 }
 
+void MidiFeedbackController::setHotcueFeedbackEnabled(int deck, bool enabled)
+{
+    if (deck < 1 || deck > 4)
+        return;
+    auto& current = m_hotcueFeedbackEnabled[static_cast<std::size_t>(deck - 1)];
+    if (current == enabled)
+        return;
+    current = enabled;
+    if (enabled)
+        refreshHotcuePads(deck);
+}
+
 void MidiFeedbackController::start()
 {
     if (!m_enabled)
@@ -191,7 +203,8 @@ void MidiFeedbackController::refreshDeckLeds(int deck)
 
 void MidiFeedbackController::refreshHotcuePads(int deck)
 {
-    if (!m_enabled)
+    if (!m_enabled || deck < 1 || deck > 4
+        || !m_hotcueFeedbackEnabled[static_cast<std::size_t>(deck - 1)])
         return;
 
     DjEngine* engine = deckEngine(deck);

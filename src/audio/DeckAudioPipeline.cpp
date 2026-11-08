@@ -18,8 +18,10 @@ struct DeckAudioPipeline::Impl {
         renderModeRouter = std::make_unique<engine::audio::RenderModeRouter>(&transport, false);
         timeStretch = std::make_unique<TimeStretchProcessor>(renderModeRouter.get());
         mixer = std::make_unique<DeckChannelProcessor>(timeStretch.get());
+        renderModeRouter->setStemMixState(stems.get());
     }
     AudioPageCache& cache;
+    std::shared_ptr<brockdj::stems::StemMixState> stems = std::make_shared<brockdj::stems::StemMixState>();
     AudioCacheHandle handle;
     std::unique_ptr<CachedPlaybackAudioSource> playback;
     juce::AudioTransportSource transport;
@@ -390,6 +392,11 @@ DeckAudioPipeline::TransportSnapshot DeckAudioPipeline::transportSnapshot() cons
     };
 }
 
+std::shared_ptr<brockdj::stems::StemMixState> DeckAudioPipeline::stemMixState() const noexcept
+{
+    return m_impl ? m_impl->stems : nullptr;
+}
+
 void DeckAudioPipeline::installPreparedTrack(PreparedTrack track)
 {
     if (track.trackGeneration <= m_impl->trackGeneration
@@ -415,6 +422,7 @@ void DeckAudioPipeline::installPreparedTrack(PreparedTrack track)
     m_impl->handle = track.cacheHandle;
     m_impl->playback = std::make_unique<CachedPlaybackAudioSource>(m_impl->cache, m_impl->handle);
     m_impl->playback->setReverse(m_impl->appliedPlaybackSettings.reverse);
+    m_impl->playback->setStemMixState(m_impl->stems.get());
     m_impl->trackGeneration = track.trackGeneration;
     m_impl->presentationSeconds = 0.0;
     m_impl->presentationWasScratch = false;

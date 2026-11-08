@@ -53,7 +53,8 @@ enum class MidiPadMode {
     Sampler,
     KeyShift,
     BeatLoop, // UI tab: 1/4 … 32-beat loops (CDJ-3000 BEAT LOOP)
-    SlipLoop  // UI tab: momentary loop roll with slip (CDJ-3000 SLIP LOOP)
+    SlipLoop, // UI tab: momentary loop roll with slip (CDJ-3000 SLIP LOOP)
+    Stems     // UI tab: 1-4 mute VOCALS/MELODY/BASS/DRUMS, 5-8 solo
 };
 
 // Key Shift's three fixed, non-overlapping 8-pad ranges. PAGE navigates

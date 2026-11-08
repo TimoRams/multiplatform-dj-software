@@ -8,6 +8,7 @@
 #include <QElapsedTimer>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -82,6 +83,9 @@ std::size_t hashCombine(std::size_t seed, std::size_t value) noexcept
     return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6U) + (seed >> 2U));
 }
 
+constexpr std::array<int, 3> kMutedStemGrey{92, 95, 104};
+constexpr int kMutedStemAlpha = 150;
+
 void writeAntialiasedVerticalStroke(QImage& image,
                                     int physicalX,
                                     double top,
@@ -152,7 +156,8 @@ std::size_t RenderTileKeyHash::operator()(const RenderTileKey& key) const noexce
     value = hashCombine(value,
                         std::hash<std::uint32_t>{}(key.visualStyleRevision));
     value = hashCombine(value, std::hash<std::uint32_t>{}(key.backgroundRgba));
-    return hashCombine(value, std::hash<std::uint8_t>{}(key.renderStyle));
+    value = hashCombine(value, std::hash<std::uint8_t>{}(key.renderStyle));
+    return hashCombine(value, std::hash<std::uint64_t>{}(key.stemRevision));
 }
 
 WaveformTileRasterizer::WaveformTileRasterizer(
@@ -183,7 +188,8 @@ RenderTileKey WaveformTileRasterizer::makeKey(
     double devicePixelRatio,
     std::uint8_t lodLevel,
     std::uint32_t backgroundRgba,
-    waveform_visual::WaveformRenderStyle style) noexcept
+    waveform_visual::WaveformRenderStyle style,
+    std::uint64_t stemRevision) noexcept
 {
     const auto rasterSource = renderTileRasterSourceSpan(
         span, physicalPixelsPerLine, snapshot.totalLineCount);
@@ -201,7 +207,8 @@ RenderTileKey WaveformTileRasterizer::makeKey(
         lodLevel,
         waveform_visual::revision(style),
         backgroundRgba,
-        static_cast<std::uint8_t>(style)
+        static_cast<std::uint8_t>(style),
+        stemRevision
     };
 }
 
@@ -682,6 +689,11 @@ WaveformTileRasterizer::rasterize(const RenderTileRequest& request)
         1.0, (request.logicalHeight - verticalLayout.waveformInset * 2.0)
             * request.devicePixelRatio * 0.5);
     bool allSourcePresent = true;
+    const brockdj::stems::StemTrackData* stemData
+        = request.stems && request.key.stemRevision != 0
+            ? request.stems->data.get() : nullptr;
+    const double linesPerSecond
+        = static_cast<double>(request.snapshot->linesPerSecond);
 
     for (int physicalX = -kRenderTileFilterGutterPhysicalPixels;
          physicalX < coreWidth + kRenderTileFilterGutterPhysicalPixels;
@@ -741,7 +753,32 @@ WaveformTileRasterizer::rasterize(const RenderTileRequest& request)
                 static_cast<float>(column.mid) / 255.0f,
                 static_cast<float>(column.treble) / 255.0f,
                 static_cast<float>(column.rms) / 255.0f});
-        writeVisualStroke(result->image, imageX, top, bottom, visual);
+        float audible = 1.0f;
+        if (stemData && linesPerSecond > 0.0) {
+            const double samplesPerLine = stemData->sampleRate() / linesPerSecond;
+            std::array<float, brockdj::stems::kStemCount> energy{};
+            if (stemData->envelopeEnergy(
+                    static_cast<std::int64_t>(std::floor(sourceBeginExact * samplesPerLine)),
+                    static_cast<std::int64_t>(std::ceil(sourceEndExact * samplesPerLine)),
+                    energy)) {
+                audible = brockdj::stems::stemAudibleAmplitudeRatio(
+                    energy, request.stems->gains);
+            }
+        }
+        if (audible < 0.995f) {
+            // Muted stems: the full mix shape stays as a grey ghost and only
+            // the audible share of the amplitude keeps its colour.
+            writeAntialiasedVerticalStroke(
+                result->image, imageX, top, bottom, kMutedStemGrey[0],
+                kMutedStemGrey[1], kMutedStemGrey[2], kMutedStemAlpha);
+            const double audibleTop = centerY - (centerY - top) * audible;
+            const double audibleBottom = centerY + (bottom - centerY) * audible;
+            if (audibleBottom - audibleTop >= 0.25)
+                writeVisualStroke(result->image, imageX, audibleTop,
+                                  audibleBottom, visual);
+        } else {
+            writeVisualStroke(result->image, imageX, top, bottom, visual);
+        }
         if (coreColumn)
             ++result->renderedColumns;
     }

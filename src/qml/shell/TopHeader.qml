@@ -21,6 +21,27 @@ Rectangle {
     readonly property bool compactHardwareBar: compactBar && !!root.Window.window && root.Window.window.allInOneMode === true
     readonly property color barHover: UiTheme.controlHover
     signal searchRequested()
+    readonly property var stemsController: typeof stems !== "undefined" ? stems : null
+
+    Rectangle {
+        objectName: "stemPreanalysisTopProgress"
+        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+        height: 3
+        z: 3
+        visible: root.stemsController && root.stemsController.preanalysisRunning
+        color: UiTheme.knobTrack
+        Rectangle {
+            height: parent.height
+            width: parent.width * (root.stemsController ? root.stemsController.preanalysisProgress : 0)
+            color: UiTheme.play
+            Behavior on width { NumberAnimation { duration: 120 } }
+        }
+        MouseArea { id: stemProgressHover; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
+        ToolTip.visible: stemProgressHover.containsMouse
+        ToolTip.text: root.stemsController
+            ? "Stems " + Math.round(root.stemsController.preanalysisProgress * 100) + "% · "
+              + root.stemsController.preanalysisTitle : ""
+    }
 
     // ── Sizing helpers ───────────────────────────────────────────────────────
     readonly property int btnH:    Math.max(1, root.collapsedHeight)

@@ -44,7 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           ./actionlint -color
-          shellcheck scripts/ci/*.sh scripts/generate_icons.sh
+          shellcheck scripts/ci/*.sh scripts/generate_icons.sh scripts/fetch-onnxruntime.sh
           appstreamcli validate --no-net resources/packaging/net.ramsbrock.BrockDJ.metainfo.xml
           cmake --list-presets=all
 
@@ -113,6 +113,10 @@ jobs:
         shell: bash
         run: ./scripts/ci/install-libkeyfinder.sh /usr/local
 
+      - name: Install ONNX Runtime for stems
+        shell: bash
+        run: ./scripts/fetch-onnxruntime.sh
+
       - name: Restore compiler cache
         uses: actions/cache@v5
         with:
@@ -136,7 +140,7 @@ jobs:
           if command -v qmake6 >/dev/null 2>&1; then qmake6 -query; else qmake -query; fi
 
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset ${{ matrix.preset }} -DBROCKDJ_REQUIRE_STEMS=ON
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }} --parallel 2
@@ -225,6 +229,10 @@ jobs:
       - name: Install native and deployment dependencies
         run: brew install ccache dylibbundler imagemagick libkeyfinder librsvg ninja pkg-config rubberband sqlcipher taglib
 
+      - name: Install ONNX Runtime for stems
+        shell: bash
+        run: ./scripts/fetch-onnxruntime.sh
+
       - name: Restore compiler cache
         uses: actions/cache@v5
         with:
@@ -250,7 +258,7 @@ jobs:
           "$QT_ROOT_DIR/bin/qmake" -query
 
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        run: cmake --preset ${{ matrix.preset }} -DBROCKDJ_REQUIRE_STEMS=ON
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }} --parallel 2
@@ -373,6 +381,10 @@ jobs:
           & $bootstrap -disableMetrics
           if ($LASTEXITCODE -ne 0) { throw "vcpkg bootstrap failed with exit code $LASTEXITCODE" }
 
+      - name: Install ONNX Runtime for stems
+        shell: pwsh
+        run: ./scripts/fetch-onnxruntime.ps1
+
       - name: Show Windows toolchain
         shell: pwsh
         run: |
@@ -395,7 +407,7 @@ jobs:
         shell: pwsh
         run: |
           $env:VCPKG_ROOT = Join-Path $env:GITHUB_WORKSPACE 'vcpkg-pinned'
-          cmake --preset ci-windows-x64
+          cmake --preset ci-windows-x64 -DBROCKDJ_REQUIRE_STEMS=ON
           if ($LASTEXITCODE -ne 0) { throw "CMake configure failed with exit code $LASTEXITCODE" }
 
       - name: Build

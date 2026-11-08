@@ -3,6 +3,7 @@
 #include "audio/SamplerController.h"
 #include "app/AutomixController.h"
 #include "app/MidiClockController.h"
+#include "stems/StemsController.h"
 #include "app/MixTracklistController.h"
 #include "platform/PosixSignalHandler.h"
 #include <juce_core/juce_core.h>
@@ -832,6 +833,11 @@ int runApplication(int argc, char *argv[])
             runtime.midiClock = std::make_unique<MidiClockController>(&settingsManager);
             runtime.sampler->attachMidiClock(runtime.midiClock.get());
             ApplicationLifecycle::setQmlContextProperty(engine, QmlContextProperty::MidiClock, runtime.midiClock.get());
+            runtime.stems = std::make_unique<StemsController>(&settingsManager);
+            runtime.stems->setLibraryDatabase(runtime.libraryDb.get());
+            for (DjEngine* deck : {runtime.deckA.get(), runtime.deckB.get(), runtime.deckC.get(), runtime.deckD.get()})
+                if (deck) deck->attachStemsController(runtime.stems.get());
+            ApplicationLifecycle::setQmlContextProperty(engine, QmlContextProperty::Stems, runtime.stems.get());
             if (runtime.midiManager) runtime.midiManager->connectSampler(runtime.sampler.get());
             QObject::connect(runtime.parameterStore.get(), &ParameterStore::parameterChanged, &app,
                              [&runtime](const QString& id, float value) {

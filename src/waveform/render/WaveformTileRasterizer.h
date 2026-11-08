@@ -2,6 +2,7 @@
 
 #include "WaveformRenderMath.h"
 #include "waveform/WaveformVisualStyle.h"
+#include "stems/StemWaveformOverlay.h"
 
 #include <QImage>
 
@@ -36,6 +37,8 @@ struct RenderTileKey final {
     std::uint32_t backgroundRgba = 0xff101114u;
     std::uint8_t renderStyle = static_cast<std::uint8_t>(
         waveform_visual::kDefaultRenderStyle);
+    // Non-zero while muted stems are greyed out (StemWaveformOverlay).
+    std::uint64_t stemRevision = 0;
 
     bool operator==(const RenderTileKey&) const noexcept = default;
 };
@@ -73,6 +76,13 @@ struct RenderTileKeyHash final {
     return displayed && *displayed == required;
 }
 
+[[nodiscard]] inline bool sameTileIgnoringStemRevision(
+    RenderTileKey displayed, const RenderTileKey& required) noexcept
+{
+    displayed.stemRevision = required.stemRevision;
+    return displayed == required;
+}
+
 struct RasterizedRenderTile final {
     RenderTileKey key;
     RenderTileSpan span;
@@ -90,6 +100,8 @@ struct RenderTileRequest final {
     double logicalHeight = 0.0;
     double devicePixelRatio = 1.0;
     double priority = 0.0;
+    // Must match key.stemRevision; null draws the plain mix.
+    std::shared_ptr<const brockdj::stems::StemWaveformOverlay> stems;
 };
 
 struct OverviewSample final {
@@ -204,7 +216,8 @@ public:
         std::uint8_t lodLevel = 0,
         std::uint32_t backgroundRgba = 0xff101114u,
         waveform_visual::WaveformRenderStyle style
-            = waveform_visual::kDefaultRenderStyle) noexcept;
+            = waveform_visual::kDefaultRenderStyle,
+        std::uint64_t stemRevision = 0) noexcept;
 
 private:
     struct CacheEntry final {

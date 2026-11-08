@@ -141,6 +141,7 @@ public:
     void resetNormalPlaybackAfterSeek() noexcept;
 
     void setTrackCacheSource(AudioPageCache* cache, AudioCacheHandle handle);
+    void setStemMixState(brockdj::stems::StemMixState* state) noexcept;
     void setRealtimeScratchInput(
         std::shared_ptr<engine::scratch::RealtimeScratchInput> input) noexcept;
     void setPlaybackSource(CachedPlaybackAudioSource* source) noexcept {
@@ -197,6 +198,8 @@ private:
     engine::scratch::PointerScratchTrajectory m_pointerTrajectory;
     ScratchResampler m_scratchResampler;
     ScratchResampler m_scratchExitResampler;
+    brockdj::stems::StemMixState* m_readAheadStems = nullptr;
+    brockdj::stems::StemGainSmoother m_readAheadStemSmoother;
     juce::AudioBuffer<float> m_scratchExitAudio;
     int m_scratchExitRemaining = 0;
     bool m_deckLandingStarted = false;

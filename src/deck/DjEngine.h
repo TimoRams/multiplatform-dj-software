@@ -8,6 +8,7 @@
 #include "sync/DeckSync.h"
 #include "scratch/ScratchSession.h"
 #include "fx/FxTypes.h"
+#include "stems/StemsController.h"
 
 #include <QObject>
 #include <QPointer>
@@ -35,6 +36,7 @@ class TrackData;
 class WaveformAnalyzer;
 class AnalyzerResultMailbox;
 class CoverArtProvider;
+namespace brockdj::stems { struct StemJobStatus; struct StemWaveformOverlay; }
 class LibraryCoverService;
 namespace engine::sync {
 class SyncCoordinator;
@@ -131,6 +133,14 @@ class DjEngine : public QObject
     Q_PROPERTY(bool echoOutActive    READ isEchoOutActive    NOTIFY echoOutChanged)
     Q_PROPERTY(bool backspinActive   READ isBackspinActive   NOTIFY backspinChanged)
     Q_PROPERTY(bool rollOutActive    READ isRollOutActive    NOTIFY rollOutChanged)
+    // Real-time stems: 0 idle, 1 queued, 2 separating, 3 ready, 4 failed.
+    Q_PROPERTY(int stemsState READ stemsState NOTIFY stemsStateChanged)
+    Q_PROPERTY(double stemsProgress READ stemsProgress NOTIFY stemsStateChanged)
+    Q_PROPERTY(bool stemsCached READ stemsCached NOTIFY stemsStateChanged)
+    Q_PROPERTY(bool stemsPlayheadReady READ stemsPlayheadReady NOTIFY stemsStateChanged)
+    Q_PROPERTY(QString stemsError READ stemsError NOTIFY stemsStateChanged)
+    // Gains in order VOCALS, MELODY, BASS, DRUMS (0..1).
+    Q_PROPERTY(QVariantList stemGains READ stemGains NOTIFY stemGainsChanged)
 
 public:
     static constexpr double WAVEFORM_POINTS_PER_SECOND = 1200.0;
@@ -482,6 +492,27 @@ public slots:
     // the load could not start (no source track, load lock, same deck).
     Q_INVOKABLE bool instantDoubleFrom(DjEngine* source);
 
+    // STEMS (Serato-style VOCALS / MELODY / BASS / DRUMS). Separation runs in
+    // the background from the playhead forward; parts not separated yet play
+    // unchanged.
+    void attachStemsController(StemsController* controller);
+    [[nodiscard]] int stemsState() const { return m_stemsState; }
+    [[nodiscard]] double stemsProgress() const { return m_stemsProgress; }
+    [[nodiscard]] bool stemsCached() const { return m_stemsCached; }
+    [[nodiscard]] bool stemsPlayheadReady() const { return m_stemsPlayheadReady; }
+    [[nodiscard]] QString stemsError() const { return m_stemsError; }
+    [[nodiscard]] QVariantList stemGains() const;
+    Q_INVOKABLE void setStemGain(int stem, double gain);
+    Q_INVOKABLE void toggleStemMute(int stem);
+    // Only `stem` audible; pressing the same solo again restores all stems.
+    Q_INVOKABLE void soloStem(int stem);
+    Q_INVOKABLE void resetStemGains();
+    // Null while every stem is at unity or no stems exist for the loaded track.
+    [[nodiscard]] std::shared_ptr<const brockdj::stems::StemWaveformOverlay> stemWaveformOverlay() const;
+    // Starts separation for the loaded track (when auto-separation is off or
+    // after the model was installed).
+    Q_INVOKABLE bool separateStems();
+
     // FX chain
     // Color FX (Sound Color) slot
     void setFxEffectType(EffectType type);
@@ -528,6 +559,8 @@ signals:
     void tempoRangeChanged();
     void trackLoaded();
     void trackEjected();
+    void stemsStateChanged();
+    void stemGainsChanged();
     void trackMetadataChanged();
     void trackLoadErrorChanged();
     void externalCacheProgressChanged();
@@ -721,6 +754,19 @@ private:
 
     bool m_slipLoopActive = false;
     QPointer<DjEngine> m_instantDoubleSource;
+    void cancelStems();
+    [[nodiscard]] bool ensureStemsRequested();
+    void pollStems();
+    void setStemsError(const QString& error);
+    QPointer<StemsController> m_stemsController;
+    QMetaObject::Connection m_stemsSettingsConnection;
+    std::shared_ptr<brockdj::stems::StemJobStatus> m_stemStatus;
+    AudioCacheHandle m_stemHandle;
+    int m_stemsState = 0;
+    double m_stemsProgress = 0.0;
+    bool m_stemsCached = false;
+    bool m_stemsPlayheadReady = false;
+    QString m_stemsError;
     std::uint64_t m_instantDoubleGeneration = 0;
     double m_beatLoopRequestedBeats = 0.0;
     double m_beatLoopOutSec = -1.0;

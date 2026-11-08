@@ -2259,6 +2259,127 @@ Item {
                                 text: "Ableton Link has priority over MIDI clock in. An incoming clock is never sent back out."
                             }
                         }
+
+                        // ── Stems ──────────────────────────────────────────
+                        ColumnLayout {
+                            id: stemsSection
+                            objectName: "stemsSection"
+                            Layout.fillWidth: true
+                            Layout.topMargin: 12
+                            spacing: 10
+                            readonly property var ctl: typeof stems !== "undefined" ? stems : null
+                            visible: ctl !== null
+                            onVisibleChanged: if (visible && ctl) ctl.refreshCacheSize()
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 1
+                                color: UiTheme.separatorSubtle
+                            }
+
+                            Text {
+                                text: "Stems"
+                                color: UiTheme.textPrimary
+                                font.family: UiTheme.uiFontFamily
+                                font.pixelSize: 14
+                                font.bold: true
+                            }
+
+                            ClockStatus {
+                                color: UiTheme.textSecondary
+                                text: "Separates every loaded track into VOCALS, MELODY, BASS and DRUMS in the background, starting at the playhead. Use the STEMS pad page to mute or solo parts. Not-yet-separated sections play unchanged. Results are cached on disk."
+                            }
+
+                            ClockStatus {
+                                color: UiTheme.textSecondary
+                                text: "Separation can take several seconds and require several GB of RAM. Use Stems Preanalysis in the library to prepare tracks before a set; green S badges indicate cached stems."
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+                                visible: stemsSection.ctl && stemsSection.ctl.supported
+                                ClockLabel { text: "Experimental GPU acceleration (restart required)" }
+                                ClockSwitch {
+                                    objectName: "stemsGpuSwitch"
+                                    checked: settingsManager.stemsGpuAcceleration
+                                    onToggled: settingsManager.stemsGpuAcceleration = checked
+                                }
+                            }
+
+                            ClockStatus {
+                                visible: stemsSection.ctl && stemsSection.ctl.supported
+                                color: UiTheme.textSecondary
+                                text: "Active backend: " + (stemsSection.ctl && stemsSection.ctl.backend
+                                    ? stemsSection.ctl.backend : "not loaded")
+                                    + ". Intel GPUs need the optional OpenVINO plugin and compute driver; macOS uses CoreML when available. Unsupported operations may still run on CPU. GPU speed depends on the device and model."
+                            }
+
+                            ClockStatus {
+                                visible: text !== ""
+                                color: UiTheme.cue
+                                text: stemsSection.ctl ? stemsSection.ctl.acceleratorWarning : ""
+                            }
+
+                            ClockStatus {
+                                visible: stemsSection.ctl && !stemsSection.ctl.supported
+                                color: UiTheme.cue
+                                text: "This build has no ONNX Runtime. Run scripts/fetch-onnxruntime.sh and rebuild to enable stems."
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+                                visible: stemsSection.ctl && stemsSection.ctl.supported
+                                ClockLabel {
+                                    text: stemsSection.ctl && stemsSection.ctl.modelInstalled
+                                        ? "Separation model installed (HTDemucs, MIT licence)"
+                                        : stemsSection.ctl && stemsSection.ctl.downloading
+                                            ? "Downloading separation model… " + Math.round(stemsSection.ctl.downloadProgress * 100) + "%"
+                                            : "Separation model not installed (166 MB download)"
+                                }
+                                Button {
+                                    objectName: "stemsDownloadButton"
+                                    visible: stemsSection.ctl && !stemsSection.ctl.modelInstalled
+                                    text: stemsSection.ctl && stemsSection.ctl.downloading ? "Cancel" : "Download"
+                                    onClicked: {
+                                        if (stemsSection.ctl.downloading) stemsSection.ctl.cancelDownload()
+                                        else stemsSection.ctl.downloadModel()
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+                                visible: stemsSection.ctl && stemsSection.ctl.supported
+                                ClockLabel { text: "Separate stems automatically when a track is loaded" }
+                                ClockSwitch {
+                                    objectName: "stemsAutoSwitch"
+                                    checked: settingsManager.stemsEnabled
+                                    onToggled: settingsManager.stemsEnabled = checked
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+                                visible: stemsSection.ctl && stemsSection.ctl.supported
+                                ClockLabel {
+                                    text: "Stem cache: " + (stemsSection.ctl ? stemsSection.ctl.cacheSizeMb.toFixed(0) : 0) + " MB (oldest entries are removed above 8 GB)"
+                                }
+                                Button {
+                                    text: "Clear cache"
+                                    onClicked: stemsSection.ctl.clearCache()
+                                }
+                            }
+
+                            ClockStatus {
+                                visible: text !== ""
+                                color: UiTheme.cue
+                                text: stemsSection.ctl ? stemsSection.ctl.error : ""
+                            }
+                        }
                     }
                 }
             }

@@ -1,7 +1,10 @@
 #include "waveform/render/WaveformTileRasterizer.h"
 #include "waveform/WaveformLineStore.h"
+#include "stems/StemWaveformOverlay.h"
 
 #include <QCoreApplication>
+#include <QColor>
+#include <QImage>
 
 #include <algorithm>
 #include <array>
@@ -118,6 +121,70 @@ int main(int argc, char** argv)
                               return static_cast<bool>(resumedTile);
                           }),
                       "raster work did not resume with a fresh viewport request");
+    }
+
+    // Muted stems: the full mix is drawn grey and only the audible share keeps
+    // its colour. All stems muted therefore leaves only neutral grey pixels.
+    {
+        auto stemData = std::make_shared<brockdj::stems::StemTrackData>(
+            77, static_cast<double>(snapshot->linesPerSecond), totalLines);
+        for (std::int64_t sample = 0; sample < stemData->length(); ++sample)
+            stemData->accumulateEnvelope(sample, {0.2f, 0.1f, 0.05f, 0.02f});
+        auto overlay = std::make_shared<brockdj::stems::StemWaveformOverlay>();
+        overlay->data = stemData;
+        overlay->gains = {0.0f, 0.0f, 0.0f, 0.0f};
+        overlay->revision = brockdj::stems::stemWaveformOverlayRevision(
+            77, overlay->gains, stemData->envelopeEpoch());
+
+        waveform_render::WaveformTileRasterizer stemRasterizer([&] {
+            readyCondition.notify_all();
+        });
+        stemRasterizer.setActiveTrackGeneration(snapshot->trackGeneration);
+        const auto span = waveform_render::renderTileSpan(
+            populatedChunkIndex, 1.0, totalLines);
+        const auto plainKey = waveform_render::WaveformTileRasterizer::makeKey(
+            *snapshot, populatedChunkIndex, span, 1.0, 128, 1.0);
+        const auto stemKey = waveform_render::WaveformTileRasterizer::makeKey(
+            *snapshot, populatedChunkIndex, span, 1.0, 128, 1.0,
+            0, 0xff101114u, waveform_visual::kDefaultRenderStyle, overlay->revision);
+        ok &= require(!(plainKey == stemKey)
+                          && waveform_render::sameTileIgnoringStemRevision(plainKey, stemKey),
+                      "stem revision must be the only key difference for muted stems");
+        stemRasterizer.request({plainKey, span, snapshot, 1.0, 128.0, 1.0, 0.0});
+        stemRasterizer.request({stemKey, span, snapshot, 1.0, 128.0, 1.0, 1.0, overlay});
+        std::shared_ptr<const waveform_render::RasterizedRenderTile> plainTile, stemTile;
+        {
+            std::unique_lock lock(readyMutex);
+            ok &= require(readyCondition.wait_for(
+                              lock, std::chrono::seconds(2), [&] {
+                                  plainTile = stemRasterizer.find(plainKey);
+                                  stemTile = stemRasterizer.find(stemKey);
+                                  return plainTile && stemTile;
+                              }),
+                          "muted-stem tile did not rasterize");
+        }
+        if (plainTile && stemTile) {
+            int plainColoured = 0, stemColoured = 0, stemGrey = 0;
+            const auto classify = [](const QImage& image, int& coloured, int* grey) {
+                for (int y = 0; y < image.height(); ++y)
+                    for (int x = 0; x < image.width(); ++x) {
+                        const QColor c = image.pixelColor(x, y);
+                        if (c.alpha() < 32)
+                            continue;
+                        const int spread = std::max({c.red(), c.green(), c.blue()})
+                            - std::min({c.red(), c.green(), c.blue()});
+                        if (spread > 40)
+                            ++coloured;
+                        else if (grey)
+                            ++*grey;
+                    }
+            };
+            classify(plainTile->image, plainColoured, nullptr);
+            classify(stemTile->image, stemColoured, &stemGrey);
+            ok &= require(plainColoured > 0, "unmuted tile keeps its spectral colours");
+            ok &= require(stemColoured == 0 && stemGrey > 0,
+                          "fully muted stems must render the waveform grey");
+        }
     }
 
     waveform_render::WaveformTileRasterizer rasterizer([&] {

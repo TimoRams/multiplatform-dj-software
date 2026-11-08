@@ -261,6 +261,7 @@ void DjEngine::ejectTrack()
     }
 
     releaseTransportReaders();
+    cancelStems();
 
     // Mark empty before clear()/dataCleared — waveform/FLX10 handlers must not
     // treat a mid-eject clear as a live track update.
@@ -1013,6 +1014,10 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
     attachCacheToTransport(preparedCacheHandle, result.metadata.sampleRate,
                            result.metadata.durationSec);
     clearLoop();
+    cancelStems();
+    m_stemHandle = preparedCacheHandle;
+    if (SettingsManager::getInstance().stemsEnabled())
+        separateStems();
 
     bool hasReusableAnalysis = false;
     if (result.external) {

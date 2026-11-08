@@ -7,6 +7,7 @@ CachedPlaybackAudioSource::CachedPlaybackAudioSource(AudioPageCache& cache,
                                                      AudioCacheHandle handle) noexcept
     : m_cache(cache), m_handle(handle)
 {
+    m_stemSmoother.prepare(handle.sampleRate());
 }
 
 void CachedPlaybackAudioSource::setNextReadPosition(juce::int64 position)
@@ -88,6 +89,7 @@ void CachedPlaybackAudioSource::getNextAudioBlock(const juce::AudioSourceChannel
     bool missed = false;
     std::int64_t pinnedIndex = -1;
     AudioPageReadGuard page;
+    brockdj::stems::StemReadScope stems(m_stems.load(std::memory_order_acquire), m_stemSmoother, m_handle.id());
     for (int i = 0; i < info.numSamples; ++i) {
         if (loop && loopOut > loopIn) {
             if (!reverse && position >= loopOut) position = loopIn;
@@ -111,6 +113,11 @@ void CachedPlaybackAudioSource::getNextAudioBlock(const juce::AudioSourceChannel
                 m_lastL = page->channelData(0)[offset];
                 const unsigned right = page->channelCount > 1 ? 1u : 0u;
                 m_lastR = page->channelData(right)[offset];
+                if (stems.active()) {
+                    stems.advance(position);
+                    m_lastL = stems.apply(position, 0, m_lastL);
+                    m_lastR = stems.apply(position, 1, m_lastR);
+                }
                 m_hits.fetch_add(1, std::memory_order_relaxed);
             }
         }

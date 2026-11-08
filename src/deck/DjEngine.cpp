@@ -687,6 +687,7 @@ void DjEngine::onMeterControlTick(const ControlTickContext& context)
 {
     (void)context;
     notifyVuMetersIfNeeded();
+    pollStems();
 }
 
 

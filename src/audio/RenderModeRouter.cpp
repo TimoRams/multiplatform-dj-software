@@ -22,6 +22,7 @@ RenderModeRouter::~RenderModeRouter() = default;
 void RenderModeRouter::prepareToPlay(int samplesPerBlockExpected, double sampleRate)
 {
     m_outputSampleRate = std::max(1.0, sampleRate);
+    m_readAheadStemSmoother.prepare(m_outputSampleRate);
     m_blockSize = std::max(64, samplesPerBlockExpected);
     m_timelineReady = false;
     if (m_hermite)
@@ -413,8 +414,17 @@ void RenderModeRouter::setTrackCacheSource(AudioPageCache* cache, AudioCacheHand
     m_readAheadCache = cache;
     m_readAheadHandle = handle;
     m_timelineReady = false;
+    m_readAheadStemSmoother = {};
+    m_readAheadStemSmoother.prepare(m_outputSampleRate);
     m_scratchResampler.setTrackCacheSource(cache, handle);
     m_scratchExitResampler.setTrackCacheSource(cache, handle);
+}
+
+void RenderModeRouter::setStemMixState(brockdj::stems::StemMixState* state) noexcept
+{
+    m_readAheadStems = state;
+    m_scratchResampler.setStemMixState(state);
+    m_scratchExitResampler.setStemMixState(state);
 }
 
 void RenderModeRouter::setReadAheadPosition(double seconds, double rate, int frames, int horizon) noexcept
@@ -469,13 +479,18 @@ bool RenderModeRouter::readAhead(int offset, juce::AudioBuffer<float>& destinati
     AudioPageReadGuard page;
     std::int64_t pageIndex = -1;
     bool available = true;
-    const auto readSample = [&](std::int64_t sample, int channel) {
+    brockdj::stems::StemReadScope stems(m_readAheadStems, m_readAheadStemSmoother, m_readAheadHandle.id());
+    const auto wrapSample = [&](std::int64_t sample) {
         if (loopEnabled && loopEnd > loopStart
             && ((m_readAheadDirection >= 0.0 && sample >= loopEnd)
                 || (m_readAheadDirection < 0.0 && sample < loopStart))) {
             const auto length = loopEnd - loopStart;
             sample = loopStart + ((sample - loopStart) % length + length) % length;
         }
+        return sample;
+    };
+    const auto readSample = [&](std::int64_t sample, int channel) {
+        sample = wrapSample(sample);
         if (sample < 0 || sample >= m_readAheadHandle.lengthInSamples())
             return 0.0f;
         const auto wantedPage = AudioPage::pageIndexForSample(sample);
@@ -494,13 +509,16 @@ bool RenderModeRouter::readAhead(int offset, juce::AudioBuffer<float>& destinati
             return 0.0f;
         }
         const auto sourceChannel = std::min(channel, static_cast<int>(page->channelCount) - 1);
-        return page->channelData(static_cast<unsigned>(sourceChannel))[sample - page->firstSample];
+        const float mix = page->channelData(static_cast<unsigned>(sourceChannel))[sample - page->firstSample];
+        return stems.active() ? stems.apply(sample, channel, mix) : mix;
     };
     for (int sample = 0; sample < count; ++sample) {
         const double position = m_tempoTimeline.position(offset + sample)
             * m_readAheadHandle.sampleRate() / m_outputSampleRate;
         const auto base = static_cast<std::int64_t>(std::floor(position));
         const float fraction = static_cast<float>(position - base);
+        if (stems.active())
+            stems.advance(wrapSample(base));
         for (int channel = 0; channel < 2; ++channel) {
             const float value = cubicHermite(readSample(base - 1, channel),
                                              readSample(base, channel),

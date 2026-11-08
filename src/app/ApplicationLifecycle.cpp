@@ -2,6 +2,7 @@
 #include "audio/SamplerController.h"
 #include "app/AutomixController.h"
 #include "app/MidiClockController.h"
+#include "stems/StemsController.h"
 #include "app/MixTracklistController.h"
 
 #include "deck/DjEngine.h"
@@ -147,6 +148,7 @@ void shutdownApplication(ApplicationRuntime& runtime)
         runtime.automix->setEnabled(false);
     if (runtime.sampler) runtime.sampler->shutdown();
     if (runtime.midiClock) runtime.midiClock->shutdown();
+    if (runtime.stems) runtime.stems->shutdown();
 
     performExitTeardown(runtime, runtime.settingsManager
                                      ? runtime.settingsManager->requestManualBackupOnExit()
@@ -193,6 +195,7 @@ void shutdownApplication(ApplicationRuntime& runtime)
     runtime.deckA.reset();
     runtime.sampler.reset();
     runtime.midiClock.reset();
+    runtime.stems.reset();
     runtime.audioEngine.reset();
     runtime.libraryPreviewPlayer.reset();
     runtime.syncClockRegistration.reset();

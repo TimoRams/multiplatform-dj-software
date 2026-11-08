@@ -194,14 +194,15 @@ int main(int argc, char** argv)
     for (const char* property : std::array {
              "progress", "isPlaying", "tempoPercent", "trackData", "syncEnabled",
              "loopActive", "volume", "hotCues", "savedLoops", "beatgridLocked",
-             "readOnlyExternalTrack", "externalSourceId" })
+             "readOnlyExternalTrack", "externalSourceId", "stemsState",
+             "stemsProgress", "stemsPlayheadReady", "stemsError", "stemGains" })
         ok &= require(header.contains(QString::fromUtf8(property)), property);
     for (const char* method : std::array {
              "loadTrack", "play", "pause", "setPosition", "setTempoPercent",
              "triggerHotCue", "setSyncEnabled", "setReverse", "setSlip",
              "loadExternalTrack", "externalSourceUnavailable", "ejectExternalSource",
              "setBeatLoop", "beginSlipLoop", "endSlipLoop", "syncKeyTo",
-             "instantDoubleFrom" })
+             "instantDoubleFrom", "separateStems", "setStemGain", "toggleStemMute", "soloStem" })
         ok &= require(header.contains(QString::fromUtf8(method)), method);
 
     // Header-level architecture boundary: implementation dependencies belong in

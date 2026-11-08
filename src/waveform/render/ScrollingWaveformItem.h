@@ -19,6 +19,10 @@
 namespace waveform_render {
 class WaveformTileRasterizer;
 }
+namespace brockdj::stems {
+struct StemWaveformOverlay;
+}
+class StemWaveformAnimator;
 
 class ScrollingWaveformItem : public QQuickItem
 {
@@ -142,6 +146,12 @@ private:
     std::optional<waveform::WaveformDemand> m_lastPublishedDemand;
 
     void publishViewportDemand();
+    void refreshStemOverlay();
+    // GUI-thread owned; the render thread reads it only during sync.
+    std::shared_ptr<const brockdj::stems::StemWaveformOverlay> m_stemOverlay;
+    StemWaveformAnimator* m_stemAnimator = nullptr;
+    // Polls envelope progress (e.g. after a cache hit) while stems are muted.
+    QTimer* m_stemOverlayPoll = nullptr;
     [[nodiscard]] double currentPlayheadSeconds() const noexcept;
     void scheduleTileUpdate() noexcept;
     void markContentReady() noexcept;

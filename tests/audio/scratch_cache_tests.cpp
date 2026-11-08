@@ -1,5 +1,6 @@
 #include "audio/cache/AudioPageCache.h"
 #include "audio/internal/ScratchResampler.h"
+#include "StemAudioFixtures.h"
 
 #include <QCoreApplication>
 #include <QTemporaryDir>
@@ -9,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <thread>
 #include <utility>
@@ -66,6 +68,77 @@ bool finiteBlock(const juce::AudioBuffer<float>& b)
     for (int ch = 0; ch < b.getNumChannels(); ++ch)
         for (int i = 0; i < b.getNumSamples(); ++i) if (!std::isfinite(b.getSample(ch, i))) return false;
     return true;
+}
+
+bool checkStemScratch(AudioPageCache& cache, const AudioCacheHandle& handle)
+{
+    using namespace brockdj::stems;
+    bool ok = true;
+    auto data = makeHalfVocalStemData(cache, handle);
+    if (!require(static_cast<bool>(data), "stem scratch fixture is resident"))
+        return false;
+    StemMixState state;
+    state.publish(data);
+    engine::audio::ScratchResampler reference, stemmed;
+    for (auto* scratch : {&reference, &stemmed}) {
+        scratch->prepare(2, 512, 48000);
+        scratch->setTrackLengthSamples(handle.lengthInSamples());
+        scratch->setTrackCacheSource(&cache, handle);
+        scratch->reset(12000);
+        scratch->snapSmoothedRate(1.0);
+    }
+    stemmed.setStemMixState(&state);
+    juce::AudioBuffer<float> original(2, 512), output(2, 512);
+    const auto render = [&](double rate) {
+        reference.processBlock(rate, {&original, 0, 512});
+        stemmed.processBlock(rate, {&output, 0, 512});
+    };
+    const auto differsFrom = [&](float ratio, float tolerance) {
+        for (int channel = 0; channel < 2; ++channel)
+            for (int i = 0; i < 512; ++i)
+                if (std::abs(output.getSample(channel, i)
+                             - ratio * original.getSample(channel, i)) > tolerance)
+                    return true;
+        return false;
+    };
+    render(1.0);
+    render(1.0);
+    ok &= require(!differsFrom(1.0f, 0.0f), "unity stems preserve the scratch signal");
+    state.setGain(Stem::Vocals, 0.0f);
+    render(1.0);
+    ok &= require(std::abs(output.getSample(0, 0) - original.getSample(0, 0)) < 0.0001f,
+                  "scratch stem changes start with the previous signal");
+    render(1.0);
+    render(1.0);
+    ok &= require(!differsFrom(0.5f, 0.00005f), "vocal mute follows the scratch playhead");
+
+    for (auto* scratch : {&reference, &stemmed}) {
+        scratch->setLoopRange(15000, 17000, true);
+        scratch->setReadPositionSamples(15010);
+        scratch->snapSmoothedRate(-1.0);
+    }
+    render(-1.0);
+    ok &= require(!differsFrom(0.5f, 0.00005f), "scratch stem mute follows reverse loops");
+
+    if (std::getenv("BROCKDJ_STEM_BENCHMARK")) {
+        stemmed.setLoopRange(0, 0, false);
+        stemmed.reset(3000);
+        stemmed.snapSmoothedRate(1.0);
+        double totalUs = 0.0;
+        double worstUs = 0.0;
+        for (int i = 0; i < 100; ++i) {
+            state.setGain(Stem::Vocals, i % 2 == 0 ? 1.0f : 0.0f);
+            const auto start = std::chrono::steady_clock::now();
+            stemmed.processBlock(1.0, {&output, 0, 512});
+            const double elapsed = std::chrono::duration<double, std::micro>(
+                std::chrono::steady_clock::now() - start).count();
+            totalUs += elapsed;
+            worstUs = std::max(worstUs, elapsed);
+        }
+        std::cout << "stem scratch 512-frame average us=" << totalUs / 100.0
+                  << " worst us=" << worstUs << '\n';
+    }
+    return ok;
 }
 
 struct LoopReaderGate {
@@ -519,6 +592,7 @@ int main(int argc, char** argv)
     AudioPageCache cache(8 * 1024 * 1024);
     auto handle = cache.openTrack({stereo});
     ok &= require(waitResident(cache, handle, 0, 4), "scratch pages resident");
+    ok &= checkStemScratch(cache, handle);
     auto edgeHandle = cache.openTrack({loopEdges});
     ok &= require(waitResident(cache, edgeHandle, 0, 4), "loop-edge pages resident");
     ok &= checkLoopScratch(cache, handle, edgeHandle);

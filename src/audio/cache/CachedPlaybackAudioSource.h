@@ -2,6 +2,7 @@
 
 #include "audio/AudioParameters.h"
 #include "AudioPageCache.h"
+#include "stems/StemMixState.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
@@ -37,6 +38,11 @@ public:
     void setLoopRangeSamples(juce::int64 in, juce::int64 out, double) noexcept;
     void clearLoopRangeSamples() noexcept;
     [[nodiscard]] PlaybackCacheStats cacheStats() const noexcept;
+    // Per-deck stem gains; applied to every decoded frame (nullptr = off).
+    void setStemMixState(brockdj::stems::StemMixState* state) noexcept
+    {
+        m_stems.store(state, std::memory_order_release);
+    }
 
 private:
     void requestReadAhead(juce::int64 position, int blockSize, bool reverse) noexcept;
@@ -49,6 +55,8 @@ private:
     std::atomic<juce::int64> m_loopIn{0}, m_loopOut{0};
     float m_starvationGain = 0.0f;
     float m_lastL = 0.0f, m_lastR = 0.0f;
+    std::atomic<brockdj::stems::StemMixState*> m_stems{nullptr};
+    brockdj::stems::StemGainSmoother m_stemSmoother;
     static constexpr int kFadeSamples =
         AudioRoutingConstants::kCacheMissResumeCrossfadeMaxSamples;
     std::atomic<std::uint64_t> m_hits{0}, m_misses{0}, m_starvation{0}, m_recovery{0};

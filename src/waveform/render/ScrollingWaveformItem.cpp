@@ -1,5 +1,9 @@
 #include "ScrollingWaveformItem.h"
 
+#include "stems/StemWaveformOverlay.h"
+#include "StemWaveformAnimator.h"
+#include "StemWaveformTextureNode.h"
+
 #include "TrackData.h"
 #include "app/UiPreferences.h"
 #include "WaveformRenderMath.h"
@@ -236,13 +240,15 @@ void clearGeometry(QSGGeometryNode* node)
     node->markDirty(QSGNode::DirtyGeometry);
 }
 
-void clearWaveformTexture(QSGSimpleTextureNode* node)
+template<typename Node>
+void clearWaveformTexture(Node* node)
 {
     if (node)
         node->setRect({});
 }
 
-void destroyTextureNode(QSGNode* parent, QSGSimpleTextureNode*& node)
+template<typename Node>
+void destroyTextureNode(QSGNode* parent, Node*& node)
 {
     if (!node)
         return;
@@ -273,7 +279,7 @@ struct PreparedTileSlot {
     bool alreadyDisplayed = false;
 };
 
-void positionWaveformTile(QSGSimpleTextureNode* node,
+void positionWaveformTile(waveform_render::StemWaveformTextureNode* node,
                           const waveform_render::RenderTileSpan& span,
                           double renderOriginLine,
                           double pixelsPerLine,
@@ -401,8 +407,8 @@ struct WaveformSceneNode final : QSGClipNode {
     QSGTransformNode* zoomTransitionTimeline = nullptr;
     QSGGeometryNode* loopFill = nullptr;
     QSGSimpleTextureNode* fallbackNode = nullptr;
-    std::array<QSGSimpleTextureNode*, kWaveformNodePoolSize> waveformNodes{};
-    std::array<QSGSimpleTextureNode*, kWaveformNodePoolSize> zoomTransitionNodes{};
+    std::array<waveform_render::StemWaveformTextureNode*, kWaveformNodePoolSize> waveformNodes{};
+    std::array<waveform_render::StemWaveformTextureNode*, kWaveformNodePoolSize> zoomTransitionNodes{};
     QSGGeometryNode* regularBeats = nullptr;
     QSGGeometryNode* downbeats = nullptr;
     std::array<QSGSimpleTextureNode*, kDownbeatLabelNodePoolSize> downbeatLabels{};
@@ -439,6 +445,7 @@ struct WaveformSceneNode final : QSGClipNode {
     bool hasWindow = false;
     std::uint64_t trackGeneration = 0;
     std::uint64_t dataGeneration = 0;
+    std::uint64_t stemRevision = 0;
     std::int64_t windowStartLine = 0;
     std::int64_t windowEndLine = 0;
     double innerStartLine = 0.0;
@@ -707,7 +714,7 @@ void updateDownbeatCounterNode(QSGSimpleTextureNode*& node,
     cachedColor = label.color;
 }
 
-void positionWaveformTile(QSGSimpleTextureNode* node,
+void positionWaveformTile(waveform_render::StemWaveformTextureNode* node,
                           const waveform_render::RenderTileSpan& span,
                           double renderOriginLine,
                           double pixelsPerLine,
@@ -746,7 +753,7 @@ struct TextureUpload final {
 };
 
 std::optional<TextureUpload> uploadWaveformTile(
-    QSGSimpleTextureNode*& node,
+    waveform_render::StemWaveformTextureNode*& node,
     const waveform_render::RasterizedRenderTile& tile,
     double renderOriginLine,
     double pixelsPerLine,
@@ -768,7 +775,21 @@ std::optional<TextureUpload> uploadWaveformTile(
         return std::nullopt;
     }
     texture->setFiltering(QSGTexture::Linear);
-    auto* textureNode = assignTextureNode(node, texture, parent, insertBefore);
+    if (node) {
+        auto* previousTexture = node->texture();
+        node->setOwnsTexture(false);
+        node->setTexture(texture);
+        delete previousTexture;
+    } else {
+        node = new waveform_render::StemWaveformTextureNode(
+            window->rendererInterface()->graphicsApi() != QSGRendererInterface::Software);
+        node->setTexture(texture);
+        if (insertBefore)
+            parent->insertChildNodeBefore(node, insertBefore);
+        else
+            parent->appendChildNode(node);
+    }
+    auto* textureNode = node;
     textureNode->setOwnsTexture(true);
     textureNode->setSourceRect(QRectF(
         waveform_render::kRenderTileFilterGutterPhysicalPixels,
@@ -911,6 +932,14 @@ ScrollingWaveformItem::ScrollingWaveformItem(QQuickItem* parent)
         m_textureUploadBudgetBytesPerFrame, std::memory_order_relaxed);
     m_tileRasterizer = std::make_unique<waveform_render::WaveformTileRasterizer>(
         [this] { scheduleTileUpdate(); });
+    m_stemAnimator = new StemWaveformAnimator(this, [this] {
+        m_stemOverlay = m_stemAnimator->frame();
+        update();
+    });
+    m_stemOverlayPoll = new QTimer(this);
+    m_stemOverlayPoll->setInterval(250);
+    connect(m_stemOverlayPoll, &QTimer::timeout,
+            this, &ScrollingWaveformItem::refreshStemOverlay);
     m_dataUpdateThrottle = new QTimer(this);
     m_dataUpdateThrottle->setSingleShot(true);
     // The playhead itself is a VSync transform and stays at full frame rate.
@@ -993,7 +1022,13 @@ void ScrollingWaveformItem::setEngine(DjEngine* engine)
                 this, [this] { publishViewportDemand(); });
         connect(m_engine, &DjEngine::reverseChanged,
                 this, [this] { publishViewportDemand(); });
+        connect(m_engine, &DjEngine::stemGainsChanged,
+                this, &ScrollingWaveformItem::refreshStemOverlay);
+        connect(m_engine, &DjEngine::stemsStateChanged,
+                this, &ScrollingWaveformItem::refreshStemOverlay);
         onTrackLoaded();
+    } else {
+        refreshStemOverlay();
     }
 
     emit engineChanged();
@@ -1242,6 +1277,7 @@ void ScrollingWaveformItem::onTrackLoaded()
     }
     m_lastPublishedDemand.reset();
     publishViewportDemand();
+    refreshStemOverlay();
     invalidateGeometry();
 }
 
@@ -1250,7 +1286,21 @@ void ScrollingWaveformItem::onTrackEjected()
     if (m_engine && m_engine->getTrackData())
         disconnect(m_engine->getTrackData(), nullptr, this, nullptr);
     m_lastPublishedDemand.reset();
+    refreshStemOverlay();
     invalidateGeometry();
+}
+
+void ScrollingWaveformItem::refreshStemOverlay()
+{
+    auto next = m_engine ? m_engine->stemWaveformOverlay() : nullptr;
+    const bool polling = next && next->data && !next->data->envelopeComplete();
+    if (polling != m_stemOverlayPoll->isActive()) {
+        if (polling)
+            m_stemOverlayPoll->start();
+        else
+            m_stemOverlayPoll->stop();
+    }
+    m_stemAnimator->setTarget(std::move(next));
 }
 
 void ScrollingWaveformItem::onDataUpdated()
@@ -1402,8 +1452,15 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
             || !qFuzzyCompare(scene->rasterScale, rasterScale));
     if (zoomScaleChanged)
         scene->beginZoomTransition();
+    // Read once: m_stemOverlay is only replaced on the GUI thread, which is
+    // blocked while the scene graph syncs.
+    const auto stemOverlay = m_stemOverlay;
+    const bool acceleratedStems = window()
+        && window()->rendererInterface()->graphicsApi() != QSGRendererInterface::Software;
+    const std::uint64_t stemRevision = !acceleratedStems && stemOverlay ? stemOverlay->revision : 0;
     const bool configurationChanged = staticConfigurationChanged
-        || scene->dataGeneration != snapshot->dataGeneration;
+        || scene->dataGeneration != snapshot->dataGeneration
+        || scene->stemRevision != stemRevision;
     const bool tilesReady = m_tilesReady.exchange(false, std::memory_order_acq_rel);
     const bool overlayConfigurationChanged = m_forceRebuild
         || staticConfigurationChanged;
@@ -1630,8 +1687,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                 const auto key = waveform_render::WaveformTileRasterizer::makeKey(
                     *snapshot, tileIndex, tileSpan, rasterScale,
                     imageHeight, dpr, selectedLodLevel,
-                    static_cast<std::uint32_t>(m_backgroundColor.rgba()),
-                    renderStyle);
+                    acceleratedStems ? 0u : static_cast<std::uint32_t>(m_backgroundColor.rgba()),
+                    renderStyle, stemRevision);
                 const auto requiredViewKey = waveform_render::viewKeyFor(key);
                 if (!scene->viewKey || *scene->viewKey != requiredViewKey) {
                     // A zoom/DPR/background change invalidates every pool
@@ -1669,7 +1726,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                         rasterScale,
                         bounds.height(),
                         dpr,
-                        std::abs(tileCentre - playheadPhysical)
+                        std::abs(tileCentre - playheadPhysical),
+                        acceleratedStems ? nullptr : stemOverlay
                     });
                 }
                 preparedTiles.push_back(std::move(prepared));
@@ -1704,6 +1762,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                     static_cast<float>(bounds.height()), window(),
                     scene->timeline, scene->loopFill);
                 if (upload) {
+                    scene->waveformNodes[poolIndex]->configure(
+                        prepared.span, rasterScale, snapshot->linesPerSecond);
                     scene->waveformRenderedLineCounts[poolIndex]
                         = upload->renderedColumns;
                     scene->waveformTextureBytes[poolIndex] = upload->bytes;
@@ -1722,6 +1782,19 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                     scene->waveformRenderedLineCounts[poolIndex] = 0;
                     scene->waveformTextureBytes[poolIndex] = 0;
                     ++missingVisibleTiles;
+                }
+            } else if (scene->waveformTileKeys[poolIndex]
+                       && waveform_render::sameTileIgnoringStemRevision(
+                           *scene->waveformTileKeys[poolIndex], prepared.key)) {
+                // Only the stem shading changed: keep the previous look until
+                // its replacement is rasterised instead of flashing the coarse
+                // fallback on every mute toggle.
+                ++readyVisibleTiles;
+                if (renderOriginChanged) {
+                    positionWaveformTile(
+                        scene->waveformNodes[poolIndex], prepared.span,
+                        scene->renderOriginLine, pixelsPerLine, rasterScale,
+                        dpr, static_cast<float>(bounds.height()));
                 }
             } else {
                 const bool uploadReadyButDeferred = prepared.ready
@@ -1952,6 +2025,7 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
         scene->trackGeneration = snapshot->trackGeneration;
         scene->dataGeneration = snapshot->dataGeneration;
+        scene->stemRevision = stemRevision;
         scene->pixelsPerLine = pixelsPerLine;
         scene->rasterScale = rasterScale;
         scene->devicePixelRatio = dpr;
@@ -2025,6 +2099,12 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     const double timelineTranslation = waveform_render::smoothTimelineTranslation(
         bounds.width(), playheadLine, scene->renderOriginLine, pixelsPerLine, dpr,
         playheadPosition());
+    for (auto* node : scene->waveformNodes)
+        if (node)
+            node->setStems(stemOverlay, m_backgroundColor);
+    for (auto* node : scene->zoomTransitionNodes)
+        if (node)
+            node->setStems(stemOverlay, m_backgroundColor);
     QMatrix4x4 transform;
     transform.translate(static_cast<float>(timelineTranslation), 0.0f);
     scene->timeline->setMatrix(transform);

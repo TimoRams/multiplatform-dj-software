@@ -45,6 +45,17 @@ target_sources(${PROJECT_NAME} PRIVATE
     app/SettingsManager.h
     app/SettingsManager.cpp
 
+    # Stems
+    stems/StemTrackData.h
+    stems/StemMixState.h
+    stems/StemChunkPlan.h
+    stems/StemInference.h
+    stems/StemInference.cpp
+    stems/StemSeparationService.h
+    stems/StemSeparationService.cpp
+    stems/StemsController.h
+    stems/StemsController.cpp
+
     # Audio
     audio/device/AudioDeviceService.h
     audio/device/AudioDeviceService.cpp
@@ -110,6 +121,7 @@ target_sources(${PROJECT_NAME} PRIVATE
     # Decks
     deck/DjEngine.h
     deck/DjEngine.cpp
+    deck/DjEngineStems.cpp
     deck/DjEngineTransport.cpp
     deck/DjEngineCues.cpp
     deck/DjEnginePerformance.cpp
@@ -208,6 +220,9 @@ target_sources(${PROJECT_NAME} PRIVATE
     waveform/render/OverviewWaveformItem.cpp
     waveform/render/ScrollingWaveformItem.h
     waveform/render/ScrollingWaveformItem.cpp
+    waveform/render/StemWaveformAnimator.h
+    waveform/render/StemWaveformTextureNode.h
+    waveform/render/StemWaveformTextureNode.cpp
     waveform/render/WaveformRenderMath.h
     waveform/render/WaveformTileRasterizer.h
     waveform/render/WaveformTileRasterizer.cpp
@@ -257,4 +272,9 @@ qt_add_shaders(${PROJECT_NAME} "sidebar_shaders"
     PREFIX "/shaders"
     BASE "qml/performance"
     FILES "qml/performance/sidebarblur.frag" "qml/performance/modalblur.frag"
+)
+qt_add_shaders(${PROJECT_NAME} "stem_waveform_shaders"
+    PREFIX "/shaders"
+    BASE "waveform/render"
+    FILES "waveform/render/stemwaveform.vert" "waveform/render/stemwaveform.frag"
 )

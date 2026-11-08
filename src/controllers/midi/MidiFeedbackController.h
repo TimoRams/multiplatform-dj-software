@@ -57,6 +57,7 @@ public:
                   DjEngine* deckC, DjEngine* deckD);
     void setMapping(const MidiFeedbackMapping& mapping);
     void setEnabled(bool enabled);
+    void setHotcueFeedbackEnabled(int deck, bool enabled);
     bool isEnabled() const { return m_enabled; }
 
     void start();
@@ -96,6 +97,7 @@ private:
     MidiFeedbackMapping m_mapping;
     std::array<uint8_t, 4> m_lastVuValues = { 0xFF, 0xFF, 0xFF, 0xFF };
     std::array<LevelMeterBallistics, 4> m_vuBallistics;
+    std::array<bool, 4> m_hotcueFeedbackEnabled { true, true, true, true };
     bool m_enabled = false;
     bool m_rawTestActive = false;
     bool m_blinkPhase = false;

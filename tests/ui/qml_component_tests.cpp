@@ -1720,6 +1720,179 @@ QQuickItem* findVisualItem(QQuickItem* parent, const QString& name)
     return nullptr;
 }
 
+bool stemPreanalysisUiTests(const std::string& library)
+{
+    QString actions;
+    if (!extractFunctions(library, {"startStemPreanalysisCurrentView"}, actions))
+        return false;
+    const auto button = componentSection(library, "StemPreanalysisButton");
+    const auto badge = componentSection(library, "StemCacheBadge");
+    const auto header = read("src/qml/shell/TopHeader.qml");
+    const auto progressBegin = header.find("    Rectangle {\n        objectName: \"stemPreanalysisTopProgress\"");
+    const auto progressEnd = header.find("Sizing helpers", progressBegin);
+    const auto progressBlockEnd = header.rfind('\n', progressEnd);
+    const auto menuBegin = library.find("        MenuItem {\n            text: \"Track analysieren / erneut analysieren\"");
+    const auto menuEnd = library.find("        MenuSeparator {", menuBegin);
+    if (!require(!button.empty() && !badge.empty() && progressBegin != std::string::npos
+                     && progressEnd != std::string::npos && menuBegin != std::string::npos
+                     && menuEnd != std::string::npos,
+                 "production stems button, badge and header progress exist"))
+        return false;
+    QQmlEngine engine;
+    auto controller = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool available: true
+            property bool preanalysisRunning: false
+            property int preanalysisCompleted: 0
+            property int preanalysisTotal: 2
+            property real preanalysisProgress: 0
+            property string preanalysisTitle: "Fixture"
+            property string error: ""
+            property int cacheRevision: 0
+            property bool cached: false
+            property int allRequests: 0
+            property string playlistRequest: ""
+            property var requestedTracks: []
+            property int stops: 0
+            function hasCachedStems(path) { return cached && path === "fixture.wav" }
+            function preanalyzeAll() { ++allRequests; preanalysisRunning = true }
+            function preanalyzePlaylist(id) { playlistRequest = id; preanalysisRunning = true }
+            function preanalyzeTracks(tracks) { requestedTracks = tracks; preanalysisRunning = true }
+            function preanalyzeTrack(path, title) {
+                requestedTracks = [{filePath: path, title: title}]
+                preanalysisRunning = true
+            }
+            function cancelPreanalysis() { ++stops; preanalysisRunning = false }
+        }
+    )"), "stem preanalysis observable controller instantiates");
+    if (!controller)
+        return false;
+    engine.rootContext()->setContextProperty("stemFixture", controller.get());
+    auto host = createQmlObject(engine, QStringLiteral(R"(
+        import QtQuick
+        import QtQuick.Controls
+        import QtQuick.Layouts
+        import DJSoftware
+        import DJSoftware as Design
+        Item {
+            id: libraryRoot
+            width: 1024; height: 80
+            property var stemsController: stemFixture
+            property bool touchMode: false
+            property string activeTab: "library"
+            property string currentPlaylistId: "playlist-1"
+            property string ctxFilePath: "fixture.wav"
+            property string ctxTitle: "Context fixture"
+            property string ctxTrackId: "track-1"
+            property var currentListTracks: [{filePath: "favorite.wav"}]
+            property var filteredFileTracks: ["one.wav", "two.wav"]
+            property QtObject libraryManager: QtObject { property string currentFolder: "/music" }
+            property QtObject deviceLibraryManager: QtObject {
+                property var currentTracks: [{filePath: "/usb/track.wav"}]
+            }
+            property color accentGreen: "#48bb78"
+            property color borderSub: "#222222"
+            property color borderMain: "#222222"
+            property color textPrimary: "#ffffff"
+            property QtObject libraryAnalyzer: QtObject { function analyzeTrack(id, path, title) {} }
+            property QtObject window: QtObject { function sp(value) { return value } }
+    )") + actions + QString::fromStdString(button + '\n' + badge) + QStringLiteral(R"(
+            RowLayout {
+                height: 40
+                StemPreanalysisButton {}
+                StemCacheBadge { filePath: "fixture.wav" }
+            }
+            Menu {
+                id: trackContextMenu
+                objectName: "stemContextMenuFixture"
+                property bool externalTrack: false
+    )") + QString::fromStdString(library.substr(menuBegin, menuEnd - menuBegin))
+        + QStringLiteral(R"(
+            }
+            Item {
+                id: root
+                anchors.fill: parent
+                property var stemsController: libraryRoot.stemsController
+    )") + QString::fromStdString(header.substr(progressBegin, progressBlockEnd - progressBegin))
+        + QStringLiteral("\n}\n}"), "production stems UI components instantiate");
+    if (!host)
+        return false;
+    auto* item = qobject_cast<QQuickItem*>(host.get());
+    QQuickWindow window;
+    window.resize(1024, 80);
+    item->setParentItem(window.contentItem());
+    window.show();
+    QCoreApplication::processEvents();
+    auto* stemButton = findVisualItem(item, "stemPreanalysisButton");
+    auto* cacheBadge = findVisualItem(item, "stemCacheBadge");
+    auto* fill = findVisualItem(item, "stemPreanalysisFill");
+    auto* topProgress = findVisualItem(item, "stemPreanalysisTopProgress");
+    if (!require(stemButton && cacheBadge && fill && topProgress, "stems UI exposes its rendered controls"))
+        return false;
+    bool ok = require(!cacheBadge->isVisible() && !topProgress->isVisible(),
+                      "uncached tracks have no badge and idle queues have no header progress");
+    ok &= clickItem(window, stemButton, "stem button starts the current library view");
+    ok &= require(controller->property("allRequests").toInt() == 1 && topProgress->isVisible(),
+                  "starting stems invokes the library queue and shows top progress");
+    controller->setProperty("preanalysisProgress", 0.5);
+    QTest::qWait(180);
+    ok &= require(std::abs(fill->width() - (stemButton->width() - 2) * 0.5) < 1.0
+                      && std::abs(topProgress->childItems().first()->width() - item->width() * 0.5) < 1.0,
+                  "button and top header display the real aggregate queue fraction");
+    ok &= clickItem(window, stemButton, "running stem button cancels the queue");
+    ok &= require(controller->property("stops").toInt() == 1 && !topProgress->isVisible(),
+                  "stopping hides the global progress bar");
+    controller->setProperty("cached", true);
+    controller->setProperty("cacheRevision", 1);
+    QCoreApplication::processEvents();
+    ok &= require(cacheBadge->isVisible(), "cache revision makes a prepared track badge visible");
+    controller->setProperty("cached", false);
+    controller->setProperty("cacheRevision", 2);
+    QCoreApplication::processEvents();
+    ok &= require(!cacheBadge->isVisible(), "cache deletion or pruning removes the ready badge");
+    auto* menu = host->findChild<QObject*>("stemContextMenuFixture");
+    auto* action = host->findChild<QObject*>("stemPreanalysisTrackAction");
+    ok &= require(menu && action && menu->property("count").toInt() == 2
+                      && action->property("enabled").toBool()
+                      && QMetaObject::invokeMethod(action, "triggered")
+                      && controller->property("requestedTracks").toList().first().toMap()
+                          .value("filePath").toString() == "fixture.wav",
+                  "stem context action is a top-level menu item and queues the selected track");
+    const auto startView = [&] {
+        return QMetaObject::invokeMethod(host.get(), "startStemPreanalysisCurrentView");
+    };
+    host->setProperty("activeTab", "playlist");
+    ok &= require(startView() && controller->property("playlistRequest").toString() == "playlist-1",
+                  "playlist stem button processes only the selected playlist");
+    host->setProperty("activeTab", "files");
+    ok &= require(startView() && controller->property("requestedTracks").toList().size() == 2
+                      && controller->property("requestedTracks").toList().first().toMap()
+                          .value("filePath").toString() == "/music/one.wav",
+                  "folder stem preanalysis resolves the visible local files");
+    host->setProperty("activeTab", "usb");
+    ok &= require(startView() && controller->property("requestedTracks").toList().first().toMap()
+                          .value("filePath").toString() == "/usb/track.wav",
+                  "USB stems use the current device tracks");
+    host->setProperty("activeTab", "favorites");
+    ok &= require(startView() && controller->property("requestedTracks").toList().first().toMap()
+                          .value("filePath").toString() == "favorite.wav",
+                  "filtered collection stem preanalysis uses its own track list");
+    host->setProperty("width", 640);
+    host->setProperty("touchMode", true);
+    QTest::qWait(30);
+    ok &= require(stemButton->width() == 88 && stemButton->height() == 40,
+                  "narrow AIO uses a compact stem button with a touch-sized target");
+    host->setProperty("activeTab", "streaming");
+    QCoreApplication::processEvents();
+    ok &= require(!stemButton->isVisible(), "streaming views do not offer local stem preanalysis");
+    host->setProperty("stemsController", QVariant::fromValue<QObject*>(nullptr));
+    QCoreApplication::processEvents();
+    ok &= require(!cacheBadge->isVisible() && !topProgress->isVisible(),
+                  "missing stems support hides cache and progress safely");
+    return ok;
+}
+
 bool performancePadsThemeRuntimeTests()
 {
     QQmlEngine engine;
@@ -1727,6 +1900,7 @@ bool performancePadsThemeRuntimeTests()
         import QtQml
         QtObject {
             property bool isPlaying: false
+            property bool hasTrack: true
             property bool scratchVisualActive: false
             property real currentBpm: 120
             property real progress: 0
@@ -1741,6 +1915,12 @@ bool performancePadsThemeRuntimeTests()
             property int cueTriggers: 0
             property int cueStores: 0
             property int fxReleases: 0
+            property int stemsState: 0
+            property real stemsProgress: 0
+            property bool stemsPlayheadReady: false
+            property string stemsError: ""
+            property var stemGains: [1, 1, 1, 1]
+            property int stemRetries: 0
             property string appliedFx: ""
             property real seekPosition: -1
             function getDuration() { return 120 }
@@ -1756,6 +1936,17 @@ bool performancePadsThemeRuntimeTests()
             function clearPadFx() { ++fxReleases; appliedFx = "" }
             function startEchoOut() { appliedFx = "EchoOut" }
             function stopEchoOut() { appliedFx = "" }
+            function toggleStemMute(index) {
+                var gains = stemGains.slice()
+                gains[index] = gains[index] > 0.5 ? 0 : 1
+                stemGains = gains
+            }
+            function soloStem(index) {
+                var gains = [0, 0, 0, 0]
+                gains[index] = 1
+                stemGains = gains
+            }
+            function separateStems() { ++stemRetries; stemsState = 2; return true }
             signal playingChanged()
             signal tempoChanged()
             signal reverseChanged()
@@ -1778,7 +1969,24 @@ bool performancePadsThemeRuntimeTests()
     )"), "performance pad theme router instantiates");
     if (!router)
         return false;
+    auto stemController = createQmlObject(engine, QStringLiteral(R"(
+        import QtQml
+        QtObject {
+            property bool supported: true
+            property bool modelInstalled: false
+            property bool available: supported && modelInstalled
+            property bool downloading: false
+            property real downloadProgress: 0
+            property string error: ""
+            property int downloads: 0
+            function downloadModel() { ++downloads; downloading = true }
+            function cancelDownload() { downloading = false }
+        }
+    )"), "performance pad stems controller instantiates");
+    if (!stemController)
+        return false;
     engine.rootContext()->setContextProperty(QStringLiteral("midiManager"), router.get());
+    engine.rootContext()->setContextProperty(QStringLiteral("stems"), stemController.get());
     QQmlComponent component(&engine, QUrl::fromLocalFile(QString::fromUtf8(BROCKDJ_SOURCE_DIR)
         + QStringLiteral("/src/qml/performance/PerformancePads.qml")));
     std::unique_ptr<QObject> pads(component.create());
@@ -1840,11 +2048,11 @@ bool performancePadsThemeRuntimeTests()
     for (const QSizeF size : {QSizeF(420, 100), QSizeF(537, 100), QSizeF(720, 160)}) {
         item->setSize(size);
         window.resize(size.toSize());
-        for (int page = 0; page < 6; ++page) {
+        for (int page = 0; page < 7; ++page) {
             pads->setProperty("activeTab", page);
             QCoreApplication::processEvents();
             auto* bar = findVisualItem(item, QStringLiteral("padModeBar"));
-            for (int tabIndex = 0; tabIndex < 6; ++tabIndex) {
+            for (int tabIndex = 0; tabIndex < 7; ++tabIndex) {
                 auto* tab = findVisualItem(item, QStringLiteral("padTab%1").arg(tabIndex));
                 auto* tabLabel = findVisualItem(item, QStringLiteral("padTabLabel%1").arg(tabIndex));
                 auto* previous = tabIndex > 0
@@ -1853,7 +2061,7 @@ bool performancePadsThemeRuntimeTests()
                                   && tab->x() == std::round(tab->x())
                                   && tab->width() == std::round(tab->width())
                                   && (!previous || tab->x() == previous->x() + previous->width())
-                                  && (tabIndex != 5 || tab->x() + tab->width() == bar->width() - 1),
+                                  && (tabIndex != 6 || tab->x() + tab->width() == bar->width() - 1),
                               "mode tabs share a continuous frame with integer-aligned adjoining cells");
                 ok &= require(tabLabel && !tabLabel->property("truncated").toBool(),
                               "mode captions remain readable without truncation");
@@ -1875,6 +2083,43 @@ bool performancePadsThemeRuntimeTests()
             }
         }
     }
+    pads->setProperty("activeTab", 6);
+    QCoreApplication::processEvents();
+    auto* stemOverlay = findVisualItem(item, QStringLiteral("stemsStatusOverlay"));
+    auto* stemAction = findVisualItem(item, QStringLiteral("stemsStatusAction"));
+    auto* stemMessage = findVisualItem(item, QStringLiteral("stemsStatusText"));
+    ok &= require(stemOverlay && stemOverlay->isVisible() && stemMessage
+                      && stemMessage->property("text").toString().contains(QStringLiteral("166 MB")),
+                  "the stems page explains the one-time model download");
+    ok &= clickItem(window, stemAction, "the stems page offers a model download");
+    ok &= require(stemController->property("downloads").toInt() == 1
+                      && stemController->property("downloading").toBool(),
+                  "the download button starts the model download");
+    stemController->setProperty("downloading", false);
+    stemController->setProperty("modelInstalled", true);
+    deck->setProperty("stemsState", 2);
+    deck->setProperty("stemsProgress", 0.25);
+    QCoreApplication::processEvents();
+    auto* stemTab = findVisualItem(item, QStringLiteral("padTabLabel6"));
+    ok &= require(stemOverlay && !stemOverlay->isVisible() && stemTab
+                      && stemTab->property("text").toString().contains(QStringLiteral("WAIT")),
+                  "unseparated audio at the playhead is shown as waiting");
+    deck->setProperty("stemsPlayheadReady", true);
+    QCoreApplication::processEvents();
+    ok &= require(stemTab->property("text").toString().contains(QStringLiteral("25%")),
+                  "the stems page shows progress when the playhead is ready");
+    ok &= clickItem(window, cue, "the vocals stem pad is clickable");
+    ok &= require(!cue->property("padActive").toBool()
+                      && deck->property("stemGains").toList().value(0).toInt() == 0,
+                  "the first stem pad mutes vocals");
+    deck->setProperty("stemsError", QStringLiteral("Model could not be loaded"));
+    deck->setProperty("stemsState", 4);
+    QCoreApplication::processEvents();
+    ok &= require(stemOverlay->isVisible() && stemMessage->property("text").toString().contains("Model"),
+                  "a separation failure is visible on the affected deck");
+    ok &= clickItem(window, stemAction, "a failed separation can be retried");
+    ok &= require(deck->property("stemRetries").toInt() == 1,
+                  "retry starts separation again");
     pads->setProperty("deckId", QStringLiteral("deckA"));
     router->setProperty("deckAPadMode", 4);
     QCoreApplication::processEvents();
@@ -4281,6 +4526,7 @@ int main(int argc, char** argv)
                   "headless smoke verifies Qt Quick software rendering, normal and early QML-policy closes, and skips hardware discovery");
     const auto library = read("src/qml/library/Library.qml");
     ok &= libraryActionTests(library);
+    ok &= stemPreanalysisUiTests(library);
     ok &= libraryControllerPaneTests(library);
     ok &= librarySwipeTests(library);
     ok &= require(library.find("tr.touchMode && tr.rowSourceTab !== \"usb\" ? 148 : 0")
@@ -4581,7 +4827,7 @@ int main(int argc, char** argv)
                       && turntableIndicator.find("motionIntervalMs > 17")
                           != std::string::npos,
                   "audio pressure can reduce animation and suspend tile raster work");
-    ok &= require(performancePads.find("[\"HOT CUE\", \"PAD FX\", \"BEATJUMP\", \"SAMPLER\", \"BEAT LOOP\", \"SLIP LOOP\"]")
+    ok &= require(performancePads.find("[\"HOT CUE\", \"PAD FX\", \"BEATJUMP\", \"SAMPLER\", \"BEAT LOOP\", \"SLIP LOOP\", \"STEMS\"]")
                       != std::string::npos
                   && performancePads.find("selectPerformancePadMode(root.deckId, index >= 4 ? index + 1 : index)")
                       != std::string::npos,
@@ -4595,7 +4841,7 @@ int main(int argc, char** argv)
                   && midiManagerHeader.find("performancePadStateChanged") != std::string::npos,
                   "touch and FLX10 pads share one controller state path");
     ok &= require(performancePads.find("nextMode === 4 ? 3 : nextMode") != std::string::npos
-                  && performancePads.find("root.keyShiftMode && index === 3 ? \"KEY SHIFT\"")
+                  && performancePads.find("if (root.keyShiftMode && index === 3) return compact ? \"KEY\" : \"KEY SHIFT\"")
                       != std::string::npos
                   && performancePads.find("root.engine.keySemitoneOffset - root.keyShiftValue(index)")
                       != std::string::npos

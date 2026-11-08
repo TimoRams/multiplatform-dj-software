@@ -30,7 +30,7 @@ endif()
 option(BROCKDJ_ENABLE_NATIVE_ARCH "Enable target-specific -march=native code generation for local release builds" OFF)
 option(BROCKDJ_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer for non-shipping builds" OFF)
 option(BROCKDJ_OPTIMIZE_DEBUG_ANALYSIS
-    "Optimize analysis and JUCE DSP in Debug builds (disable for detailed debugging)" ON)
+    "Optimize analysis and realtime audio in Debug builds (disable for detailed debugging)" ON)
 if(BROCKDJ_OPTIMIZE_DEBUG_ANALYSIS AND NOT MSVC
    AND CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$")
     # JUCE's FFT implementation is part of its amalgamated DSP module.
@@ -43,11 +43,14 @@ if(BROCKDJ_OPTIMIZE_DEBUG_ANALYSIS AND NOT MSVC
         "${CMAKE_CURRENT_SOURCE_DIR}/libs/JUCE/modules/juce_dsp/juce_dsp.cpp"
         APPEND PROPERTY COMPILE_OPTIONS "$<$<CONFIG:Debug>:-Og>"
     )
-    # Header-only Signalsmith Stretch is instantiated here. Unoptimised, the
-    # keylock worker cannot keep up with real time, so Debug builds silently
-    # fell back to varispeed (and failed the keylock tests).
+    # Keylock, scratch resampling and stem mixing must meet audio deadlines even
+    # in the local Debug build. Disable the option when stepping through them.
     set_property(SOURCE
         "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/TimeStretchProcessor.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/cache/CachedPlaybackAudioSource.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/RenderModeRouter.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/internal/ScratchResampler.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/stems/StemSeparationService.cpp"
         APPEND PROPERTY COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>"
     )
 endif()
@@ -282,6 +285,62 @@ if(NOT _rubberband_found)
     message(FATAL_ERROR "RubberBand not found. Install rubberband development files for your platform.")
 endif()
 
+# ---- ONNX Runtime (optional, real-time stems) ------------------------------
+# Order: libs/onnxruntime (scripts/fetch-onnxruntime.sh), pkg-config, system.
+option(BROCKDJ_ENABLE_STEMS "Build real-time stem separation (needs ONNX Runtime)" ON)
+option(BROCKDJ_REQUIRE_STEMS "Fail configuration if ONNX Runtime is unavailable" OFF)
+set(BROCKDJ_HAS_ONNXRUNTIME 0)
+set(BROCKDJ_ONNXRUNTIME_LIBRARY "")
+if(BROCKDJ_ENABLE_STEMS)
+    set(_ort_bundled "${CMAKE_CURRENT_SOURCE_DIR}/libs/onnxruntime")
+    if(EXISTS "${_ort_bundled}/include/onnxruntime_cxx_api.h")
+        find_library(ONNXRUNTIME_LIBRARY NAMES onnxruntime PATHS "${_ort_bundled}/lib" NO_DEFAULT_PATH)
+        set(ONNXRUNTIME_INCLUDE_DIR "${_ort_bundled}/include")
+    endif()
+    if(NOT ONNXRUNTIME_LIBRARY AND PkgConfig_FOUND)
+        pkg_check_modules(ONNXRUNTIME_PC QUIET libonnxruntime)
+        if(ONNXRUNTIME_PC_FOUND)
+            find_path(ONNXRUNTIME_INCLUDE_DIR NAMES onnxruntime_cxx_api.h
+                HINTS ${ONNXRUNTIME_PC_INCLUDE_DIRS} PATH_SUFFIXES onnxruntime)
+            find_library(ONNXRUNTIME_LIBRARY NAMES onnxruntime HINTS ${ONNXRUNTIME_PC_LIBRARY_DIRS})
+        endif()
+    endif()
+    if(NOT ONNXRUNTIME_LIBRARY)
+        find_path(ONNXRUNTIME_INCLUDE_DIR NAMES onnxruntime_cxx_api.h PATH_SUFFIXES onnxruntime)
+        find_library(ONNXRUNTIME_LIBRARY NAMES onnxruntime)
+    endif()
+    if(WIN32 AND ONNXRUNTIME_LIBRARY)
+        get_filename_component(_ort_lib_dir "${ONNXRUNTIME_LIBRARY}" DIRECTORY)
+        find_file(ONNXRUNTIME_RUNTIME_DLL NAMES onnxruntime.dll
+            HINTS "${_ort_lib_dir}" "${_ort_bundled}/lib" "${_ort_bundled}/bin")
+    endif()
+    if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_LIBRARY
+       AND (NOT WIN32 OR ONNXRUNTIME_RUNTIME_DLL))
+        _rdbj_define_imported_binary_target(ThirdPartyOnnxRuntime "${ONNXRUNTIME_INCLUDE_DIR}" "${ONNXRUNTIME_LIBRARY}")
+        set(BROCKDJ_HAS_ONNXRUNTIME 1)
+        set(BROCKDJ_ONNXRUNTIME_LIBRARY "${ONNXRUNTIME_LIBRARY}")
+        get_filename_component(_ort_lib_dir "${BROCKDJ_ONNXRUNTIME_LIBRARY}" DIRECTORY)
+        message(STATUS "Stems: ONNX Runtime ${ONNXRUNTIME_LIBRARY}")
+    else()
+        message(STATUS "Stems: ONNX Runtime headers, library or Windows DLL not found; stems disabled")
+    endif()
+endif()
+if(BROCKDJ_REQUIRE_STEMS AND NOT BROCKDJ_HAS_ONNXRUNTIME)
+    message(FATAL_ERROR "Stems were required but ONNX Runtime is unavailable")
+endif()
+
+function(brockdj_link_onnxruntime target)
+    target_link_libraries(${target} PRIVATE ThirdPartyOnnxRuntime)
+    if(WIN32)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${ONNXRUNTIME_RUNTIME_DLL}" "$<TARGET_FILE_DIR:${target}>"
+            VERBATIM)
+    else()
+        set_property(TARGET ${target} APPEND PROPERTY BUILD_RPATH "${_ort_lib_dir}")
+    endif()
+endfunction()
+
 # ---- ALSA (Linux only) ----------------------------------------------------
 if(UNIX AND NOT APPLE)
     if(NOT TARGET ThirdParty::ALSA)
@@ -483,6 +542,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Ableton::Link
 )
 
+target_compile_definitions(${PROJECT_NAME} PRIVATE BROCKDJ_HAS_ONNXRUNTIME=${BROCKDJ_HAS_ONNXRUNTIME})
+if(BROCKDJ_HAS_ONNXRUNTIME)
+    brockdj_link_onnxruntime(${PROJECT_NAME})
+endif()
+
 if(TARGET Qt6::Bluetooth)
     target_link_libraries(BrockDJ PRIVATE Qt6::Bluetooth)
     target_compile_definitions(BrockDJ PRIVATE BROCKDJ_HAS_QT_BLUETOOTH=1)
@@ -640,6 +704,19 @@ target_include_directories(BrockDJ_waveform_render_tile_tests PRIVATE src)
 target_link_libraries(BrockDJ_waveform_render_tile_tests PRIVATE Qt6::Core Qt6::Gui)
 target_compile_features(BrockDJ_waveform_render_tile_tests PRIVATE cxx_std_23)
 add_test(NAME waveform_render_tiles COMMAND BrockDJ_waveform_render_tile_tests)
+
+add_executable(BrockDJ_stem_waveform_animation_tests
+    tests/waveform/stem_waveform_animation_tests.cpp
+    src/waveform/render/StemWaveformTextureNode.cpp)
+target_include_directories(BrockDJ_stem_waveform_animation_tests PRIVATE src)
+target_link_libraries(BrockDJ_stem_waveform_animation_tests PRIVATE Qt6::Gui Qt6::Quick Qt6::Test)
+target_compile_features(BrockDJ_stem_waveform_animation_tests PRIVATE cxx_std_23)
+qt_add_shaders(BrockDJ_stem_waveform_animation_tests "test_stem_waveform_shaders"
+    PREFIX "/shaders"
+    BASE "src/waveform/render"
+    FILES "src/waveform/render/stemwaveform.vert" "src/waveform/render/stemwaveform.frag")
+add_test(NAME stem_waveform_animation COMMAND BrockDJ_stem_waveform_animation_tests)
+set_tests_properties(stem_waveform_animation PROPERTIES SKIP_RETURN_CODE 77)
 
 add_executable(BrockDJ_waveform_visual_style_tests
     tests/waveform/waveform_visual_style_tests.cpp
@@ -1305,6 +1382,21 @@ target_include_directories(BrockDJ_phrase_counter_tests PRIVATE src)
 target_compile_features(BrockDJ_phrase_counter_tests PRIVATE cxx_std_23)
 add_test(NAME phrase_counter COMMAND BrockDJ_phrase_counter_tests)
 
+add_executable(BrockDJ_stem_core_tests
+    tests/stems/stem_core_tests.cpp
+    src/stems/StemSeparationService.cpp)
+target_include_directories(BrockDJ_stem_core_tests PRIVATE src)
+target_link_libraries(BrockDJ_stem_core_tests PRIVATE
+    juce::juce_core juce::juce_audio_basics juce::juce_audio_formats)
+target_compile_definitions(BrockDJ_stem_core_tests PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
+target_compile_features(BrockDJ_stem_core_tests PRIVATE cxx_std_23)
+if(BROCKDJ_HAS_ONNXRUNTIME)
+    target_sources(BrockDJ_stem_core_tests PRIVATE src/stems/StemInference.cpp)
+    brockdj_link_onnxruntime(BrockDJ_stem_core_tests)
+    target_compile_definitions(BrockDJ_stem_core_tests PRIVATE BROCKDJ_HAS_ONNXRUNTIME=1)
+endif()
+add_test(NAME stem_core COMMAND BrockDJ_stem_core_tests)
+
 add_executable(BrockDJ_key_sync_tests
     tests/deck/key_sync_tests.cpp)
 target_include_directories(BrockDJ_key_sync_tests PRIVATE src)
@@ -1394,6 +1486,7 @@ set(_brockdj_executable_targets
     BrockDJ_loudness_meter_tests
     BrockDJ_automix_planner_tests
     BrockDJ_midi_clock_tests
+    BrockDJ_stem_core_tests
     BrockDJ_playlist_files_tests
     BrockDJ_media_io_scheduler_tests
     BrockDJ_audio_thread_scheduling_tests

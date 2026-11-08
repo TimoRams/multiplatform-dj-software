@@ -9,6 +9,7 @@
 #include "controllers/flx10/Flx10RealtimeScratchIngress.h"
 #include "deck/scratch/ScratchController.h"
 #include "deck/scratch/ScratchSession.h"
+#include "StemAudioFixtures.h"
 
 #include <QCoreApplication>
 #include <QTemporaryDir>
@@ -902,6 +903,30 @@ int main(int argc, char** argv)
         ok &= require(router.readAhead(0, lookahead, 32), "reverse cache lookahead succeeds");
         ok &= require(lookahead.getSample(0, 31) < lookahead.getSample(0, 0),
                       "reverse cache lookahead moves backwards");
+
+        ok &= require(cache.waitForPageRange(trackA, 0, trackA.pageCount() - 1,
+                                             std::chrono::seconds(5)),
+                      "all pages for stem lookahead are resident");
+        auto stems = makeHalfVocalStemData(cache, trackA);
+        ok &= require(static_cast<bool>(stems), "stem lookahead fixture is resident");
+        if (stems) {
+            router.setReadAheadPosition(0.1, 1.0);
+            juce::AudioBuffer<float> original(2, 32);
+            ok &= require(router.readAhead(0, original, 32), "baseline lookahead succeeds");
+            auto state = graph.stemMixState();
+            state->publish(stems);
+            state->setGain(brockdj::stems::Stem::Vocals, 0.0f);
+            for (int block = 0; block < 25; ++block)
+                ok &= require(router.readAhead(0, lookahead, 32), "stem lookahead succeeds");
+            bool matches = true;
+            for (int channel = 0; channel < 2; ++channel)
+                for (int sample = 0; sample < 32; ++sample)
+                    matches &= std::abs(lookahead.getSample(channel, sample)
+                                        - 0.5f * original.getSample(channel, sample)) < 0.00005f;
+            ok &= require(matches, "vocal mute is applied in the keylock read-ahead path");
+            state->resetGains();
+            state->publish(nullptr);
+        }
     }
     graph.setTransportRunning(true);
 
