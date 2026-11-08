@@ -642,5 +642,49 @@ int main()
         ok &= require(scale == cutAtStart,
                       "sub-visible tempo drift must not re-cut every tile");
     }
+
+    // Beat ticks, downbeats and cue lines move with the sub-pixel timeline
+    // transform. Sampled at physical pixel centres, their profile must keep
+    // the same total intensity and the same centroid as the true position at
+    // every phase; a hard core snapped each beat independently (jiggle).
+    for (const double dpr : {1.0, 1.25, 1.5, 2.0, 3.0}) {
+        for (const double physicalWidth : {1.0, 3.0}) {
+            for (int phaseStep = 0; phaseStep < 64; ++phaseStep) {
+                const double physicalCentre = 200.0 + phaseStep / 64.0;
+                const double centre = physicalCentre / dpr;
+                const auto edges = waveform_render::markerLineEdges(
+                    centre, physicalWidth, dpr);
+                double sum = 0.0;
+                double weighted = 0.0;
+                for (int pixel = 190; pixel < 212; ++pixel) {
+                    const double sample = (pixel + 0.5) / dpr;
+                    const double alpha = waveform_render::markerLineSampleAlpha(
+                        edges, sample);
+                    sum += alpha;
+                    weighted += alpha * (pixel + 0.5);
+                }
+                ok &= require(std::abs(sum - physicalWidth) < 1e-9,
+                              "marker lines keep constant coverage at every sub-pixel phase");
+                ok &= require(std::abs(weighted / sum - physicalCentre) < 1e-9,
+                              "marker line centroid follows the smooth timeline exactly");
+            }
+        }
+    }
+
+    // Bar-number and cue badges are drawn 1:1 from their texture; their
+    // on-screen edge must land on a physical pixel whatever the translation.
+    for (const double dpr : {1.0, 1.25, 1.5, 2.0, 3.0}) {
+        for (int frame = 0; frame < 240; ++frame) {
+            const double translation = -frame * 0.3713;
+            const double localLeft = 1234.567;
+            const double aligned = waveform_render::screenPixelAlignedLocalX(
+                localLeft, translation, dpr);
+            const double screenPhysical = (aligned + translation) * dpr;
+            ok &= require(std::abs(screenPhysical - std::round(screenPhysical)) < 1e-6,
+                          "label badges land on the physical pixel grid");
+            ok &= require(std::abs(aligned - localLeft) <= 0.5 / dpr + 1e-9,
+                          "label alignment moves a badge by at most half a pixel");
+        }
+    }
     return ok ? 0 : 1;
 }

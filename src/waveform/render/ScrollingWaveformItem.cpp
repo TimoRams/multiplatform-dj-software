@@ -386,6 +386,7 @@ struct WaveformSceneNode final : QSGClipNode {
             destroyTextureNode(timeline, label);
         downbeatLabelTexts.fill(QString());
         downbeatLabelColors.fill(QColor());
+        downbeatLabelRects.fill(QRectF());
         clearGeometry(loopEdges);
         clearGeometry(cueLines);
         for (auto* label : cueLabels) {
@@ -397,6 +398,7 @@ struct WaveformSceneNode final : QSGClipNode {
         // track would skip repainting and reveal stale content.
         cueLabelTexts.fill(QString());
         cueLabelColors.fill(QColor());
+        cueLabelRects.fill(QRectF());
         loopVisible = false;
         loopInLine = std::numeric_limits<double>::quiet_NaN();
         loopOutLine = std::numeric_limits<double>::quiet_NaN();
@@ -418,11 +420,15 @@ struct WaveformSceneNode final : QSGClipNode {
     // updateDownbeatCounterNode).
     std::array<QString, kDownbeatLabelNodePoolSize> downbeatLabelTexts{};
     std::array<QColor, kDownbeatLabelNodePoolSize> downbeatLabelColors{};
+    // Unsnapped timeline-local rects; screen-pixel alignment is applied per
+    // frame once the shared sub-pixel translation is known.
+    std::array<QRectF, kDownbeatLabelNodePoolSize> downbeatLabelRects{};
     QSGGeometryNode* loopEdges = nullptr;
     QSGGeometryNode* cueLines = nullptr;
     std::array<QSGSimpleTextureNode*, kCueLabelNodePoolSize> cueLabels{};
     std::array<QString, kCueLabelNodePoolSize> cueLabelTexts{};
     std::array<QColor, kCueLabelNodePoolSize> cueLabelColors{};
+    std::array<QRectF, kCueLabelNodePoolSize> cueLabelRects{};
     std::array<std::optional<waveform_render::RenderTileKey>,
                kWaveformNodePoolSize> waveformTileKeys{};
     std::array<std::uint64_t, kWaveformNodePoolSize> waveformRenderedLineCounts{};
@@ -510,16 +516,18 @@ void writeFeatheredVerticalLine(QSGGeometry::ColoredPoint2D* vertices,
                                 uchar blue,
                                 uchar alpha)
 {
-    const float inverseDpr = static_cast<float>(1.0 / std::max(1.0, devicePixelRatio));
-    const float halfCore = std::max(0.5f, corePhysicalWidth) * inverseDpr * 0.5f;
-    const float feather = inverseDpr * 0.5f;
-    const float coreLeft = x - halfCore;
-    const float coreRight = x + halfCore;
-    writeSolidQuad(vertices, out, coreLeft - feather, coreLeft, top, bottom,
+    const auto edges = waveform_render::markerLineEdges(
+        x, corePhysicalWidth, devicePixelRatio);
+    const auto outerLeft = static_cast<float>(edges.outerLeft);
+    const auto innerLeft = static_cast<float>(edges.innerLeft);
+    const auto innerRight = static_cast<float>(edges.innerRight);
+    const auto outerRight = static_cast<float>(edges.outerRight);
+    writeSolidQuad(vertices, out, outerLeft, innerLeft, top, bottom,
                    red, green, blue, 0, alpha);
-    writeSolidQuad(vertices, out, coreLeft, coreRight, top, bottom,
+    // A one-pixel line is a pure tent; keep the vertex count fixed anyway.
+    writeSolidQuad(vertices, out, innerLeft, innerRight, top, bottom,
                    red, green, blue, alpha, alpha);
-    writeSolidQuad(vertices, out, coreRight, coreRight + feather, top, bottom,
+    writeSolidQuad(vertices, out, innerRight, outerRight, top, bottom,
                    red, green, blue, alpha, 0);
 }
 
@@ -567,11 +575,13 @@ QSGSimpleTextureNode* replaceCueLabelNode(QSGSimpleTextureNode* previous,
                                           double pixelsPerLine,
                                           double devicePixelRatio,
                                           QString& cachedText,
-                                          QColor& cachedColor)
+                                          QColor& cachedColor,
+                                          QRectF& localRect)
 {
     if (!window) {
         if (previous)
             previous->setRect({});
+        localRect = {};
         return previous;
     }
 
@@ -594,15 +604,19 @@ QSGSimpleTextureNode* replaceCueLabelNode(QSGSimpleTextureNode* previous,
     // across most guard-window rebases (the cues themselves don't move), so
     // skip the repaint — and the texture churn that comes with it — when
     // nothing about the badge's appearance actually changed.
-    if (previous && cachedText == text && cachedColor == label.color) {
-        previous->setRect(QRectF(x - badgeWidth * 0.5, 0.0, badgeWidth, badgeHeight));
+    if (previous && cachedText == text && cachedColor == label.color
+        && !localRect.isEmpty()) {
+        localRect.moveLeft(x - localRect.width() * 0.5);
+        previous->setRect(localRect);
         return previous;
     }
 
     const qreal dpr = std::max(1.0, devicePixelRatio);
-    QImage image(QSize(static_cast<int>(std::ceil(badgeWidth * dpr)),
-                       static_cast<int>(std::ceil(badgeHeight * dpr))),
-                 QImage::Format_RGBA8888_Premultiplied);
+    const QSize texels(static_cast<int>(std::ceil(badgeWidth * dpr)),
+                       static_cast<int>(std::ceil(badgeHeight * dpr)));
+    // Display the texture 1:1 so it is never resampled across texels.
+    const QSizeF texelExactSize(texels.width() / dpr, texels.height() / dpr);
+    QImage image(texels, QImage::Format_RGBA8888_Premultiplied);
     image.setDevicePixelRatio(dpr);
     image.fill(Qt::transparent);
 
@@ -623,13 +637,15 @@ QSGSimpleTextureNode* replaceCueLabelNode(QSGSimpleTextureNode* previous,
     auto* texture = window->createTextureFromImage(image);
     if (!texture) {
         clearWaveformTexture(previous);
+        localRect = {};
         return previous;
     }
     auto* node = new QSGSimpleTextureNode();
     node->setTexture(texture);
     node->setOwnsTexture(true);
     node->setFiltering(QSGTexture::Linear);
-    node->setRect(QRectF(x - badgeWidth * 0.5, 0.0, badgeWidth, badgeHeight));
+    localRect = QRectF(QPointF(x - texelExactSize.width() * 0.5, 0.0), texelExactSize);
+    node->setRect(localRect);
     if (previous) {
         parent->removeChildNode(previous);
         delete previous;
@@ -650,10 +666,12 @@ void updateDownbeatCounterNode(QSGSimpleTextureNode*& node,
                                double devicePixelRatio,
                                qreal top,
                                QString& cachedText,
-                               QColor& cachedColor)
+                               QColor& cachedColor,
+                               QRectF& localRect)
 {
     if (!window) {
         clearWaveformTexture(node);
+        localRect = {};
         return;
     }
 
@@ -675,14 +693,16 @@ void updateDownbeatCounterNode(QSGSimpleTextureNode*& node,
     // visible bar number unchanged (e.g. a hot-cue edit invalidates
     // geometry without moving the window), so skip the repaint/texture
     // upload when this slot's bar number and colour are still the same.
-    if (node && cachedText == label.text && cachedColor == label.color) {
-        node->setRect(QRectF(x + markerGap, top, badgeWidth, badgeHeight));
+    if (node && cachedText == label.text && cachedColor == label.color
+        && !localRect.isEmpty()) {
+        localRect.moveTopLeft(QPointF(x + markerGap, top));
+        node->setRect(localRect);
         return;
     }
 
-    QImage image(QSize(static_cast<int>(std::ceil(badgeWidth * dpr)),
-                       static_cast<int>(std::ceil(badgeHeight * dpr))),
-                 QImage::Format_ARGB32_Premultiplied);
+    const QSize texels(static_cast<int>(std::ceil(badgeWidth * dpr)),
+                       static_cast<int>(std::ceil(badgeHeight * dpr)));
+    QImage image(texels, QImage::Format_ARGB32_Premultiplied);
     image.setDevicePixelRatio(dpr);
     image.fill(Qt::transparent);
 
@@ -703,13 +723,16 @@ void updateDownbeatCounterNode(QSGSimpleTextureNode*& node,
     auto* texture = window->createTextureFromImage(image);
     if (!texture) {
         clearWaveformTexture(node);
+        localRect = {};
         return;
     }
     texture->setFiltering(QSGTexture::Linear);
     auto* textureNode = assignTextureNode(node, texture, parent, insertBefore);
     textureNode->setOwnsTexture(true);
     textureNode->setFiltering(QSGTexture::Linear);
-    textureNode->setRect(QRectF(x + markerGap, top, badgeWidth, badgeHeight));
+    localRect = QRectF(QPointF(x + markerGap, top),
+                       QSizeF(texels.width() / dpr, texels.height() / dpr));
+    textureNode->setRect(localRect);
     cachedText = label.text;
     cachedColor = label.color;
 }
@@ -1973,12 +1996,14 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                     scene->cueLabels[labelIndex], scene->timeline,
                     cueLabels[labelIndex], window(), scene->renderOriginLine,
                     pixelsPerLine, dpr, scene->cueLabelTexts[labelIndex],
-                    scene->cueLabelColors[labelIndex]);
+                    scene->cueLabelColors[labelIndex],
+                    scene->cueLabelRects[labelIndex]);
                 m_sceneGraphNodeCreationCount.fetch_add(1, std::memory_order_relaxed);
             }
             for (; labelIndex < scene->cueLabels.size(); ++labelIndex) {
                 scene->cueLabelTexts[labelIndex].clear();
                 scene->cueLabelColors[labelIndex] = QColor();
+                scene->cueLabelRects[labelIndex] = QRectF();
                 if (!scene->cueLabels[labelIndex])
                     continue;
                 scene->timeline->removeChildNode(scene->cueLabels[labelIndex]);
@@ -2008,7 +2033,8 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
 
             const auto markerLayout = waveform_render::verticalMarkerLayout(
                 static_cast<float>(bounds.height()));
-            const qreal labelTop = 1.0 / dpr + markerLayout.downbeatTickLength + 2.0;
+            const qreal labelTop = waveform_render::physicalPixelSnap(
+                1.0 / dpr + markerLayout.downbeatTickLength + 2.0, dpr);
             std::size_t labelIndex = 0;
             for (; labelIndex < labels.size()
                    && labelIndex < scene->downbeatLabels.size(); ++labelIndex) {
@@ -2017,10 +2043,13 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
                     scene->timeline, scene->loopEdges, scene->renderOriginLine,
                     pixelsPerLine, dpr, labelTop,
                     scene->downbeatLabelTexts[labelIndex],
-                    scene->downbeatLabelColors[labelIndex]);
+                    scene->downbeatLabelColors[labelIndex],
+                    scene->downbeatLabelRects[labelIndex]);
             }
-            for (; labelIndex < scene->downbeatLabels.size(); ++labelIndex)
+            for (; labelIndex < scene->downbeatLabels.size(); ++labelIndex) {
                 clearWaveformTexture(scene->downbeatLabels[labelIndex]);
+                scene->downbeatLabelRects[labelIndex] = QRectF();
+            }
         }
 
         scene->trackGeneration = snapshot->trackGeneration;
@@ -2109,6 +2138,19 @@ QSGNode* ScrollingWaveformItem::updatePaintNode(QSGNode* oldNode, UpdatePaintNod
     transform.translate(static_cast<float>(timelineTranslation), 0.0f);
     scene->timeline->setMatrix(transform);
     scene->timeline->markDirty(QSGNode::DirtyMatrix);
+    const auto alignLabel = [&](QSGSimpleTextureNode* node, const QRectF& localRect) {
+        if (!node || localRect.isEmpty())
+            return;
+        QRectF aligned = localRect;
+        aligned.moveLeft(waveform_render::screenPixelAlignedLocalX(
+            localRect.left(), timelineTranslation, dpr));
+        if (node->rect() != aligned)
+            node->setRect(aligned);
+    };
+    for (std::size_t index = 0; index < scene->downbeatLabels.size(); ++index)
+        alignLabel(scene->downbeatLabels[index], scene->downbeatLabelRects[index]);
+    for (std::size_t index = 0; index < scene->cueLabels.size(); ++index)
+        alignLabel(scene->cueLabels[index], scene->cueLabelRects[index]);
 
     m_transformUpdateCount.fetch_add(1, std::memory_order_relaxed);
     if (waveform_render::rasterScaleSettlePending(scene->rasterScaleTracker,

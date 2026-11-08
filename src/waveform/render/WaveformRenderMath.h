@@ -105,6 +105,58 @@ inline double physicalPixelSnap(double logicalPosition,
     return std::round(logicalPosition * dpr) / dpr;
 }
 
+// Horizontal profile of a vertical marker line moved by a sub-pixel transform.
+// Rasterisation samples each physical pixel once at its centre. A hard core
+// therefore jumps between whole pixels at a phase that differs for every beat,
+// which made the grid jiggle against the linearly filtered waveform. Ramping
+// alpha across one physical pixel centred on each true edge makes the sampled
+// alpha equal exact box-filter coverage: summed intensity and centroid stay
+// constant at every phase, so lines glide like the waveform texture.
+struct MarkerLineEdges {
+    double outerLeft = 0.0;
+    double innerLeft = 0.0;
+    double innerRight = 0.0;
+    double outerRight = 0.0;
+};
+
+inline MarkerLineEdges markerLineEdges(double centre,
+                                       double physicalWidth,
+                                       double devicePixelRatio) noexcept
+{
+    const double dpr = std::max(1.0, devicePixelRatio);
+    const double pixel = 1.0 / dpr;
+    const double halfWidth = std::max(1.0, physicalWidth) * pixel * 0.5;
+    const double left = centre - halfWidth;
+    const double right = centre + halfWidth;
+    return {left - pixel * 0.5, left + pixel * 0.5,
+            right - pixel * 0.5, right + pixel * 0.5};
+}
+
+// Sampled alpha (0..1) of a marker profile at a physical pixel centre.
+inline double markerLineSampleAlpha(const MarkerLineEdges& edges,
+                                    double logicalSample) noexcept
+{
+    const auto ramp = [](double value, double from, double to) {
+        if (to <= from)
+            return value >= from ? 1.0 : 0.0;
+        return std::clamp((value - from) / (to - from), 0.0, 1.0);
+    };
+    return std::min(ramp(logicalSample, edges.outerLeft, edges.innerLeft),
+                    1.0 - ramp(logicalSample, edges.innerRight, edges.outerRight));
+}
+
+// Local x for a child of a sub-pixel-translated node that must land on the
+// physical pixel grid on screen (text badges sampled 1:1 stay crisp instead
+// of alternating between sharp and blurred while scrolling).
+inline double screenPixelAlignedLocalX(double localX,
+                                       double translation,
+                                       double devicePixelRatio) noexcept
+{
+    if (!std::isfinite(localX) || !std::isfinite(translation))
+        return localX;
+    return physicalPixelSnap(localX + translation, devicePixelRatio) - translation;
+}
+
 inline double validatedPlayheadPosition(double position) noexcept
 {
     return std::isfinite(position) ? std::clamp(position, 0.2, 0.5) : 0.5;
