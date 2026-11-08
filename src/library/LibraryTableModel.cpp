@@ -1,5 +1,6 @@
 #include "LibraryTableModel.h"
 #include "LibraryDatabase.h"
+#include "LibrarySearchQuery.h"
 
 #include <QDebug>
 
@@ -415,6 +416,27 @@ void LibraryTableModel::applyAioBrowseFilter(const QString& field, const QString
 
 void LibraryTableModel::refresh()
 {
+    requestPage(false);
+}
+
+void LibraryTableModel::setSearchDeckContext(const QStringList& keys, const QVariantList& bpms)
+{
+    QList<double> values;
+    for (const QVariant& bpm : bpms) {
+        const double v = bpm.toDouble();
+        if (v > 0.0)
+            values.append(v);
+    }
+    if (keys == m_searchDeckKeys && values == m_searchDeckBpms)
+        return;
+    m_searchDeckKeys = keys;
+    m_searchDeckBpms = values;
+    if (m_filterText.contains(QStringLiteral("~deck"), Qt::CaseInsensitive))
+        refresh();
+}
+
+void LibraryTableModel::requestPage(bool loosenSearch)
+{
     if (!m_database) {
         qWarning() << "[LibraryTableModel] database worker unavailable for refresh";
         return;
@@ -424,19 +446,18 @@ void LibraryTableModel::refresh()
     QStringList conditions;
     QVariantMap bindings;
 
+    m_searchCanLoosen = false;
     if (!m_filterText.isEmpty()) {
-        const QString fv = "%" + m_filterText.toLower() + "%";
-        conditions << "(LOWER(t.title) LIKE :filter"
-                      " OR LOWER(t.artist) LIKE :filter"
-                      " OR LOWER(COALESCE(t.genre,'')) LIKE :filter"
-                      " OR LOWER(COALESCE(t.album,'')) LIKE :filter"
-                      " OR LOWER(COALESCE(t.comment,'')) LIKE :filter"
-                      " OR LOWER(COALESCE(t.notes,'')) LIKE :filter"
-                      " OR LOWER(COALESCE(l.file_path,'')) LIKE :filter"
-                      " OR EXISTS (SELECT 1 FROM TrackTags tt"
-                      "   JOIN Tags tg ON tt.tag_id = tg.id"
-                      "   WHERE tt.track_id = t.id AND LOWER(tg.name) LIKE :filter))";
-        bindings[":filter"] = fv;
+        brockdj::library::LibrarySearchContext context;
+        context.deckKeys = m_searchDeckKeys;
+        context.deckBpms = m_searchDeckBpms;
+        auto search = brockdj::library::compileLibrarySearch(m_filterText, context, loosenSearch);
+        m_searchCanLoosen = search.canLoosen;
+        if (!search.condition.isEmpty()) {
+            conditions << search.condition;
+            for (auto it = search.bindings.cbegin(); it != search.bindings.cend(); ++it)
+                bindings.insert(it.key(), it.value());
+        }
     }
 
     if (m_filterBpmMin > 0.0) {
@@ -524,6 +545,7 @@ void LibraryTableModel::refresh()
         .arg(sortColumnSql(), sortDir);
 
     const auto generation = ++m_refreshGeneration;
+    m_pageIsLoosened = loosenSearch;
     if (!m_database->requestLibraryPage(std::move(query), std::move(bindings), generation))
         qWarning() << "[LibraryTableModel] database worker rejected refresh";
 }
@@ -536,6 +558,11 @@ void LibraryTableModel::applyLibraryPage(std::uint64_t generation,
         return;
     if (!error.isEmpty()) {
         qWarning() << "[LibraryTableModel] refresh query failed:" << error;
+        return;
+    }
+    // Nothing found: retry once letting longer words be one letter off.
+    if (rows.isEmpty() && !m_pageIsLoosened && m_searchCanLoosen) {
+        requestPage(true);
         return;
     }
 

@@ -768,6 +768,73 @@ Rectangle {
             Layout.preferredWidth: root.compactBar ? 112 : 164
             Layout.fillHeight: true
         }
+
+        // ── Master loudness (EBU R128 short-term, LUFS) ──────────────────────
+        Item {
+            id: loudnessReadout
+            objectName: "masterLoudnessReadout"
+            visible: !root.veryCompactBar && loudness !== null
+            Layout.preferredWidth: root.compactBar ? 46 : 58
+            Layout.fillHeight: true
+
+            readonly property var loudness: typeof mixerControl !== "undefined" && mixerControl
+                                            ? mixerControl.loudness : null
+            readonly property real shortTerm: loudness ? loudness.shortTerm : -70
+            readonly property real target: loudness ? loudness.targetLufs : -9
+            readonly property bool silent: !loudness || shortTerm <= loudness.floorLufs + 0.01
+            // Within ±1 LU of the target is "on target"; louder than +1 LU warns.
+            readonly property color levelColor: silent ? UiTheme.textMuted
+                : shortTerm > target + 3 ? UiTheme.error
+                : shortTerm > target + 1 ? UiTheme.warning
+                : shortTerm >= target - 1 ? UiTheme.play
+                : UiTheme.textSecondary
+
+            function fmt(value) {
+                return !loudness || value <= loudness.floorLufs + 0.01 ? "–" : value.toFixed(1)
+            }
+
+            Column {
+                anchors.centerIn: parent
+                spacing: 0
+                Text {
+                    objectName: "masterLoudnessValue"
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: loudnessReadout.fmt(loudnessReadout.shortTerm)
+                    color: loudnessReadout.levelColor
+                    font.pixelSize: root.sp(12); font.bold: true; font.family: "monospace"
+                }
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "LUFS"
+                    color: UiTheme.textLabel
+                    font.pixelSize: root.sp(8); font.letterSpacing: 0.4
+                }
+            }
+
+            MouseArea {
+                id: loudnessMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                // Click restarts the integrated measurement; wheel moves the target.
+                onClicked: if (loudnessReadout.loudness) loudnessReadout.loudness.reset()
+                onWheel: (wheel) => {
+                    if (loudnessReadout.loudness)
+                        loudnessReadout.loudness.targetLufs = Math.round(loudnessReadout.target + (wheel.angleDelta.y > 0 ? 1 : -1))
+                }
+            }
+            ToolTip.visible: loudnessMouse.containsMouse
+            ToolTip.delay: 400
+            ToolTip.text: loudness
+                ? "Master-Lautheit (EBU R128)\n"
+                  + "Momentan: " + fmt(loudness.momentary) + " LUFS\n"
+                  + "Kurzzeit (3 s): " + fmt(loudness.shortTerm) + " LUFS\n"
+                  + "Integriert: " + fmt(loudness.integrated) + " LUFS\n"
+                  + "Max. Kurzzeit: " + fmt(loudness.maxShortTerm) + " LUFS\n"
+                  + "Ziel: " + target.toFixed(0) + " LUFS (Mausrad ändert)\n"
+                  + "Klick setzt die Messung zurück"
+                : ""
+        }
         Item { Layout.fillWidth: true }
 
         // ── Separator ────────────────────────────────────────────────────────

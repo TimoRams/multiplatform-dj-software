@@ -1,5 +1,8 @@
 #include "ApplicationLifecycle.h"
 #include "audio/SamplerController.h"
+#include "app/AutomixController.h"
+#include "app/MidiClockController.h"
+#include "app/MixTracklistController.h"
 
 #include "deck/DjEngine.h"
 #include "audio/AudioEngine.h"
@@ -67,6 +70,8 @@ void performExitTeardown(ApplicationRuntime& runtime, bool manualBackup)
         return;
     runtime.exitTeardownStarted = true;
     runtime.stopping = true;
+    if (runtime.automix)
+        runtime.automix->setEnabled(false);
 
     if (runtime.controlClock)
         runtime.controlClock->stop();
@@ -138,7 +143,10 @@ void shutdownApplication(ApplicationRuntime& runtime)
     }
     runtime.shutdownStarted = true;
     runtime.stopping = true;
+    if (runtime.automix)
+        runtime.automix->setEnabled(false);
     if (runtime.sampler) runtime.sampler->shutdown();
+    if (runtime.midiClock) runtime.midiClock->shutdown();
 
     performExitTeardown(runtime, runtime.settingsManager
                                      ? runtime.settingsManager->requestManualBackupOnExit()
@@ -177,11 +185,14 @@ void shutdownApplication(ApplicationRuntime& runtime)
         }
     }
 
+    runtime.automix.reset();
+    runtime.mixTracklist.reset();
     runtime.deckD.reset();
     runtime.deckC.reset();
     runtime.deckB.reset();
     runtime.deckA.reset();
     runtime.sampler.reset();
+    runtime.midiClock.reset();
     runtime.audioEngine.reset();
     runtime.libraryPreviewPlayer.reset();
     runtime.syncClockRegistration.reset();

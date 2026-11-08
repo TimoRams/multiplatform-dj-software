@@ -61,6 +61,14 @@ public:
     void setSequencerVelocity(int bank, int track, int step, int velocity) noexcept;
     void setSequencerLength(int bank, int steps) noexcept;
     void setSequencerTracks(int bank, std::uint8_t muted, std::uint8_t solo) noexcept;
+    // Auto-fill: extra hits in the last beat of every Nth bar (0 = off).
+    void setSequencerFill(int everyBars, int density) noexcept;
+    // Beat repeat while held: loops `steps` sixteenths from the engage point
+    // (0 = off). The playhead keeps running underneath, so release is in time.
+    void setSequencerRoll(int steps) noexcept;
+    bool sequencerFillActive() const noexcept { return m_sequenceFillActive.load(std::memory_order_relaxed); }
+    // Deterministic fill decision for one step; 0 = no extra hit.
+    static int fillVelocity(std::int64_t bar, int stepInBeat, int track, int density, int trackPeak) noexcept;
     int sequencerStep() const noexcept { return m_sequencerStep.load(std::memory_order_relaxed); }
     bool sequencerRunning() const noexcept { return m_sequenceRunning.load(std::memory_order_acquire); }
     int sequencerBank() const noexcept { return m_activeSequenceBank.load(std::memory_order_acquire); }
@@ -124,6 +132,11 @@ private:
     std::atomic<bool> m_sequenceRunning {false};
     std::atomic<bool> m_sequencerEnabled {false};
     std::atomic<float> m_sequencerSwing {0};
+    std::atomic<int> m_sequenceFillEvery {0}, m_sequenceFillDensity {50}, m_sequenceRoll {0};
+    std::atomic<bool> m_sequenceFillActive {false};
+    std::int64_t m_sequenceElapsed = 0;
+    std::int64_t m_rollAnchorElapsed = -1;
+    int m_rollAnchorStep = 0;
     std::int64_t m_lastSequenceStep = -1;
     std::int64_t m_sequenceOriginStep = 0;
     std::uint64_t m_sequenceClockGeneration = 0;

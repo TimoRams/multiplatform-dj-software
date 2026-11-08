@@ -247,6 +247,72 @@ Rectangle {
                     Text { text: Math.round(velocitySlider.value); color: UiTheme.textPrimary; font.pixelSize: 11 }
                     Item { Layout.fillWidth: true }
                 }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: UiTheme.px(6)
+                    Rectangle {
+                        objectName: "samplerSequencerFillLed"
+                        readonly property bool active: root.sequenceRunning && !!root.controller
+                            && root.controller.sequencerFillActive
+                        implicitWidth: UiTheme.px(10); implicitHeight: UiTheme.px(10)
+                        radius: width / 2
+                        color: active ? UiTheme.orange : UiTheme.panelDeep
+                        border.color: active ? UiTheme.orange : UiTheme.borderSubtle
+                    }
+                    Text { text: "AUTO FILL"; color: UiTheme.textSecondary; font.pixelSize: 11 }
+                    ComboBox {
+                        objectName: "samplerSequencerFillEvery"
+                        model: ["OFF", "EVERY BAR", "2 BARS", "4 BARS", "8 BARS"]
+                        readonly property var values: [0, 1, 2, 4, 8]
+                        currentIndex: Math.max(0, values.indexOf(root.controller ? root.controller.sequencerFillEvery : 0))
+                        onActivated: index => { if (root.controller) root.controller.sequencerFillEvery = values[index] }
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Adds extra hits to the last beat before every Nth downbeat. One-shot pads only."
+                    }
+                    Slider {
+                        id: fillDensitySlider
+                        objectName: "samplerSequencerFillDensity"
+                        Layout.preferredWidth: UiTheme.px(110)
+                        Layout.minimumWidth: UiTheme.px(50)
+                        from: 0; to: 100; stepSize: 1
+                        enabled: !!root.controller && root.controller.sequencerFillEvery > 0
+                        onMoved: if (root.controller) root.controller.sequencerFillDensity = Math.round(value)
+                        Binding {
+                            target: fillDensitySlider; property: "value"
+                            value: root.controller ? root.controller.sequencerFillDensity : 50
+                            when: !fillDensitySlider.pressed
+                            restoreMode: Binding.RestoreNone
+                        }
+                    }
+                    Text {
+                        text: Math.round(fillDensitySlider.value) + "%"
+                        color: UiTheme.textPrimary
+                        font.family: UiTheme.numericFontFamily
+                        Layout.preferredWidth: UiTheme.px(36)
+                    }
+                    Item { Layout.fillWidth: true }
+                    Text { text: "ROLL"; color: UiTheme.textSecondary; font.pixelSize: 11 }
+                    Repeater {
+                        model: [{ label: "1/16", steps: 1 }, { label: "1/8", steps: 2 },
+                                { label: "1/4", steps: 4 }, { label: "1/2", steps: 8 }]
+                        Button {
+                            required property var modelData
+                            objectName: "samplerSequencerRoll" + modelData.steps
+                            touchTarget: true
+                            text: modelData.label
+                            enabled: root.sequenceRunning
+                            checked: !!root.controller && root.controller.sequencerRoll === modelData.steps
+                            accentColor: UiTheme.orange
+                            onPressedChanged: {
+                                if (!root.controller) return
+                                if (pressed) root.controller.sequencerRoll = modelData.steps
+                                else if (root.controller.sequencerRoll === modelData.steps) root.controller.sequencerRoll = 0
+                            }
+                            ToolTip.visible: hovered
+                            ToolTip.text: "Hold to repeat the pattern from here; release to drop back in time"
+                        }
+                    }
+                }
                 Repeater {
                     model: 8
                     RowLayout {

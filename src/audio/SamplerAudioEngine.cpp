@@ -263,6 +263,29 @@ void SamplerAudioEngine::setSequencerTracks(int bank, std::uint8_t muted, std::u
     if (bank >= 0 && bank < 4)
         m_sequenceTracks[bank].store(static_cast<std::uint16_t>(muted | (solo << 8)), std::memory_order_release);
 }
+void SamplerAudioEngine::setSequencerFill(int everyBars, int density) noexcept {
+    if (everyBars != 0 && everyBars != 1 && everyBars != 2 && everyBars != 4 && everyBars != 8) return;
+    m_sequenceFillEvery.store(everyBars, std::memory_order_release);
+    m_sequenceFillDensity.store(std::clamp(density, 0, 100), std::memory_order_release);
+}
+void SamplerAudioEngine::setSequencerRoll(int steps) noexcept {
+    if (steps == 0 || steps == 1 || steps == 2 || steps == 4 || steps == 8)
+        m_sequenceRoll.store(steps, std::memory_order_release);
+}
+int SamplerAudioEngine::fillVelocity(std::int64_t bar, int stepInBeat, int track, int density, int trackPeak) noexcept {
+    if (density <= 0 || trackPeak <= 0 || stepInBeat < 0 || stepInBeat > 3) return 0;
+    // splitmix64: stable across runs so a fill sounds the same when replayed.
+    auto h = static_cast<std::uint64_t>(bar) * 0x9E3779B97F4A7C15ull
+        ^ static_cast<std::uint64_t>(stepInBeat * 8 + track + 1) * 0xBF58476D1CE4E5B9ull;
+    h = (h ^ (h >> 30)) * 0xBF58476D1CE4E5B9ull;
+    h = (h ^ (h >> 27)) * 0x94D049BB133111EBull;
+    h ^= h >> 31;
+    // Builds towards the downbeat: the last sixteenth fires at full density.
+    const double ramp = 0.4 + 0.2 * stepInBeat;
+    const double chance = density / 100.0 * ramp;
+    if (static_cast<double>(h % 10000) / 10000.0 >= chance) return 0;
+    return std::clamp(static_cast<int>(std::lround(trackPeak * (0.55 + 0.15 * stepInBeat))), 1, 127);
+}
 void SamplerAudioEngine::setSequencerBank(int bank) noexcept {
     if (bank >= 0 && bank < 4) m_sequenceBank.store(bank, std::memory_order_release);
 }
@@ -386,6 +409,8 @@ void SamplerAudioEngine::renderBlock(juce::AudioBuffer<float>& program, juce::Au
         m_activeSequenceLength = m_sequenceLengths[sequencerBank()].load(std::memory_order_acquire);
         m_sequenceClockGeneration = clock.generation;
         m_sequencerStep.store(0, std::memory_order_relaxed);
+        m_sequenceElapsed = 0;
+        m_rollAnchorElapsed = -1;
         m_sequenceWasEnabled = true;
         m_sequenceRunning.store(true, std::memory_order_release);
     } else if (!sequencerEnabled && m_sequenceWasEnabled) {
@@ -396,6 +421,7 @@ void SamplerAudioEngine::renderBlock(juce::AudioBuffer<float>& program, juce::Au
         }
         m_sequenceWasEnabled = false;
         m_sequenceRunning.store(false, std::memory_order_release);
+        m_sequenceFillActive.store(false, std::memory_order_relaxed);
     }
     if (sequencerEnabled) {
         if (m_sequenceClockGeneration != clock.generation || currentStep < m_lastSequenceStep
@@ -428,10 +454,33 @@ void SamplerAudioEngine::renderBlock(juce::AudioBuffer<float>& program, juce::Au
             const int sequenceBank = sequencerBank();
             const auto tracks = m_sequenceTracks[sequenceBank].load(std::memory_order_acquire);
             const int muted = tracks & 255, solo = tracks >> 8;
+            const std::int64_t elapsed = m_sequenceElapsed++;
+            const int roll = m_sequenceRoll.load(std::memory_order_acquire);
+            int lookupStep = patternStep;
+            if (roll > 0) {
+                if (m_rollAnchorElapsed < 0) { m_rollAnchorElapsed = elapsed; m_rollAnchorStep = patternStep; }
+                lookupStep = static_cast<int>((m_rollAnchorStep + (elapsed - m_rollAnchorElapsed) % roll)
+                    % m_activeSequenceLength);
+            } else {
+                m_rollAnchorElapsed = -1;
+            }
+            const int fillEvery = m_sequenceFillEvery.load(std::memory_order_acquire);
+            const std::int64_t bar = elapsed / 16;
+            const int stepInBeat = static_cast<int>(elapsed % 16) - 12;
+            const bool fill = roll == 0 && fillEvery > 0 && stepInBeat >= 0 && (bar + 1) % fillEvery == 0;
+            m_sequenceFillActive.store(fill, std::memory_order_relaxed);
+            const int density = fill ? m_sequenceFillDensity.load(std::memory_order_acquire) : 0;
             for (int track = 0; track < 8; ++track) {
                 const int slot = sequenceBank * 8 + track;
-                const int velocity = m_sequenceVelocities[slot][patternStep].load(std::memory_order_acquire);
-                if (velocity && !(muted & (1 << track)) && (!solo || (solo & (1 << track))) && m_samples[slot])
+                if ((muted & (1 << track)) || (solo && !(solo & (1 << track))) || !m_samples[slot]) continue;
+                int velocity = m_sequenceVelocities[slot][lookupStep].load(std::memory_order_acquire);
+                if (!velocity && density > 0 && !m_samples[slot]->loop) {
+                    int peak = 0;
+                    for (int i = 0; i < m_activeSequenceLength; ++i)
+                        peak = std::max(peak, static_cast<int>(m_sequenceVelocities[slot][i].load(std::memory_order_relaxed)));
+                    velocity = fillVelocity(bar, stepInBeat, track, density, peak);
+                }
+                if (velocity)
                     start(slot, 0, beat, clock, true, scheduledBeat, velocity / 127.0f);
             }
         }

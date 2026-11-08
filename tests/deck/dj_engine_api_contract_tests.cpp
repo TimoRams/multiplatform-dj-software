@@ -199,7 +199,9 @@ int main(int argc, char** argv)
     for (const char* method : std::array {
              "loadTrack", "play", "pause", "setPosition", "setTempoPercent",
              "triggerHotCue", "setSyncEnabled", "setReverse", "setSlip",
-             "loadExternalTrack", "externalSourceUnavailable", "ejectExternalSource" })
+             "loadExternalTrack", "externalSourceUnavailable", "ejectExternalSource",
+             "setBeatLoop", "beginSlipLoop", "endSlipLoop", "syncKeyTo",
+             "instantDoubleFrom" })
         ok &= require(header.contains(QString::fromUtf8(method)), method);
 
     // Header-level architecture boundary: implementation dependencies belong in

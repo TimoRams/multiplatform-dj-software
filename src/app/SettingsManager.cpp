@@ -636,6 +636,21 @@ void SettingsManager::setTightDoubleSync(bool enabled)
     emit tightDoubleSyncChanged();
 }
 
+bool SettingsManager::instantDoubles() const
+{
+    return getUiState(QStringLiteral("instantDoubles"), QStringLiteral("0")) == QLatin1String("1");
+}
+
+void SettingsManager::setInstantDoubles(bool enabled)
+{
+    const QString value = enabled ? QStringLiteral("1") : QStringLiteral("0");
+    if (getUiState(QStringLiteral("instantDoubles"), QStringLiteral("0")) == value)
+        return;
+
+    setUiState(QStringLiteral("instantDoubles"), value);
+    emit instantDoublesChanged();
+}
+
 QString SettingsManager::timeStretchBackend() const
 {
     const auto backend = readStringSetting(*this, "Audio/TimeStretchBackend", "signalsmith").trimmed().toLower();

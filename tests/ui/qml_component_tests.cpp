@@ -1840,11 +1840,11 @@ bool performancePadsThemeRuntimeTests()
     for (const QSizeF size : {QSizeF(420, 100), QSizeF(537, 100), QSizeF(720, 160)}) {
         item->setSize(size);
         window.resize(size.toSize());
-        for (int page = 0; page < 4; ++page) {
+        for (int page = 0; page < 6; ++page) {
             pads->setProperty("activeTab", page);
             QCoreApplication::processEvents();
             auto* bar = findVisualItem(item, QStringLiteral("padModeBar"));
-            for (int tabIndex = 0; tabIndex < 4; ++tabIndex) {
+            for (int tabIndex = 0; tabIndex < 6; ++tabIndex) {
                 auto* tab = findVisualItem(item, QStringLiteral("padTab%1").arg(tabIndex));
                 auto* tabLabel = findVisualItem(item, QStringLiteral("padTabLabel%1").arg(tabIndex));
                 auto* previous = tabIndex > 0
@@ -1853,7 +1853,7 @@ bool performancePadsThemeRuntimeTests()
                                   && tab->x() == std::round(tab->x())
                                   && tab->width() == std::round(tab->width())
                                   && (!previous || tab->x() == previous->x() + previous->width())
-                                  && (tabIndex != 3 || tab->x() + tab->width() == bar->width() - 1),
+                                  && (tabIndex != 5 || tab->x() + tab->width() == bar->width() - 1),
                               "mode tabs share a continuous frame with integer-aligned adjoining cells");
                 ok &= require(tabLabel && !tabLabel->property("truncated").toBool(),
                               "mode captions remain readable without truncation");
@@ -3313,6 +3313,10 @@ bool qmlMergeRuntimeTests()
         QMetaObject::invokeMethod(infoA.get(), "refreshDisplayedPlaybackPosition");
         QCoreApplication::processEvents();
         ok &= require(infoA->property("trackEnding").toBool(), "playing deck warns near its real-time track end");
+        ok &= require(infoA->property("trackEndFinal").toBool() && infoA->property("endBlinkOn").toBool(),
+                      "the final seconds start the fast end-of-track blink in the warning colour");
+        ok &= require(QTest::qWaitFor([&] { return !infoA->property("endBlinkOn").toBool(); }, 1000),
+                      "the end-of-track warning blinks");
         infoEngine->setProperty("loopActive", true);
         QCoreApplication::processEvents();
         ok &= require(!infoA->property("trackEnding").toBool(), "an active loop suppresses track-end warnings");
@@ -3379,6 +3383,70 @@ bool qmlMergeRuntimeTests()
                           "source reference capture saves");
         }
         deviceLibrary->setProperty("devices", QVariantList{});
+    }
+
+    {
+        QQmlComponent dbComponent(&engine);
+        dbComponent.setData(R"(
+import QtQml
+QtObject {
+    property bool healthBusy: false
+    property var calls: []
+    property var summary: ({ total: 12, missing: 2, missingIgnored: 1, duplicate: 0, noinfo: 3,
+                             unanalyzed: 4, lowbitrate: 0, lastMissingScan: 0 })
+    signal collectionHealthChanged()
+    signal healthTaskFinished(string task, var result)
+    function collectionHealthSummary() { return summary }
+    function scanMissingFiles() { calls = calls.concat(["scan"]); return true }
+    function refreshTagsFromFiles() { calls = calls.concat(["tags"]); return true }
+    function removeMissingTracks() { calls = calls.concat(["remove"]); return 2 }
+    function clearHealthIgnores(check) { calls = calls.concat(["clear:" + check]); return 1 }
+    function relocateMissingTracks(url) { return true }
+}
+)", QUrl());
+        std::unique_ptr<QObject> db(dbComponent.create(&context));
+        QQuickWindow healthWindow;
+        healthWindow.resize(1100, 640);
+        QQmlComponent healthComponent(&engine, QUrl::fromLocalFile(
+            qmlDirectory + QStringLiteral("library/CollectionHealthView.qml")));
+        std::unique_ptr<QObject> health(healthComponent.createWithInitialProperties(
+            {{QStringLiteral("database"), QVariant::fromValue(db.get())},
+             {QStringLiteral("appWindow"), QVariant::fromValue(windowContext.get())}}, &context));
+        if (!require(db != nullptr && health != nullptr, "collection health view instantiates")) {
+            std::cerr << dbComponent.errorString().toStdString() << healthComponent.errorString().toStdString();
+            return false;
+        }
+        auto* healthItem = qobject_cast<QQuickItem*>(health.get());
+        healthItem->setParentItem(healthWindow.contentItem());
+        healthItem->setSize(QSizeF(1100, 640));
+        healthWindow.show();
+        QTest::qWait(40);
+        const auto calls = [&db] { return db->property("calls").toStringList(); };
+        ok &= require(calls().contains("scan"), "opening the health view scans for missing files once");
+        QSignalSpy shows(health.get(), SIGNAL(showRequested(QString)));
+        ok &= clickItem(healthWindow, findVisualItem(healthItem, "collectionHealthShow_noinfo"),
+                        "health card shows its tracks");
+        ok &= require(shows.count() == 1 && shows.at(0).at(0).toString() == "health:noinfo",
+                      "show jumps to the health: search");
+        ok &= clickItem(healthWindow, findVisualItem(healthItem, "collectionHealthFix_noinfo"),
+                        "noinfo fix is clickable");
+        ok &= require(calls().contains("tags"), "noinfo fix refreshes tags from files");
+        auto* remove = findVisualItem(healthItem, "collectionHealthRemoveMissing");
+        ok &= clickItem(healthWindow, remove, "remove missing asks first");
+        ok &= require(!calls().contains("remove"), "first click on remove only arms the confirmation");
+        ok &= clickItem(healthWindow, remove, "remove missing confirms");
+        ok &= require(calls().contains("remove"), "second click removes missing tracks");
+        ok &= require(findVisualItem(healthItem, "collectionHealthUnignore_missing")->isVisible()
+                          && !findVisualItem(healthItem, "collectionHealthUnignore_noinfo")->isVisible(),
+                      "only checks with ignored tracks offer un-ignore");
+        ok &= require(!findVisualItem(healthItem, "collectionHealthShow_duplicate")->property("enabledState").toBool(),
+                      "clean checks have nothing to show");
+        const QString captureDir = qEnvironmentVariable("BROCKDJ_UI_CAPTURE_DIR");
+        if (!captureDir.isEmpty()) {
+            QTest::qWait(50);
+            ok &= require(healthWindow.grabWindow().save(captureDir + "/collection-health.png"),
+                          "collection health capture saves");
+        }
     }
 
     QQuickWindow fxWindow;
@@ -3844,6 +3912,10 @@ bool samplerAndRecordingRuntimeTests(const std::string& header)
             property int sequencerPendingBank: -1
             property bool sequencerRunning: sequencerEnabled
             property real internalBpm: 120
+            property int sequencerFillEvery: 0
+            property int sequencerFillDensity: 50
+            property bool sequencerFillActive: false
+            property int sequencerRoll: 0
             property int copiedPattern: -1
             property string clockSource: "INTERNAL"
             property real bpm: 120
@@ -4005,6 +4077,32 @@ bool samplerAndRecordingRuntimeTests(const std::string& header)
     }
     ok &= require(controller->property("sequencerSteps").toList()[0].toList()[16].toInt() < 127,
         "velocity slider edits the selected extended step");
+    for (const QSize size : {QSize(800,600),QSize(1280,800),QSize(1920,1080)}) {
+        window.resize(size); panelItem->setSize(QSizeF(size.width(),size.height()-48)); QCoreApplication::processEvents();
+        auto* roll = findVisualItem(panelItem,"samplerSequencerRoll8");
+        ok &= require(roll && roll->height() >= 44 && roll->mapRectToScene(roll->boundingRect()).right() <= size.width(),
+            "roll buttons keep touch targets and fit all workspace widths");
+    }
+    if (auto* roll = findVisualItem(panelItem,"samplerSequencerRoll2")) {
+        const QPoint centre = roll->mapToScene(roll->boundingRect().center()).toPoint();
+        QTest::mousePress(&window,Qt::LeftButton,Qt::NoModifier,centre);
+        QCoreApplication::processEvents();
+        ok &= require(controller->property("sequencerRoll").toInt() == 2, "holding a roll button engages the beat repeat");
+        QTest::mouseRelease(&window,Qt::LeftButton,Qt::NoModifier,centre);
+        QCoreApplication::processEvents();
+        ok &= require(controller->property("sequencerRoll").toInt() == 0, "releasing the roll button drops back into the pattern");
+    } else {
+        ok &= require(false, "roll buttons exist in the sequencer view");
+    }
+    auto* fillEvery = panel->findChild<QObject*>("samplerSequencerFillEvery");
+    ok &= require(fillEvery && QMetaObject::invokeMethod(fillEvery,"activated",Q_ARG(int,3)),
+        "auto-fill interval selector is reachable");
+    ok &= require(controller->property("sequencerFillEvery").toInt() == 4, "auto-fill interval maps to bars");
+    controller->setProperty("sequencerFillActive",true); QCoreApplication::processEvents();
+    auto* fillLed = findVisualItem(panelItem,"samplerSequencerFillLed");
+    ok &= require(fillLed && fillLed->property("active").toBool(), "fill indicator lights while the audio thread fills");
+    controller->setProperty("sequencerFillActive",false);
+    controller->setProperty("sequencerFillEvery",0);
     ok &= clickItem(window,findVisualItem(panelItem,"samplerSequencerMute0"),"track mute is reachable");
     ok &= clickItem(window,findVisualItem(panelItem,"samplerSequencerSolo0"),"track solo is reachable");
     ok &= require(controller->property("sequencerTracks").toList()[0].toMap()["muted"].toBool()
@@ -4271,7 +4369,8 @@ int main(int argc, char** argv)
                       && occurrences(fxUnit, "accent: root.accentColor") == 2,
                   "merged QML components remain local, independently scoped, and non-nested");
     ok &= require(!qmlManifest.empty()
-                      && occurrences(qmlManifest, "src/qml/") == 26
+                      && occurrences(qmlManifest, "src/qml/") == 27
+                      && qmlManifest.find("src/qml/library/CollectionHealthView.qml") != std::string::npos
                       && qmlManifest.find("src/qml/performance/PerformanceBackdrop.qml") != std::string::npos
                       && qmlManifest.find("src/qml/performance/SamplerPanel.qml") != std::string::npos
                       && qmlManifest.find("src/qml/performance/SamplerEditor.qml") != std::string::npos
@@ -4287,7 +4386,7 @@ int main(int argc, char** argv)
                       && qmlManifest.find("UiShortcutManager.qml") == std::string::npos
                       && qmlManifest.find("TurntableIndicator.qml") == std::string::npos
                       && qmlManifest.find("CrossfaderBar.qml") == std::string::npos,
-                  "central manifest packages 26 QML resources including shared icons and backdrop and excludes merged components");
+                  "central manifest packages 27 QML resources including shared icons and backdrop and excludes merged components");
     ok &= require(deckQuickPanel.find("property real beatJumpBeats") == std::string::npos
                       && deckQuickPanel.find("root.engine.beatJumpBeats") != std::string::npos
                       && engineHeader.find("Q_PROPERTY(double beatJumpBeats") != std::string::npos,
@@ -4482,9 +4581,9 @@ int main(int argc, char** argv)
                       && turntableIndicator.find("motionIntervalMs > 17")
                           != std::string::npos,
                   "audio pressure can reduce animation and suspend tile raster work");
-    ok &= require(performancePads.find("[\"HOT CUE\", \"PAD FX\", \"BEATJUMP\", \"SAMPLER\"]")
+    ok &= require(performancePads.find("[\"HOT CUE\", \"PAD FX\", \"BEATJUMP\", \"SAMPLER\", \"BEAT LOOP\", \"SLIP LOOP\"]")
                       != std::string::npos
-                  && performancePads.find("selectPerformancePadMode(root.deckId, index)")
+                  && performancePads.find("selectPerformancePadMode(root.deckId, index >= 4 ? index + 1 : index)")
                       != std::string::npos,
                   "performance pad tabs and FLX10 mode state stay synchronized");
     ok &= require(performancePads.find("PointerDevice.TouchScreen") != std::string::npos

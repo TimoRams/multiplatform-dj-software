@@ -2,6 +2,7 @@
 
 #include "audio/AudioBusMixer.h"
 #include "audio/AudioParameters.h"
+#include "audio/LoudnessMeter.h"
 #include "audio/SetRecorder.h"
 #include "audio/SamplerAudioEngine.h"
 #include "audio/DeckAudioPipeline.h"
@@ -129,7 +130,13 @@ public:
     // routing state (actual channel-fader gain × actual crossfader gain), not
     // an inference from transport state or signal level.
     [[nodiscard]] static bool deckOnAir(int deckIndex) noexcept;
+    // Same routing gain as a 0..1 weight, used to pick the dominant deck in a blend.
+    [[nodiscard]] static float deckAirGain(int deckIndex) noexcept;
     // Master peaks after master gain, before the protective limiter.
+    // K-weighted 100 ms master energies (BS.1770) since the last call; UI thread only.
+    template <typename Consumer>
+    static int drainLoudnessBlocks(Consumer&& consumer) noexcept
+    { return s_loudnessBlocks.drain(std::forward<Consumer>(consumer)); }
     [[nodiscard]] static float masterVuL_s() noexcept;
     [[nodiscard]] static float masterVuR_s() noexcept;
 
@@ -176,6 +183,7 @@ private:
     juce::AudioBuffer<float> m_samplerCue;
     SamplerAudioEngine m_sampler;
     SetRecorder m_recorder;
+    brockdj::audio::KWeightedBlockMeter m_loudnessMeter;
     MasterMixer m_masterMixer;
     HeadphoneBus m_headphoneBus;
     AudioOutputRouter m_outputRouter;
@@ -199,7 +207,9 @@ private:
     static std::atomic<uint64_t> s_callbackOverruns;
     static std::atomic<bool> s_masterClipDetected;
     static std::array<std::atomic<bool>, kMaximumDecks> s_deckOnAir;
+    static std::array<std::atomic<float>, kMaximumDecks> s_deckAirGain;
     static std::atomic<float> s_masterPeakSnapshotL;
     static std::atomic<float> s_masterPeakSnapshotR;
+    static brockdj::audio::LoudnessBlockQueue s_loudnessBlocks;
     static platform::AudioThreadScheduling s_audioThreadScheduling;
 };

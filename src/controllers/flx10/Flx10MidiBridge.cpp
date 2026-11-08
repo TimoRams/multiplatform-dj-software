@@ -195,6 +195,11 @@ static constexpr int kFlx10KeyShiftTable[3][8] = {
     {  4,  5,  6,  7,  0,  1,  2,  3 }, // Up
 };
 
+// CDJ-3000 BEAT LOOP / SLIP LOOP pad lengths, in beats.
+static constexpr double kBeatLoopPadBeats[8] = { 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0 };
+static constexpr double kSlipLoopPadBeats[8] = { 1.0 / 32.0, 1.0 / 16.0, 0.125, 0.25,
+                                                 0.5, 1.0, 2.0, 4.0 };
+
 bool parsePadModeParam(const QString& paramId, QChar& deck, MidiPadMode& mode)
 {
     QString suffix;
@@ -993,6 +998,15 @@ void MidiControllerManager::setPadModeForDeck(QChar deck, MidiPadMode mode)
     default: return;
     }
     const bool changed = *current != mode;
+    // A held roll must never outlive its pad page, whichever path switched it.
+    if (changed && *current == MidiPadMode::SlipLoop) {
+        if (DjEngine* engine = engineForDeck(deck))
+            engine->endSlipLoop();
+        if (deck.toUpper() == QLatin1Char('A'))
+            m_deckASlipLoopPad = -1;
+        else if (deck.toUpper() == QLatin1Char('B'))
+            m_deckBSlipLoopPad = -1;
+    }
     *current = mode;
     if (changed && mode == MidiPadMode::KeyShift) {
         // Start each selection visibly lit; the control-clock callback takes
@@ -1050,8 +1064,11 @@ void MidiControllerManager::stepKeyShiftRange(QChar deck, int direction)
 
 void MidiControllerManager::selectPerformancePadMode(const QString& deckId, int mode)
 {
+    // Key Shift is reached through the hardware's dedicated mode command; the
+    // on-screen tabs select the four classic pages plus BEAT/SLIP LOOP.
     if (mode < static_cast<int>(MidiPadMode::HotCue)
-        || mode > static_cast<int>(MidiPadMode::Sampler)) {
+        || mode > static_cast<int>(MidiPadMode::SlipLoop)
+        || mode == static_cast<int>(MidiPadMode::KeyShift)) {
         return;
     }
 
@@ -1117,6 +1134,14 @@ int MidiControllerManager::performancePadFxMomentary(const QString& deckId) cons
     if (!parsePerformanceDeckId(deckId, deck))
         return -1;
     return deck == QLatin1Char('A') ? m_deckAPadFxMomentary : m_deckBPadFxMomentary;
+}
+
+int MidiControllerManager::performanceSlipLoopPad(const QString& deckId) const
+{
+    QChar deck;
+    if (!parsePerformanceDeckId(deckId, deck))
+        return -1;
+    return deck == QLatin1Char('A') ? m_deckASlipLoopPad : m_deckBSlipLoopPad;
 }
 
 int MidiControllerManager::performancePadFxToggle(const QString& deckId) const
@@ -1543,6 +1568,25 @@ void MidiControllerManager::handlePerformancePad(QChar deck,
         return;
     }
 
+    if (mode == MidiPadMode::BeatLoop) {
+        if (pressed)
+            engine->setBeatLoop(kBeatLoopPadBeats[padIndex]);
+        return;
+    }
+
+    if (mode == MidiPadMode::SlipLoop) {
+        int& held = deck == QLatin1Char('A') ? m_deckASlipLoopPad : m_deckBSlipLoopPad;
+        if (pressed) {
+            held = padIndex;
+            engine->beginSlipLoop(kSlipLoopPadBeats[padIndex]);
+        } else if (held == padIndex) {
+            held = -1;
+            engine->endSlipLoop();
+        }
+        emit performancePadStateChanged(performanceDeckId(deck));
+        return;
+    }
+
     int& momentary = deck == QLatin1Char('A') ? m_deckAPadFxMomentary : m_deckBPadFxMomentary;
     int& toggle = deck == QLatin1Char('A') ? m_deckAPadFxToggle : m_deckBPadFxToggle;
 
@@ -1600,7 +1644,7 @@ void MidiControllerManager::handleKeyShiftPad(QChar deck, DjEngine* engine, int 
     // of racing the independent deck SHIFT note against the pad event.
     if (shifted) {
         switch (padIndex) {
-        case 0: { // Key Sync: match the other deck's absolute offset.
+        case 0: { // Key Sync: harmonic match to the other deck's audible key.
             DjEngine* other = nullptr;
             switch (deck.toUpper().toLatin1()) {
             case 'A': other = m_deckB; break;
@@ -1609,7 +1653,9 @@ void MidiControllerManager::handleKeyShiftPad(QChar deck, DjEngine* engine, int 
             case 'D': other = m_deckC; break;
             default: break;
             }
-            if (other)
+            // Without analysed keys on both decks, fall back to mirroring
+            // the other deck's offset, which is what this pad did before.
+            if (other && !engine->syncKeyTo(other))
                 engine->setKeySemitoneOffset(other->keySemitoneOffset());
             break;
         }

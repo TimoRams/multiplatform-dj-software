@@ -22,7 +22,9 @@ sources, lighting and event zone/microphone processing remain later milestones.
 - Unexpected removal of a partially cached imported track pauses that deck;
   fully cached imported tracks may continue. Other decks are unaffected.
 - End warning defaults to 30 real seconds remaining, is disabled during loops or
-  pause, and can be set to 0..120 seconds.
+  pause, and can be set to 0..120 seconds. The TRACK END badge and remaining-time
+  clock blink in the warning colour (every 500 ms, every 250 ms in the final ten
+  seconds).
 
 ## Cue and loop data
 

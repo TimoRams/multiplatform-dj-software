@@ -3,6 +3,7 @@
 #include "deck/DjEngine.h"
 #include "deck/sync/DeckSync.h"
 #include "link/LinkManager.h"
+#include "app/MidiClockController.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <QtConcurrent/QtConcurrent>
 #include <QDir>
@@ -58,6 +59,7 @@ SamplerController::SamplerController(SamplerAudioEngine& audio, ControlClock& cl
     restore();
     m_audio.setSequencerBank(m_bank);
     m_audio.setSequencerSwing(static_cast<float>(m_sequencerSwing));
+    m_audio.setSequencerFill(m_fillEvery, m_fillDensity);
     for (int bank = 0; bank < 4; ++bank) publishSequencerBank(bank);
 }
 SamplerController::~SamplerController() { shutdown(); }
@@ -170,6 +172,7 @@ void SamplerController::setQuantize(int beats) {
 void SamplerController::setSequencerEnabled(bool enabled) {
     if (m_sequencerEnabled == enabled) return;
     m_sequencerEnabled = enabled;
+    if (!enabled && m_roll) { m_roll = 0; m_audio.setSequencerRoll(0); }
     m_audio.setSequencerEnabled(enabled);
     emit changed();
 }
@@ -208,6 +211,31 @@ void SamplerController::setSequencerLength(int steps) {
     m_patternLengths[m_bank] = steps;
     if (!save()) { m_patternLengths[m_bank] = previous; emit changed(); return; }
     m_audio.setSequencerLength(m_bank, steps);
+    emit changed();
+}
+void SamplerController::setSequencerFillEvery(int bars) {
+    if (bars != 0 && bars != 1 && bars != 2 && bars != 4 && bars != 8) { fail("Fill interval must be off, 1, 2, 4 or 8 bars"); return; }
+    if (m_fillEvery == bars) return;
+    const int previous = m_fillEvery;
+    m_fillEvery = bars;
+    if (!save()) { m_fillEvery = previous; emit changed(); return; }
+    m_audio.setSequencerFill(m_fillEvery, m_fillDensity);
+    emit changed();
+}
+void SamplerController::setSequencerFillDensity(int density) {
+    density = std::clamp(density, 0, 100);
+    if (m_fillDensity == density) return;
+    const int previous = m_fillDensity;
+    m_fillDensity = density;
+    if (!save()) { m_fillDensity = previous; emit changed(); return; }
+    m_audio.setSequencerFill(m_fillEvery, m_fillDensity);
+    emit changed();
+}
+void SamplerController::setSequencerRoll(int steps) {
+    if (steps != 0 && steps != 1 && steps != 2 && steps != 4 && steps != 8) return;
+    if (m_roll == steps) return;
+    m_roll = steps;
+    m_audio.setSequencerRoll(steps);
     emit changed();
 }
 void SamplerController::setSequencerTrackFlag(int pad, bool enabled, bool solo) {
@@ -446,7 +474,8 @@ bool SamplerController::save() {
     }
     const auto data = QJsonDocument(QJsonObject{{"version",2},{"bank",m_bank},{"gain",m_gain},
         {"quantize",m_quantize},{"swing",m_sequencerSwing},{"patterns",patterns},{"slots",entries},
-        {"lengths",lengths},{"muted",muted},{"solo",solo},{"internalBpm",m_internalBpm}}).toJson();
+        {"lengths",lengths},{"muted",muted},{"solo",solo},{"internalBpm",m_internalBpm},
+        {"fillEvery",m_fillEvery},{"fillDensity",m_fillDensity}}).toJson();
     if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit()) { fail("Cannot save sampler banks"); return false; }
     return true;
 }
@@ -506,6 +535,9 @@ void SamplerController::restore() {
             m_patternSolo[bank] = static_cast<std::uint8_t>(std::clamp(solo.at(bank).toInt(), 0, 255));
         }
         m_internalBpm = std::clamp(root["internalBpm"].toDouble(120), 20.0, 400.0);
+        const int fillEvery = root["fillEvery"].toInt(0);
+        m_fillEvery = fillEvery == 1 || fillEvery == 2 || fillEvery == 4 || fillEvery == 8 ? fillEvery : 0;
+        m_fillDensity = std::clamp(root["fillDensity"].toInt(50), 0, 100);
     }
     const auto entries = root["slots"].toArray();
     for (int i = 0; i < std::min(32, static_cast<int>(entries.size())); ++i) {
@@ -527,16 +559,32 @@ void SamplerController::tick() {
     QString source = "INTERNAL";
     int index = -1;
     const auto sync = m_sync ? m_sync->snapshot() : engine::sync::SyncCoordinatorSnapshot{};
+    const auto external = m_midiClock ? m_midiClock->externalClock(now) : brockdj::midiclock::ClockSnapshot{};
+    bool externalRestarted = false;
     if (sync.linkActive && m_link && m_link->enabled()) {
         bpm = m_link->bpm(); beat = m_link->currentBeat(); source = "LINK";
+    } else if (external.valid) {
+        bpm = external.bpm; beat = external.beat + (now - external.timestamp) * external.bpm / 60; source = "MIDI";
+        externalRestarted = external.generation != m_externalClockGeneration;
+        m_externalClockGeneration = external.generation;
     } else {
         const auto usable = [this](int i) { return i >= 0 && i < 4 && m_decks[i] && m_decks[i]->isPlaying() && !m_decks[i]->isReverse() && m_decks[i]->getCurrentBpm() > 0; };
         if (usable(sync.masterDeckIndex)) index = sync.masterDeckIndex;
         else for (int i = 0; i < 4; ++i) if (usable(i)) { index = i; break; }
         if (index >= 0) { bpm = m_decks[index]->getCurrentBpm(); beat = m_decks[index]->getBeatPosition(); source = QString("DECK %1").arg(QChar('A'+index)); }
     }
-    if (!std::isfinite(bpm) || bpm < 20 || bpm > 400 || !std::isfinite(beat)) return;
-    if (source != m_clockSource) { ++m_clock.generation; m_clockSource = source; }
+    if (!std::isfinite(bpm) || bpm < 20 || bpm > 400 || !std::isfinite(beat)) {
+        if (m_midiClock) m_midiClock->publishMasterClock({});
+        return;
+    }
+    if (source != m_clockSource || externalRestarted) { ++m_clock.generation; m_clockSource = source; }
     m_clock.bpm = bpm; m_clock.beat = beat; m_clock.timestamp = now;
     m_audio.publishClock(m_clock);
+    if (m_midiClock) {
+        // Never echo an incoming MIDI clock back out (feedback through MIDI thru).
+        bool anyDeckPlaying = false;
+        for (auto* deck : m_decks) anyDeckPlaying |= deck && deck->isPlaying();
+        m_midiClock->publishMasterClock({source != "MIDI", anyDeckPlaying || m_sequencerEnabled,
+                                         bpm, beat, now, m_clock.generation});
+    }
 }

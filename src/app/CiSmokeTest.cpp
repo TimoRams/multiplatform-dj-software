@@ -2,6 +2,7 @@
 #include "deck/sync/DeckSync.h"
 #include "audio/AudioEngine.h"
 #include "audio/SamplerController.h"
+#include "app/AutomixController.h"
 #include "audio/RenderModeRouter.h"
 #include "audio/device/AudioDeviceService.h"
 #include "audio/cache/AudioPageCache.h"
@@ -17,6 +18,7 @@
 #include "controllers/midi/ParameterStore.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QEvent>
 #include <QFile>
 #include <QGuiApplication>
@@ -282,6 +284,44 @@ bool testLiveDeckFeatures(QString& error)
                 && migrated.sequencerPattern()[0].toInt() == 17,
                 "migrated extended pattern did not survive restart");
         }
+        {
+            // CDJ-3000 BEAT LOOP / SLIP LOOP on a real loaded deck.
+            deck.pause();
+            deck.clearLoop();
+            deck.setSlip(false);
+            // The fixture is ~2 s at 120 BPM (about four beats).
+            deck.setBeatLoop(1.0);
+            require(deck.loopActive() && std::abs(deck.loopLengthBeats() - 1.0) < 0.05,
+                "BEAT LOOP did not engage a one-beat loop");
+            deck.setBeatLoop(2.0);
+            require(deck.loopActive() && std::abs(deck.loopLengthBeats() - 2.0) < 0.05,
+                "BEAT LOOP did not resize the active loop");
+            deck.setBeatLoop(2.0);
+            require(!deck.loopActive(), "pressing the active BEAT LOOP length did not exit it");
+            deck.clearLoop();
+            deck.setBeatLoop(32.0);
+            require(deck.loopActive() && deck.loopLengthBeats() < 31.0,
+                "BEAT LOOP fixture must be clipped by the track end");
+            deck.setBeatLoop(32.0);
+            require(!deck.loopActive(), "a BEAT LOOP clipped by the track end could not be exited");
+            deck.clearLoop();
+            deck.beginSlipLoop(0.5);
+            require(deck.slipLoopActive() && deck.loopActive() && deck.slipActive(),
+                "SLIP LOOP did not engage a slipped roll");
+            deck.endSlipLoop();
+            require(!deck.slipLoopActive() && !deck.loopActive() && !deck.slipActive(),
+                "SLIP LOOP release left the roll or slip engaged");
+            deck.setSlip(true);
+            deck.beginSlipLoop(1.0);
+            deck.endSlipLoop();
+            require(deck.slipActive() && !deck.loopActive(),
+                "SLIP LOOP did not restore the user's slip state");
+            deck.setSlip(false);
+            require(!deck.syncKeyTo(nullptr) && !deck.syncKeyTo(&deck),
+                "KEY SYNC accepted an invalid partner");
+            require(!deck.instantDoubleFrom(nullptr) && !deck.instantDoubleFrom(&deck),
+                "INSTANT DOUBLE accepted an invalid source");
+        }
         deck.play();
         require(deck.isPlaying(), "live fixture must have play intent");
         deck.loadTrack(directory.filePath("missing.wav"));
@@ -466,6 +506,80 @@ bool testAnalysisSettingsAndPersistence(QString& error)
             && snapshot.beatGrid.front().positionSec == .2 && snapshot.beatFingerprint == "manual"
             && snapshot.key == "9A" && snapshot.keyFingerprint == automatic.keyFingerprint,
             "automatic analysis overwrote a protected grid or lost the new key provenance")) return false;
+
+        // Collection health: the fixture's audio file was never written, so it is missing
+        // until relocation finds it in a subfolder.
+        QVariantMap healthResult;
+        QObject::connect(&database, &LibraryDatabase::healthTaskFinished, &database,
+                         [&](const QString&, const QVariantMap& result) { healthResult = result; });
+        const auto waitHealth = [&] {
+            QElapsedTimer timer; timer.start();
+            while (database.healthBusy() && timer.elapsed() < 5000) {
+                QCoreApplication::processEvents(); QThread::msleep(1);
+            }
+            return !database.healthBusy();
+        };
+        if (!require(database.collectionHealthSummary().value("missing").toInt() == 0
+            && database.scanMissingFiles() && waitHealth()
+            && healthResult.value("missing").toInt() == 1
+            && database.collectionHealthSummary().value("missing").toInt() == 1,
+            "missing-file scan did not flag the absent fixture")) return false;
+        if (!require(database.setHealthIssueIgnored("analysis-track", "missing", true)
+            && database.collectionHealthSummary().value("missing").toInt() == 0
+            && database.collectionHealthSummary().value("missingIgnored").toInt() == 1
+            && database.setHealthIssueIgnored("analysis-track", "missing", false),
+            "health ignore marks are not applied")) return false;
+        QDir(directory.path()).mkpath("moved");
+        QFile moved(directory.filePath("moved/track.wav"));
+        if (!require(moved.open(QIODevice::WriteOnly), "relocation fixture not writable")) return false;
+        moved.close();
+        if (!require(database.relocateMissingTracks(directory.path()) && waitHealth()
+            && healthResult.value("relocated").toInt() == 1
+            && database.collectionHealthSummary().value("missing").toInt() == 0
+            && database.trackIdForFilePath(directory.filePath("moved/track.wav")) == "analysis-track",
+            "relocation did not repoint the missing track")) return false;
+
+        // Rekordbox XML: enrich the known track, add a new one with a locked grid and playlist.
+        QFile created(directory.filePath("moved/new track.wav"));
+        if (!require(created.open(QIODevice::WriteOnly), "rekordbox fixture not writable")) return false;
+        created.close();
+        const QString knownUrl = QUrl::fromLocalFile(directory.filePath("moved/track.wav")).toEncoded();
+        const QString newUrl = QUrl::fromLocalFile(directory.filePath("moved/new track.wav")).toEncoded();
+        QFile xml(directory.filePath("rekordbox.xml"));
+        if (!require(xml.open(QIODevice::WriteOnly), "rekordbox xml not writable")) return false;
+        xml.write(QStringLiteral(
+            "<DJ_PLAYLISTS><COLLECTION>"
+            "<TRACK TrackID=\"1\" Name=\"Known\" Rating=\"255\" Tonality=\"Am\" TotalTime=\"10\" Location=\"%1\">"
+            "<TEMPO Inizio=\"0.1\" Bpm=\"100\" Battito=\"1\"/>"
+            "<POSITION_MARK Name=\"Drop\" Type=\"0\" Start=\"2.5\" Num=\"3\" Red=\"255\" Green=\"0\" Blue=\"0\"/></TRACK>"
+            "<TRACK TrackID=\"2\" Name=\"Fresh\" Artist=\"RB\" TotalTime=\"10\" AverageBpm=\"120\" Location=\"%2\">"
+            "<TEMPO Inizio=\"0.25\" Bpm=\"120\" Battito=\"1\"/>"
+            "<POSITION_MARK Name=\"\" Type=\"0\" Start=\"0.25\" Num=\"-1\"/>"
+            "<POSITION_MARK Name=\"L\" Type=\"4\" Start=\"1\" End=\"3\" Num=\"-1\"/></TRACK>"
+            "</COLLECTION><PLAYLISTS><NODE Type=\"0\" Name=\"ROOT\">"
+            "<NODE Type=\"1\" Name=\"Gig\" KeyType=\"0\"><TRACK Key=\"2\"/><TRACK Key=\"1\"/></NODE>"
+            "</NODE></PLAYLISTS></DJ_PLAYLISTS>").arg(knownUrl, newUrl).toUtf8());
+        xml.close();
+        if (!require(database.importRekordboxXml(QUrl::fromLocalFile(xml.fileName()).toString()) && waitHealth()
+            && healthResult.value("ok").toBool() && healthResult.value("added").toInt() == 1
+            && healthResult.value("updated").toInt() == 1 && healthResult.value("grids").toInt() == 1
+            && healthResult.value("cues").toInt() == 1 && healthResult.value("loops").toInt() == 1
+            && healthResult.value("playlists").toInt() == 1,
+            "rekordbox import result is wrong")) return false;
+        const QString freshId = database.trackIdForFilePath(directory.filePath("moved/new track.wav"));
+        LibraryDatabase::AnalysisSnapshot fresh;
+        if (!require(!freshId.isEmpty() && database.tryGetAnalysisData(freshId, &fresh) && !fresh.isAnalyzed
+            && fresh.beatGridInfo.lockedByUser && fresh.bpm == 120 && fresh.beatGrid.size() == 20
+            && std::abs(fresh.beatGrid.front().positionSec - 0.25) < 1e-6
+            && std::abs(database.mainCuePointForTrack(freshId) - 0.25) < 1e-6
+            && database.savedLoopsForTrack(freshId).size() == 1,
+            "rekordbox grid/cues were not imported for the new track")) return false;
+        LibraryDatabase::AnalysisSnapshot known;
+        if (!require(database.tryGetAnalysisData("analysis-track", &known) && known.bpm == 128
+            && known.beatFingerprint == "manual"
+            && database.getTrackMeta("analysis-track").value("rating").toInt() == 5
+            && database.cuePointsForTrack("analysis-track").size() == 1,
+            "rekordbox import overwrote the locked grid or missed metadata")) return false;
     }
     properties.closeFiles();
     return true;

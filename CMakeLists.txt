@@ -43,6 +43,13 @@ if(BROCKDJ_OPTIMIZE_DEBUG_ANALYSIS AND NOT MSVC
         "${CMAKE_CURRENT_SOURCE_DIR}/libs/JUCE/modules/juce_dsp/juce_dsp.cpp"
         APPEND PROPERTY COMPILE_OPTIONS "$<$<CONFIG:Debug>:-Og>"
     )
+    # Header-only Signalsmith Stretch is instantiated here. Unoptimised, the
+    # keylock worker cannot keep up with real time, so Debug builds silently
+    # fell back to varispeed (and failed the keylock tests).
+    set_property(SOURCE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/TimeStretchProcessor.cpp"
+        APPEND PROPERTY COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O2>"
+    )
 endif()
 if(BROCKDJ_ENABLE_SANITIZERS)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "^(GNU|Clang|AppleClang)$" OR WIN32)
@@ -1250,6 +1257,74 @@ target_link_libraries(BrockDJ_database_worker_tests PRIVATE Qt6::Core Qt6::Sql)
 target_compile_features(BrockDJ_database_worker_tests PRIVATE cxx_std_23)
 add_test(NAME database_worker COMMAND BrockDJ_database_worker_tests)
 
+add_executable(BrockDJ_library_search_tests
+    tests/library/library_search_tests.cpp
+    src/library/LibrarySearchQuery.cpp
+    src/library/CollectionHealth.cpp)
+target_include_directories(BrockDJ_library_search_tests PRIVATE src)
+target_link_libraries(BrockDJ_library_search_tests PRIVATE Qt6::Core Qt6::Sql)
+target_compile_features(BrockDJ_library_search_tests PRIVATE cxx_std_23)
+add_test(NAME library_search COMMAND BrockDJ_library_search_tests)
+
+add_executable(BrockDJ_rekordbox_xml_tests
+    tests/library/rekordbox_xml_tests.cpp
+    src/library/RekordboxXml.cpp)
+target_include_directories(BrockDJ_rekordbox_xml_tests PRIVATE src)
+target_link_libraries(BrockDJ_rekordbox_xml_tests PRIVATE Qt6::Core)
+target_compile_features(BrockDJ_rekordbox_xml_tests PRIVATE cxx_std_23)
+add_test(NAME rekordbox_xml COMMAND BrockDJ_rekordbox_xml_tests)
+
+add_executable(BrockDJ_loudness_meter_tests
+    tests/audio/loudness_meter_tests.cpp)
+target_include_directories(BrockDJ_loudness_meter_tests PRIVATE src)
+target_compile_features(BrockDJ_loudness_meter_tests PRIVATE cxx_std_23)
+add_test(NAME loudness_meter COMMAND BrockDJ_loudness_meter_tests)
+
+add_executable(BrockDJ_automix_planner_tests
+    tests/deck/automix_planner_tests.cpp
+    src/deck/automix/AutomixPlanner.cpp)
+target_include_directories(BrockDJ_automix_planner_tests PRIVATE src)
+target_compile_features(BrockDJ_automix_planner_tests PRIVATE cxx_std_23)
+add_test(NAME automix_planner COMMAND BrockDJ_automix_planner_tests)
+
+add_executable(BrockDJ_midi_clock_tests
+    tests/controllers/midi_clock_tests.cpp)
+target_include_directories(BrockDJ_midi_clock_tests PRIVATE src)
+target_compile_features(BrockDJ_midi_clock_tests PRIVATE cxx_std_23)
+add_test(NAME midi_clock COMMAND BrockDJ_midi_clock_tests)
+
+add_executable(BrockDJ_mix_tracklist_tests
+    tests/audio/mix_tracklist_tests.cpp)
+target_include_directories(BrockDJ_mix_tracklist_tests PRIVATE src)
+target_compile_features(BrockDJ_mix_tracklist_tests PRIVATE cxx_std_23)
+add_test(NAME mix_tracklist COMMAND BrockDJ_mix_tracklist_tests)
+
+add_executable(BrockDJ_phrase_counter_tests
+    tests/deck/phrase_counter_tests.cpp)
+target_include_directories(BrockDJ_phrase_counter_tests PRIVATE src)
+target_compile_features(BrockDJ_phrase_counter_tests PRIVATE cxx_std_23)
+add_test(NAME phrase_counter COMMAND BrockDJ_phrase_counter_tests)
+
+add_executable(BrockDJ_key_sync_tests
+    tests/deck/key_sync_tests.cpp)
+target_include_directories(BrockDJ_key_sync_tests PRIVATE src)
+target_compile_features(BrockDJ_key_sync_tests PRIVATE cxx_std_23)
+add_test(NAME key_sync COMMAND BrockDJ_key_sync_tests)
+
+add_executable(BrockDJ_song_structure_tests
+    tests/analysis/song_structure_tests.cpp)
+target_include_directories(BrockDJ_song_structure_tests PRIVATE src)
+target_compile_features(BrockDJ_song_structure_tests PRIVATE cxx_std_23)
+add_test(NAME song_structure COMMAND BrockDJ_song_structure_tests)
+
+add_executable(BrockDJ_playlist_files_tests
+    tests/library/playlist_files_tests.cpp
+    src/library/PlaylistFiles.cpp)
+target_include_directories(BrockDJ_playlist_files_tests PRIVATE src)
+target_link_libraries(BrockDJ_playlist_files_tests PRIVATE Qt6::Core)
+target_compile_features(BrockDJ_playlist_files_tests PRIVATE cxx_std_23)
+add_test(NAME playlist_files COMMAND BrockDJ_playlist_files_tests)
+
 add_executable(BrockDJ_media_io_scheduler_tests
     tests/library/media_io_scheduler_tests.cpp
     src/library/LibraryCoverService.h
@@ -1314,6 +1389,12 @@ set(_brockdj_executable_targets
     BrockDJ_cached_playback_tests
     BrockDJ_time_stretch_tests
     BrockDJ_database_worker_tests
+    BrockDJ_library_search_tests
+    BrockDJ_rekordbox_xml_tests
+    BrockDJ_loudness_meter_tests
+    BrockDJ_automix_planner_tests
+    BrockDJ_midi_clock_tests
+    BrockDJ_playlist_files_tests
     BrockDJ_media_io_scheduler_tests
     BrockDJ_audio_thread_scheduling_tests
 )

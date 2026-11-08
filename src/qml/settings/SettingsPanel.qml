@@ -9,6 +9,41 @@ Item {
     implicitHeight: 600
     property bool active: visible
 
+    component ClockSwitch: Switch {
+        id: clockSwitch
+        indicator: Rectangle {
+            implicitWidth: 40
+            implicitHeight: 20
+            x: clockSwitch.leftPadding
+            y: (clockSwitch.height - height) / 2
+            color: clockSwitch.checked ? UiTheme.blueDim : UiTheme.surfaceInset
+            border.color: clockSwitch.visualFocus ? UiTheme.focus : UiTheme.borderSubtle
+            Rectangle {
+                x: clockSwitch.visualPosition * (parent.width - width - 4) + 2
+                y: 2
+                width: 16; height: 16
+                color: clockSwitch.checked ? UiTheme.blue : UiTheme.textSecondary
+            }
+        }
+    }
+
+    component ClockLabel: Text {
+        color: UiTheme.textPrimary
+        font.family: UiTheme.uiFontFamily
+        font.pixelSize: 12
+        Layout.fillWidth: true
+        wrapMode: Text.WordWrap
+    }
+
+    component ClockStatus: Text {
+        Layout.fillWidth: true
+        wrapMode: Text.WordWrap
+        color: UiTheme.textDim
+        font.family: UiTheme.uiFontFamily
+        font.pixelSize: 11
+    }
+
+
     Component.onCompleted: updateAudioSettingsActivity()
     onActiveChanged: updateAudioSettingsActivity()
 
@@ -1985,6 +2020,58 @@ Item {
                             spacing: 12
 
                             Text {
+                                text: "Instant Doubles"
+                                color: UiTheme.textPrimary
+                                font.family: UiTheme.uiFontFamily
+                                font.pixelSize: 12
+                                Layout.fillWidth: true
+                                wrapMode: Text.WordWrap
+                            }
+
+                            Switch {
+                                id: instantDoublesSwitch
+                                objectName: "instantDoublesSwitch"
+                                indicator: Rectangle {
+                                    implicitWidth: 40
+                                    implicitHeight: 20
+                                    x: instantDoublesSwitch.leftPadding
+                                    y: (instantDoublesSwitch.height - height) / 2
+                                    radius: 0
+                                    color: instantDoublesSwitch.checked ? UiTheme.blueDim : UiTheme.surfaceInset
+                                    border.color: instantDoublesSwitch.visualFocus ? UiTheme.focus : UiTheme.borderSubtle
+                                    Rectangle {
+                                        x: instantDoublesSwitch.visualPosition * (parent.width - width - 4) + 2
+                                        y: 2
+                                        width: 16; height: 16
+                                        radius: 0
+                                        color: instantDoublesSwitch.checked ? UiTheme.blue : UiTheme.textSecondary
+                                    }
+                                }
+                                checked: typeof settingsManager !== "undefined"
+                                         && settingsManager
+                                         ? settingsManager.instantDoubles
+                                         : false
+                                onToggled: {
+                                    if (typeof settingsManager !== "undefined" && settingsManager)
+                                        settingsManager.instantDoubles = checked
+                                }
+                            }
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            wrapMode: Text.WordWrap
+                            color: UiTheme.textDim
+                            font.family: UiTheme.uiFontFamily
+                            font.pixelSize: 11
+                            text: "Like CDJ-3000 Instant Doubles: loading a track that is already on another deck copies its playhead, tempo, keylock, key shift and play state. Off by default."
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 12
+
+                            Text {
                                 text: "Waveform rendering"
                                 color: UiTheme.textPrimary
                                 font.family: UiTheme.uiFontFamily
@@ -2052,6 +2139,125 @@ Item {
                             font.family: UiTheme.uiFontFamily
                             font.pixelSize: 11
                             text: "Move the white playhead left to see more upcoming audio. Applies to all scrolling waveforms and is saved automatically."
+                        }
+
+                        // ── MIDI Clock ─────────────────────────────────────
+                        ColumnLayout {
+                            id: midiClockSection
+                            objectName: "midiClockSection"
+                            Layout.fillWidth: true
+                            Layout.topMargin: 12
+                            spacing: 10
+                            readonly property var clock: typeof midiClock !== "undefined" ? midiClock : null
+                            visible: clock !== null
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                height: 1
+                                color: UiTheme.separatorSubtle
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text {
+                                    text: "MIDI Clock"
+                                    color: UiTheme.textPrimary
+                                    font.family: UiTheme.uiFontFamily
+                                    font.pixelSize: 14
+                                    font.bold: true
+                                    Layout.fillWidth: true
+                                }
+                                Button {
+                                    text: "Refresh devices"
+                                    onClicked: if (midiClockSection.clock) midiClockSection.clock.refreshDevices()
+                                }
+                            }
+
+                            ClockStatus {
+                                color: UiTheme.textSecondary
+                                text: "Sync drum machines, grooveboxes and synths (e.g. Korg Electribe) to the master tempo. Clock follows Ableton Link, then the master deck, then the sampler's internal BPM. START is sent on the next bar."
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+                                ClockLabel { text: "Send MIDI clock" }
+                                ComboBox {
+                                    objectName: "midiClockOutputCombo"
+                                    Layout.preferredWidth: 220
+                                    readonly property var devices: midiClockSection.clock ? midiClockSection.clock.outputDevices : []
+                                    model: devices.length > 0 ? devices : ["No MIDI output found"]
+                                    enabled: devices.length > 0
+                                    currentIndex: midiClockSection.clock ? Math.max(0, devices.indexOf(midiClockSection.clock.outputDevice)) : 0
+                                    onActivated: (index) => {
+                                        if (midiClockSection.clock && devices.length > 0)
+                                            midiClockSection.clock.outputDevice = devices[index]
+                                    }
+                                }
+                                ClockSwitch {
+                                    objectName: "midiClockOutputSwitch"
+                                    checked: midiClockSection.clock ? midiClockSection.clock.outputEnabled : false
+                                    onToggled: {
+                                        if (!midiClockSection.clock) return
+                                        var devices = midiClockSection.clock.outputDevices
+                                        if (checked && midiClockSection.clock.outputDevice === "" && devices.length > 0)
+                                            midiClockSection.clock.outputDevice = devices[0]
+                                        midiClockSection.clock.outputEnabled = checked
+                                    }
+                                }
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+                                ClockLabel { text: "Send START / STOP with deck or sequencer playback" }
+                                ClockSwitch {
+                                    objectName: "midiClockTransportSwitch"
+                                    checked: midiClockSection.clock ? midiClockSection.clock.sendTransport : true
+                                    onToggled: if (midiClockSection.clock) midiClockSection.clock.sendTransport = checked
+                                }
+                            }
+
+                            ClockStatus {
+                                text: midiClockSection.clock ? midiClockSection.clock.outputStatus : ""
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+                                ClockLabel { text: "Follow external MIDI clock (sampler sequencer)" }
+                                ComboBox {
+                                    objectName: "midiClockInputCombo"
+                                    Layout.preferredWidth: 220
+                                    readonly property var devices: midiClockSection.clock ? midiClockSection.clock.inputDevices : []
+                                    model: devices.length > 0 ? devices : ["No MIDI input found"]
+                                    enabled: devices.length > 0
+                                    currentIndex: midiClockSection.clock ? Math.max(0, devices.indexOf(midiClockSection.clock.inputDevice)) : 0
+                                    onActivated: (index) => {
+                                        if (midiClockSection.clock && devices.length > 0)
+                                            midiClockSection.clock.inputDevice = devices[index]
+                                    }
+                                }
+                                ClockSwitch {
+                                    objectName: "midiClockInputSwitch"
+                                    checked: midiClockSection.clock ? midiClockSection.clock.inputEnabled : false
+                                    onToggled: {
+                                        if (!midiClockSection.clock) return
+                                        var devices = midiClockSection.clock.inputDevices
+                                        if (checked && midiClockSection.clock.inputDevice === "" && devices.length > 0)
+                                            midiClockSection.clock.inputDevice = devices[0]
+                                        midiClockSection.clock.inputEnabled = checked
+                                    }
+                                }
+                            }
+
+                            ClockStatus {
+                                text: midiClockSection.clock ? midiClockSection.clock.inputStatus : ""
+                            }
+
+                            ClockStatus {
+                                text: "Ableton Link has priority over MIDI clock in. An incoming clock is never sent back out."
+                            }
                         }
                     }
                 }
@@ -2240,7 +2446,42 @@ Item {
                         color: UiTheme.textSecondary
                     }
                     Text { Layout.fillWidth: true; wrapMode: Text.Wrap; text: liveSettings.recorder ? liveSettings.recorder.error : ""; color: UiTheme.error }
-                    Text { Layout.fillWidth: true; wrapMode: Text.Wrap; text: "Records the software master as 24-bit stereo WAV. Headphone preview is excluded. Sources mixed only by external hardware require a recording return input."; color: UiTheme.textLabel }
+                    Text {
+                        objectName: "mixTracklistStatus"
+                        readonly property var tracklist: typeof mixTracklist !== "undefined" ? mixTracklist : null
+                        Layout.fillWidth: true; elide: Text.ElideMiddle
+                        visible: tracklist !== null
+                        text: !tracklist ? ""
+                            : tracklist.error !== "" ? tracklist.error
+                            : "Tracklist: " + tracklist.entryCount + " track(s)"
+                              + (tracklist.nowPlayingTitle !== "" ? " · On air: " + (tracklist.nowPlayingArtist !== "" ? tracklist.nowPlayingArtist + " - " : "") + tracklist.nowPlayingTitle : "")
+                        color: tracklist && tracklist.error !== "" ? UiTheme.error : UiTheme.textSecondary
+                    }
+                    Text { text: "NOW PLAYING EXPORT"; color: UiTheme.textPrimary; font.pixelSize: 16 }
+                    CheckBox {
+                        objectName: "nowPlayingExportCheck"
+                        text: "Write now-playing files for stream overlays (OBS)"
+                        enabled: typeof mixTracklist !== "undefined" && mixTracklist !== null
+                        checked: enabled ? mixTracklist.nowPlayingExportEnabled : false
+                        onClicked: mixTracklist.nowPlayingExportEnabled = checked
+                    }
+                    TextField {
+                        objectName: "nowPlayingExportFolder"
+                        Layout.fillWidth: true
+                        placeholderText: "Export folder (empty: BrockDJ config folder/NowPlaying)"
+                        text: typeof mixTracklist !== "undefined" && mixTracklist ? mixTracklist.nowPlayingExportFolder : ""
+                        onEditingFinished: if (typeof mixTracklist !== "undefined" && mixTracklist) mixTracklist.nowPlayingExportFolder = text
+                    }
+                    Text {
+                        Layout.fillWidth: true; wrapMode: Text.Wrap
+                        readonly property var tracklist: typeof mixTracklist !== "undefined" ? mixTracklist : null
+                        text: !tracklist ? ""
+                            : tracklist.nowPlayingExportError !== "" ? tracklist.nowPlayingExportError
+                            : "nowplaying.txt / .json / .js and overlay.html in " + tracklist.nowPlayingExportPath
+                              + ". Add overlay.html as an OBS Browser Source (local file) or nowplaying.txt as a Text source."
+                        color: tracklist && tracklist.nowPlayingExportError !== "" ? UiTheme.error : UiTheme.textLabel
+                    }
+                    Text { Layout.fillWidth: true; wrapMode: Text.Wrap; text: "Records the software master as 24-bit stereo WAV. A .cue and .txt tracklist is written next to the recording: a track is listed once it has been the loudest deck on air for 8 seconds. Headphone preview is excluded. Sources mixed only by external hardware require a recording return input."; color: UiTheme.textLabel }
                     Text { text: "MEMORY CUES & ACTIVE LOOPS"; color: UiTheme.textPrimary; font.pixelSize: 16 }
                     ComboBox { id: liveDeck; model: ["Deck A", "Deck B", "Deck C", "Deck D"] }
                     RowLayout {

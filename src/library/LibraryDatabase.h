@@ -15,6 +15,7 @@
 #include "analysis/AnalysisTypes.h"
 
 class LibraryTableModel;
+namespace brockdj::library { struct RekordboxXmlLibrary; }
 
 class LibraryDatabase : public QObject
 {
@@ -177,6 +178,14 @@ public:
                                                       bool includeAnalyzed = false) const;
     Q_INVOKABLE bool isTrackInPlaylist(const QString& playlistId, const QString& trackId) const;
     Q_INVOKABLE int getPlaylistTrackCount(const QString& playlistId) const;
+    // Playlist files (M3U/M3U8, PLS, XSPF). Paths may be file:// URLs.
+    // Export returns an empty string on success, otherwise an error message.
+    Q_INVOKABLE QString exportPlaylistToFile(const QString& playlistId, const QString& fileUrlOrPath);
+    // Creates a playlist named after the file; files not yet in the library
+    // are added from their tags. Returns {ok, playlistId, name, imported,
+    // added, missing, error}.
+    Q_INVOKABLE QVariantMap importPlaylistFile(const QString& fileUrlOrPath,
+                                               const QString& parentId = QString());
     // Move a playlist to a new parent (empty string = top level).
     Q_INVOKABLE bool setPlaylistParent(const QString& playlistId, const QString& newParentId);
 
@@ -192,6 +201,27 @@ public:
 
     // ── Remove track from library (DB + waveform cache) ────────────────────
     Q_INVOKABLE bool removeTrackFromLibrary(const QString& trackId);
+
+    // ── Collection health (LibraryHealth.cpp) ──────────────────────────────
+    // Counts per check (see CollectionHealth.h) without ignored tracks, plus
+    // "<check>Ignored", "total" and "lastMissingScan" (Unix secs, 0 = never).
+    Q_PROPERTY(bool healthBusy READ healthBusy NOTIFY healthBusyChanged)
+    [[nodiscard]] bool healthBusy() const { return !m_healthTask.isEmpty(); }
+    Q_INVOKABLE QVariantMap collectionHealthSummary() const;
+    Q_INVOKABLE bool setHealthIssueIgnored(const QString& trackId, const QString& check, bool ignored);
+    Q_INVOKABLE bool isHealthIssueIgnored(const QString& trackId, const QString& check) const;
+    Q_INVOKABLE int clearHealthIgnores(const QString& check);
+    // Background jobs; each ends with healthTaskFinished(task, result).
+    // Returns false when another health job is running.
+    Q_INVOKABLE bool scanMissingFiles();                                   // "scan"
+    Q_INVOKABLE bool relocateMissingTracks(const QString& folderUrlOrPath); // "relocate"
+    Q_INVOKABLE bool refreshTagsFromFiles();                               // "tags"
+    // Drops tracks whose every location is missing (and not ignored).
+    Q_INVOKABLE int removeMissingTracks();
+    // Imports a Rekordbox collection XML (LibraryRekordboxImport.cpp), task
+    // "rekordbox". Result: {ok, error, tracks, added, updated, cues, loops,
+    // grids, playlists, missingFiles}.
+    Q_INVOKABLE bool importRekordboxXml(const QString& fileUrlOrPath);
 
     // Human-readable mirrored database status for the exit dialog.
     Q_PROPERTY(QString mirroredDatabaseStatus READ mirroredDatabaseStatus NOTIFY mirroredDatabaseStatusChanged)
@@ -227,6 +257,9 @@ signals:
     void smartCollectionsChanged();
     void libraryPageReady(std::uint64_t generation, const QVariantList& rows,
                           const QString& error);
+    void healthBusyChanged();
+    void collectionHealthChanged();
+    void healthTaskFinished(const QString& task, const QVariantMap& result);
 
 private:
     bool createSchema();
@@ -245,7 +278,12 @@ private:
     // Helper: build a full track-map from a positioned SELECT row.
     QVariantMap buildTrackMap(const QSqlQuery& q) const;
 
+    bool beginHealthTask(const QString& task);
+    void finishHealthTask(const QVariantMap& result);
+    QVariantMap applyRekordboxLibrary(const brockdj::library::RekordboxXmlLibrary& library);
+
     QSqlDatabase m_db;
+    QString m_healthTask;
     LibraryTableModel* m_tableModel = nullptr;
     QString m_dbPath;
     QString m_backupDbPath;
@@ -267,5 +305,5 @@ private:
     bool m_sessionDirty = false;
     bool m_recoveryWarningNeeded = false;
 
-    static constexpr int kSchemaVersion = 18;
+    static constexpr int kSchemaVersion = 19;
 };

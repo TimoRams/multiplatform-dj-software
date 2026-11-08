@@ -36,6 +36,7 @@ class SettingsManager : public QObject
     Q_PROPERTY(int autoCueThresholdDb READ autoCueThresholdDb WRITE setAutoCueThresholdDb NOTIFY liveSettingsChanged)
     Q_PROPERTY(int endWarningSeconds READ endWarningSeconds WRITE setEndWarningSeconds NOTIFY liveSettingsChanged)
     Q_PROPERTY(bool tightDoubleSync READ tightDoubleSync WRITE setTightDoubleSync NOTIFY tightDoubleSyncChanged)
+    Q_PROPERTY(bool instantDoubles READ instantDoubles WRITE setInstantDoubles NOTIFY instantDoublesChanged)
     Q_PROPERTY(bool soundColorAdjustEnabled READ soundColorAdjustEnabled WRITE setSoundColorAdjustEnabled NOTIFY soundColorAdjustEnabledChanged)
     Q_PROPERTY(QString timeStretchBackend READ timeStretchBackend WRITE setTimeStretchBackend NOTIFY timeStretchBackendChanged)
     Q_PROPERTY(int waveformRenderStyle READ waveformRenderStyle WRITE setWaveformRenderStyle
@@ -161,6 +162,8 @@ public:
     void setAutoCueThresholdDb(int value);
     void setEndWarningSeconds(int value);
     bool tightDoubleSync() const;
+    bool instantDoubles() const;
+    void setInstantDoubles(bool enabled);
     void setTightDoubleSync(bool enabled);
     bool soundColorAdjustEnabled() const;
     void setSoundColorAdjustEnabled(bool enabled);
@@ -209,6 +212,7 @@ signals:
     void audioSettingsChanged();
     void controllerSettingsChanged();
     void tightDoubleSyncChanged();
+    void instantDoublesChanged();
     void soundColorAdjustEnabledChanged();
     void timeStretchBackendChanged();
     void waveformRenderStyleChanged();

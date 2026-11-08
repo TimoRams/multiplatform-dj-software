@@ -15,6 +15,20 @@ Item {
     readonly property bool trackEnding: hasTrack && engine && engine.isPlaying && !engine.loopActive
         && endWarningSeconds > 0 && duration > 0
         && (duration - displayedPlaybackSeconds) * tempoTimeScale <= endWarningSeconds
+    // The last ten seconds blink twice as fast, like a CDJ's end-of-track alert.
+    readonly property bool trackEndFinal: trackEnding
+        && (duration - displayedPlaybackSeconds) * tempoTimeScale <= Math.min(10, endWarningSeconds)
+    property bool endBlinkOn: false
+    readonly property color clockColor: trackEnding && endBlinkOn ? UiTheme.warning : primaryText
+    onTrackEndingChanged: endBlinkOn = trackEnding
+
+    Timer {
+        objectName: "deckEndWarningBlink"
+        running: root.trackEnding && root.visible
+        repeat: true
+        interval: root.trackEndFinal ? 250 : 500
+        onTriggered: root.endBlinkOn = !root.endBlinkOn
+    }
 
     readonly property color panelColor: UiTheme.inspectorSurface
     readonly property color panelRaised: UiTheme.inspectorInset
@@ -267,7 +281,9 @@ Item {
                 width: root.valuePx(92, 62)
                 height: root.valuePx(30, 20)
                 color: Qt.rgba(root.playingColor.r, root.playingColor.g, root.playingColor.b, 0.15)
+                objectName: "deckEndWarningBadge"
                 border.color: root.trackEnding ? UiTheme.warning : root.playingColor
+                opacity: root.trackEnding && !root.endBlinkOn ? 0.35 : 1
                 radius: 0
                 Text {
                     anchors.centerIn: parent
@@ -335,6 +351,7 @@ Item {
                 clip: true
 
                 Text {
+                    id: timeLabel
                     anchors.top: parent.top
                     anchors.topMargin: root.valuePx(9, 5)
                     text: root.showRemainingTime ? "REMAIN" : "TIME"
@@ -342,6 +359,55 @@ Item {
                     font.pixelSize: root.valuePx(13, 10)
                     font.weight: Font.DemiBold
                     font.letterSpacing: 0.6
+                }
+                // Phrase counter: 8 bar blocks of the current 8-bar phrase plus the
+                // next analysed section countdown ("DROP 4" = drop in 4 bars).
+                Row {
+                    id: phraseCounter
+                    objectName: "deckPhraseCounter"
+                    readonly property var info: {
+                        var _position = root.displayedPlaybackSeconds
+                        var _segments = root.engine ? root.engine.currentSegments : null
+                        return root.hasTrack && root.engine && root.engine.beatDisplayInfo
+                            ? root.engine.beatDisplayInfo() : ({ valid: false })
+                    }
+                    readonly property bool hasNext: info.valid && info.barsToNextSegment > 0
+                                                    && String(info.nextSegmentLabel || "") !== ""
+                    visible: info.valid && x >= timeLabel.x + timeLabel.width + root.valuePx(8, 4)
+                    anchors.right: parent.right
+                    anchors.rightMargin: root.valuePx(8, 4)
+                    anchors.verticalCenter: timeLabel.verticalCenter
+                    spacing: root.valuePx(6, 3)
+                    Text {
+                        objectName: "deckPhraseLabel"
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: !phraseCounter.info.valid ? ""
+                            : phraseCounter.hasNext
+                                ? String(phraseCounter.info.nextSegmentLabel).toUpperCase() + " " + phraseCounter.info.barsToNextSegment
+                                : "PH " + phraseCounter.info.phraseNumber
+                        color: phraseCounter.hasNext && phraseCounter.info.barsToNextSegment <= 2
+                               ? root.functionOrange : root.secondaryText
+                        font.pixelSize: root.valuePx(12, 9)
+                        font.weight: Font.DemiBold
+                        font.family: UiTheme.numericFontFamily
+                    }
+                    Row {
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 2
+                        Repeater {
+                            model: 8
+                            Rectangle {
+                                required property int index
+                                readonly property int bar: phraseCounter.info.valid ? phraseCounter.info.barInPhrase : 0
+                                width: root.valuePx(7, 4)
+                                height: root.valuePx(10, 6)
+                                color: index + 1 < bar ? Qt.darker(root.deckAccent, 1.8)
+                                     : index + 1 === bar ? root.deckAccent
+                                     : UiTheme.knobTrack
+                                opacity: index + 1 === bar && phraseCounter.info.beatInBar !== 1 ? 0.7 : 1
+                            }
+                        }
+                    }
                 }
                 Item {
                     anchors.left: parent.left
@@ -356,7 +422,7 @@ Item {
                         anchors.bottom: parent.bottom
                         width: root.valuePx(20, 12)
                         text: root.displayedTimeSign
-                        color: root.primaryText
+                        color: root.clockColor
                         font.pixelSize: root.valuePx(44, 24)
                         font.family: UiTheme.numericFontFamily
                         font.weight: Font.Medium
@@ -383,7 +449,7 @@ Item {
                                 height: parent.height
                                 x: index * width
                                 text: root.displayedTimeClock.charAt(index)
-                                color: root.primaryText
+                                color: root.clockColor
                                 font.pixelSize: root.valuePx(44, 24)
                                 font.family: UiTheme.numericFontFamily
                                 font.weight: Font.Medium
@@ -626,6 +692,65 @@ Item {
                 }
                 onReleased: root.engine.commitSeekPreview()
                 onCanceled: root.engine.cancelSeekPreview()
+            }
+        }
+
+        // Song-part strip (Intro / Build / Drop / Breakdown / Outro), click jumps to the part.
+        Item {
+            id: songPartStrip
+            objectName: "deckSongPartStrip"
+            readonly property var parts: root.hasTrack && root.engine && root.engine.currentSegments
+                                         ? root.engine.currentSegments : []
+            visible: parts.length > 0 && root.duration > 0
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? root.valuePx(14, 9) : 0
+            Layout.minimumHeight: Layout.preferredHeight
+            Layout.maximumHeight: Layout.preferredHeight
+            Layout.topMargin: visible ? 1 : 0
+            Layout.leftMargin: root.valuePx(18, 9)
+            Layout.rightMargin: root.valuePx(18, 9)
+            clip: true
+
+            Repeater {
+                model: songPartStrip.parts
+                Rectangle {
+                    required property var modelData
+                    readonly property real startSec: Number(modelData.startTime) || 0
+                    readonly property real endSec: Number(modelData.endTime) || 0
+                    readonly property bool current: root.displayedPlaybackSeconds >= startSec
+                                                    && root.displayedPlaybackSeconds < endSec
+                    x: Math.round(startSec / root.duration * songPartStrip.width)
+                    width: Math.max(1, Math.round(endSec / root.duration * songPartStrip.width) - x - 1)
+                    height: songPartStrip.height
+                    radius: 2
+                    color: modelData.colorHex || UiTheme.knobTrack
+                    opacity: current ? 1.0 : 0.55
+                    Text {
+                        anchors.fill: parent
+                        anchors.leftMargin: 3
+                        anchors.rightMargin: 2
+                        verticalAlignment: Text.AlignVCenter
+                        text: {
+                            var label = String(parent.modelData.label || "").toUpperCase()
+                            return parent.width >= root.valuePx(58, 40) ? label : label.charAt(0)
+                        }
+                        visible: parent.width >= root.valuePx(10, 8)
+                        color: "#ffffff"
+                        font.pixelSize: root.valuePx(10, 7)
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (!root.engine || root.duration <= 0)
+                                return
+                            root.engine.beginSeekPreview(Math.max(0, Math.min(1, parent.startSec / root.duration)))
+                            root.engine.commitSeekPreview()
+                        }
+                    }
+                }
             }
         }
 

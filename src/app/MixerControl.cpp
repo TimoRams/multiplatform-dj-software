@@ -45,6 +45,7 @@ CrossfaderCurve curveFromState(const QString& mode, float sharpness)
 
 MixerControl::MixerControl(QObject* parent)
     : QObject(parent)
+    , m_loudness(this)
 {
     m_settingsSaveTimer.setSingleShot(true);
     m_settingsSaveTimer.setInterval(250);
@@ -55,6 +56,7 @@ MixerControl::MixerControl(QObject* parent)
 void MixerControl::attachSettingsManager(SettingsManager* settings)
 {
     m_settings = settings;
+    m_loudness.attachSettingsManager(settings);
     if (!settings)
         return;
     syncCrossfaderState(settings->getCrossfaderPosition(),

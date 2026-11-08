@@ -377,6 +377,63 @@ void DjEngine::toggleLoopThreeQuarter()
 }
 
 
+void DjEngine::setBeatLoop(double beats)
+{
+    if (!std::isfinite(beats) || beats <= 0.0)
+        return;
+    auto& loop = m_cueLoopController.activeLoop();
+    const auto sameLength = [beats](double length) {
+        return std::abs(length - beats) <= std::max(0.01, beats * 0.03);
+    };
+    if (loop.active) {
+        // A loop clipped by the track end is shorter than its pad; the pad
+        // that created it must still be able to exit it.
+        const bool samePad = std::abs(loop.outSec - m_beatLoopOutSec) < 1e-6
+            && sameLength(m_beatLoopRequestedBeats);
+        if (samePad || sameLength(loop.lengthBeats)) {
+            deactivateLoop();
+            return;
+        }
+        startLoopAt(loop.inSec, beats);
+    } else {
+        startLoopAt(static_cast<double>(getVisualPosition()), beats);
+    }
+    m_beatLoopRequestedBeats = beats;
+    m_beatLoopOutSec = loop.active ? loop.outSec : -1.0;
+}
+
+
+void DjEngine::beginSlipLoop(double beats)
+{
+    if (!std::isfinite(beats) || beats <= 0.0)
+        return;
+    if (m_slipLoopActive) {
+        // Sliding to another roll pad resizes the roll from the same loop-in.
+        startLoopAt(m_cueLoopController.activeLoop().inSec, beats);
+        return;
+    }
+    m_slipLoopRestoreSlip = slipActive();
+    m_slipLoopActive = true;
+    setSlip(true);
+    startLoopAt(static_cast<double>(getVisualPosition()), beats);
+    if (!m_cueLoopController.activeLoop().active)
+        endSlipLoop();
+}
+
+
+void DjEngine::endSlipLoop()
+{
+    if (!m_slipLoopActive)
+        return;
+    m_slipLoopActive = false;
+    // Slip is still engaged here, so dropping the loop returns the playhead to
+    // the background position that kept running during the roll.
+    clearLoop();
+    if (!m_slipLoopRestoreSlip)
+        setSlip(false);
+}
+
+
 void DjEngine::halveLoopLength()
 {
     if (!m_cueLoopController.activeLoop().active) {

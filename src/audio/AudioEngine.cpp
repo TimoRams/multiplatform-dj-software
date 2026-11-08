@@ -15,8 +15,10 @@ std::atomic<uint64_t> AudioEngine::s_callbackWorstUsec { 0 };
 std::atomic<uint64_t> AudioEngine::s_callbackOverruns { 0 };
 std::atomic<bool> AudioEngine::s_masterClipDetected { false };
 std::array<std::atomic<bool>, AudioEngine::kMaximumDecks> AudioEngine::s_deckOnAir {};
+std::array<std::atomic<float>, AudioEngine::kMaximumDecks> AudioEngine::s_deckAirGain {};
 std::atomic<float> AudioEngine::s_masterPeakSnapshotL { 0.0f };
 std::atomic<float> AudioEngine::s_masterPeakSnapshotR { 0.0f };
+brockdj::audio::LoudnessBlockQueue AudioEngine::s_loudnessBlocks;
 platform::AudioThreadScheduling AudioEngine::s_audioThreadScheduling;
 
 namespace {
@@ -200,6 +202,7 @@ void AudioEngine::prepareToPlay(int, double sampleRate)
     const double validRate = std::isfinite(sampleRate) && sampleRate > 0.0 ? sampleRate : 44100.0;
     m_sampleRate.store(validRate, std::memory_order_release);
     m_recorder.configure(validRate);
+    m_loudnessMeter.prepare(validRate);
 
     for (auto& buffer : m_deckBuffers)
         buffer.setSize(2, kProcessingChunkSize, false, true, true);
@@ -237,6 +240,8 @@ void AudioEngine::releaseResources()
     s_masterPeakSnapshotR.store(0.0f, std::memory_order_release);
     for (auto& state : s_deckOnAir)
         state.store(false, std::memory_order_release);
+    for (auto& gain : s_deckAirGain)
+        gain.store(0.0f, std::memory_order_release);
 }
 
 void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferToFill)
@@ -300,6 +305,7 @@ void AudioEngine::getNextAudioBlock(const juce::AudioSourceChannelInfo& bufferTo
         s_deckOnAir[index].store(channelGain > kRoutingEpsilon
                                     && crossfaderGain > kRoutingEpsilon,
                                 std::memory_order_release);
+        s_deckAirGain[index].store(channelGain * crossfaderGain, std::memory_order_relaxed);
     }
     s_masterClipDetected.store(callbackPeakL > 1.001f || callbackPeakR > 1.001f,
                                std::memory_order_relaxed);
@@ -334,6 +340,13 @@ bool AudioEngine::deckOnAir(int deckIndex) noexcept
     if (deckIndex < 0 || deckIndex >= static_cast<int>(kMaximumDecks))
         return false;
     return s_deckOnAir[static_cast<std::size_t>(deckIndex)].load(std::memory_order_acquire);
+}
+
+float AudioEngine::deckAirGain(int deckIndex) noexcept
+{
+    if (deckIndex < 0 || deckIndex >= static_cast<int>(kMaximumDecks))
+        return 0.0f;
+    return s_deckAirGain[static_cast<std::size_t>(deckIndex)].load(std::memory_order_relaxed);
 }
 
 float AudioEngine::masterVuL_s() noexcept
@@ -401,6 +414,9 @@ void AudioEngine::processChunk(
     // being written the moment MASTER CUE was switched off would click.
     m_masterMixer.finalize(parameters, m_masterBuf, samples, &m_masterCueTap);
     m_recorder.capture(m_masterBuf, samples);
+    // Loudness is measured on what actually leaves the master (after the limiter).
+    m_loudnessMeter.process(m_masterBuf.getReadPointer(0), m_masterBuf.getReadPointer(1), samples,
+                            [](double energy) { s_loudnessBlocks.push(static_cast<float>(energy)); });
     const auto& meter = m_masterMixer.meter();
     // Meter the requested master level before protection so enabling the
     // limiter cannot conceal overloads. Audio output still uses the limited buffer.

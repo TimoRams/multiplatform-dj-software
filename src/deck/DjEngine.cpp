@@ -5,7 +5,9 @@
 #include "audio/RenderModeRouter.h"
 #include "audio/TimeStretchProcessor.h"
 #include "audio/cache/CachedPlaybackAudioSource.h"
+#include "analysis/SongParts.h"
 #include "deck/DeckTransport.h"
+#include "deck/KeySync.h"
 #include "fx/FxProcessor.h"
 #include "library/LibraryDatabase.h"
 #include "waveform/WaveformAnalyzer.h"
@@ -45,28 +47,28 @@
 #include "audio/device/AudioDeviceService.h"
 #include "app/SettingsManager.h"
 #include "sync/DeckSync.h"
+#include "library/TrackIdentity.h"
 
 
 namespace {
 
-QString generateTrackId(const QString& artist,
-                        const QString& title,
-                        int durationSeconds,
-                        const QString& filePath)
+QVariantList segmentsToVariantList(const std::vector<TrackSegment>& segments)
 {
-    QCryptographicHash hash(QCryptographicHash::Sha256);
-    if (!artist.isEmpty() && !title.isEmpty() && durationSeconds > 0) {
-        hash.addData(artist.toUtf8());
-        hash.addData(title.toUtf8());
-        hash.addData(QByteArray::number(durationSeconds));
-    } else {
-        const QFileInfo file(filePath);
-        hash.addData(QByteArray::number(file.size()));
-        hash.addData(file.fileName().toUtf8());
+    QVariantList list;
+    list.reserve(static_cast<qsizetype>(segments.size()));
+    for (const auto& segment : segments) {
+        QVariantMap m;
+        m.insert(QStringLiteral("label"), segment.label);
+        m.insert(QStringLiteral("startTime"), segment.startTime);
+        m.insert(QStringLiteral("endTime"), segment.endTime);
+        m.insert(QStringLiteral("colorHex"), segment.colorHex);
+        m.insert(QStringLiteral("confidence"), segment.confidence);
+        list.push_back(m);
     }
-
-    return QString::fromLatin1(hash.result().toHex());
+    return list;
 }
+
+using brockdj::library::generateTrackId;
 
 constexpr double kVolumeMin = 0.0;
 constexpr double kVolumeMax = 1.0;
@@ -257,20 +259,7 @@ DjEngine::DjEngine(AudioDeviceService& audioDeviceService, AudioPageCache& audio
 
     connect(m_trackData, &TrackData::segmentsAnalyzed, this, [this]() {
         const auto segments = m_trackData->getSegments();
-
-        QVariantList asVariant;
-        asVariant.reserve(static_cast<int>(segments.size()));
-        for (const auto& s : segments) {
-            QVariantMap m;
-            m.insert("label", s.label);
-            m.insert("startTime", s.startTime);
-            m.insert("endTime", s.endTime);
-            m.insert("colorHex", s.colorHex);
-            m.insert("confidence", s.confidence);
-            asVariant.push_back(m);
-        }
-
-        m_currentSegments = asVariant;
+        m_currentSegments = segmentsToVariantList(segments);
         emit segmentsChanged();
 
         if (m_libraryDb && !m_currentTrackId.isEmpty())
@@ -945,9 +934,13 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
 
     bool hasDatabaseAnalysis = false;
     LibraryDatabase::AnalysisSnapshot cachedAnalysis;
+    // An imported (e.g. Rekordbox XML) grid is stored locked before the track
+    // has been analysed; it must still win over a fresh automatic grid.
     const bool foundDatabaseAnalysis =
         m_libraryDb->tryGetAnalysisData(m_currentTrackId, &cachedAnalysis)
-        && cachedAnalysis.isAnalyzed;
+        && (cachedAnalysis.isAnalyzed
+            || (cachedAnalysis.beatGridInfo.lockedByUser && cachedAnalysis.bpm > 0.0
+                && !cachedAnalysis.beatGrid.empty()));
     const bool userGridMustBePreserved = foundDatabaseAnalysis
         && (cachedAnalysis.beatGridInfo.userModified
             || cachedAnalysis.beatGridInfo.lockedByUser);
@@ -1004,8 +997,13 @@ bool DjEngine::hydrateLibraryStateForTrack(const QString& rawPath, double durati
             if (segment.endTime > segment.startTime + 0.01f)
                 cachedSegments.push_back(segment);
         }
-        if (phraseIsCurrent && !cachedSegments.empty())
+        if (phraseIsCurrent && !cachedSegments.empty()) {
+            // Rows from the energy-only phrase analyser become song parts on load.
+            cachedSegments = analysis::toSongParts(cachedSegments);
+            m_currentSegments = segmentsToVariantList(cachedSegments);
+            emit segmentsChanged();
             m_trackData->setSegmentsData(std::move(cachedSegments));
+        }
     } else {
         if (foundDatabaseAnalysis) {
             qDebug() << "[DjEngine] Ignoring stale automatic analysis"
@@ -1160,6 +1158,27 @@ void DjEngine::setKeySemitoneOffset(double semitones)
     m_keySemitoneOffset = semitones;
     m_transport->setKeySemitoneOffset(semitones);
     emit keySemitoneOffsetChanged();
+}
+
+double DjEngine::audiblePitchSemitones() const
+{
+    return brockdj::keysync::audiblePitchSemitones(m_keySemitoneOffset, getTempoRatio(), m_keylock);
+}
+
+bool DjEngine::syncKeyTo(DjEngine* target)
+{
+    if (!target || target == this)
+        return false;
+    const auto offset = brockdj::keysync::keySyncOffset(
+        m_trackKey.toStdString(), target->trackKey().toStdString(),
+        target->audiblePitchSemitones());
+    if (!offset)
+        return false;
+    // The offset is computed for an un-varispeeded track, so keylock must be
+    // on; otherwise a later tempo move would drag the key away again.
+    setKeylock(true);
+    setKeySemitoneOffset(*offset);
+    return true;
 }
 
 void DjEngine::applyTempoPercent(double percent)

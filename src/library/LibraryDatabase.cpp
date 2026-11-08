@@ -954,6 +954,20 @@ bool LibraryDatabase::createSchema()
                 return false;
         }
     }
+    if (currentVersion < 19) {
+        // Collection health: last missing-file scan and per-check "this is fine" marks.
+        if (!q.exec("CREATE TABLE IF NOT EXISTS MissingFiles (file_path TEXT PRIMARY KEY)")
+            || !q.exec(
+                "CREATE TABLE IF NOT EXISTS HealthIgnores ("
+                "  track_id   TEXT NOT NULL,"
+                "  check_name TEXT NOT NULL,"
+                "  PRIMARY KEY(track_id, check_name),"
+                "  FOREIGN KEY(track_id) REFERENCES Tracks(id) ON DELETE CASCADE"
+                ")")) {
+            qWarning() << "[LibraryDatabase] health tables:" << q.lastError().text();
+            return false;
+        }
+    }
     // ── Stamp current version ────────────────────────────────────────────
     q.prepare("INSERT OR REPLACE INTO Meta (key, value) VALUES ('schema_version', :v)");
     q.bindValue(":v", kSchemaVersion);

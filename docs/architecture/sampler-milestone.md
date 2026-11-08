@@ -47,6 +47,18 @@ Sequencing starts at the next sixteenth-note boundary with local step one,
 without resetting the shared DJ clock. Master/Link clock jumps preserve the local
 playhead and queued selection rather than forcing a pattern switch.
 
+AUTO FILL (off, every 1/2/4/8 bars, 0-100 % density) adds extra hits to empty
+steps in the last beat before the chosen downbeat. Only one-shot tracks that
+already contain hits take part; fill velocity follows the track's peak and
+grows towards the downbeat. The decision is a hash of bar, step and track
+(`SamplerAudioEngine::fillVelocity`), so a fill is deterministic and needs no
+allocation or random state on the audio thread. A LED shows when the running
+bar is filling. ROLL (1/16, 1/8, 1/4, 1/2) is a momentary beat repeat: while
+held, the step lookup loops from the engage point while the real playhead keeps
+running, so releasing drops back in time. Fills pause during a roll. Fill
+settings persist in the manifest (`fillEvery`, `fillDensity`); the roll does not
+and is cleared when the sequencer stops.
+
 Pattern COPY asks for confirmation and copies steps, length and mute/solo to
 another bank, not its samples. Changes save through the existing QSaveFile
 manifest before audio publication. Version 2 persists velocity arrays, lengths,

@@ -23,6 +23,23 @@ target_sources(${PROJECT_NAME} PRIVATE
     app/UiPreferences.h
     app/MixerControl.h
     app/MixerControl.cpp
+    app/LoudnessMonitor.cpp
+    app/AutomixController.h
+    app/AutomixController.cpp
+    app/MidiClockController.h
+    app/MidiClockController.cpp
+    controllers/midi/MidiClockScheduler.h
+    app/MixTracklistController.h
+    app/MixTracklistController.cpp
+    audio/MixTracklist.h
+    deck/PhraseCounter.h
+    deck/KeySync.h
+    analysis/SongStructure.h
+    analysis/SongParts.h
+    deck/automix/AutomixPlanner.h
+    deck/automix/AutomixPlanner.cpp
+    app/LoudnessMonitor.h
+    audio/LoudnessMeter.h
     app/LsanSuppressions.cpp
     app/CursorControl.h
     app/SettingsManager.h
@@ -143,6 +160,18 @@ target_sources(${PROJECT_NAME} PRIVATE
     library/LibraryAnalysisManager.cpp
     library/LibraryTableModel.h
     library/LibraryTableModel.cpp
+    library/LibrarySearchQuery.h
+    library/LibrarySearchQuery.cpp
+    library/LibraryPlaylistFiles.cpp
+    library/LibraryHealth.cpp
+    library/CollectionHealth.h
+    library/CollectionHealth.cpp
+    library/LibraryRekordboxImport.cpp
+    library/RekordboxXml.h
+    library/RekordboxXml.cpp
+    library/PlaylistFiles.h
+    library/PlaylistFiles.cpp
+    library/TrackIdentity.h
     library/devices/DeviceLibraryManager.h
     library/devices/DeviceLibraryManager.cpp
     library/devices/rekordbox/RekordboxTypes.h
@@ -216,6 +245,7 @@ set(BROCKDJ_QML_FILES
     src/qml/performance/EffectsPage.qml
     src/qml/library/Library.qml
     src/qml/library/SourcePage.qml
+    src/qml/library/CollectionHealthView.qml
     src/qml/settings/SettingsPanel.qml
     src/qml/settings/MappingEditorWindow.qml
     src/qml/shell/AppOverlays.qml

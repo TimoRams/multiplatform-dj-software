@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/LoudnessMonitor.h"
 #include "domain/DomainTypes.h"
 
 #include <QObject>
@@ -20,6 +21,7 @@ class SettingsManager;
 class MixerControl : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantMap crossfaderState READ crossfaderState NOTIFY crossfaderStateChanged)
+    Q_PROPERTY(LoudnessMonitor* loudness READ loudness CONSTANT)
 public:
     explicit MixerControl(QObject* parent = nullptr);
 
@@ -27,6 +29,7 @@ public:
     void persistCrossfaderSettings();
     QVariantMap crossfaderState() const;
     void setDecks(DjEngine* deckA, DjEngine* deckB, DjEngine* deckC, DjEngine* deckD);
+    [[nodiscard]] LoudnessMonitor* loudness() { return &m_loudness; }
 
     // Normalized 0–1 parameters (MIDI, UI knobs) enter through the store; this
     // class converts them to engine ranges and applies them like any other move.
@@ -63,6 +66,7 @@ private:
     SettingsManager* m_settings = nullptr;
     ParameterStore* m_parameterStore = nullptr;
     QTimer m_settingsSaveTimer;
+    LoudnessMonitor m_loudness;
     struct ChannelMixState {
         double trim = 1.0;
         double eqHigh = 0.0;

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import DJSoftware as Design
 
 Rectangle {
@@ -98,7 +99,18 @@ Rectangle {
 
     // ── Sidebar keyboard navigation map ─────────────────────────────────
     readonly property int sidebarTopNavCount: 5   // All Tracks + Favorites + History + Crate + Queue
-    readonly property int sidebarBottomNavCount: 2 // Files / Streaming
+    readonly property int sidebarBottomNavCount: 3 // Files / Streaming / Health
+    // Check named by a "health:<check>" term in the search, for the "mark as fine" menu entry.
+    readonly property string activeHealthCheck: {
+        const m = /(?:^|\s)health:(\w+)/i.exec(searchText)
+        return m ? m[1].toLowerCase() : ""
+    }
+
+    function showHealthQuery(query) {
+        searchText = query
+        if (searchField) searchField.text = query
+        activeTab = "library"
+    }
     readonly property int sidebarSmartCollCount: smartCollections.length
     readonly property int sidebarPlaylistStartIndex: sidebarTopNavCount + sidebarSmartCollCount
 
@@ -255,7 +267,33 @@ Rectangle {
             deviceLibraryManager.requestDeckLoad(trackId, deckLetter)
             return
         }
-        Qt.callLater(function() { deck.loadTrack(filePath) })
+        var doubleSource = instantDoubleSource(deck, filePath)
+        Qt.callLater(function() {
+            if (!doubleSource || !deck.instantDoubleFrom(doubleSource))
+                deck.loadTrack(filePath)
+        })
+    }
+
+    // CDJ-style Instant Doubles: the playing (else any) other deck that
+    // already holds this file, when the preference is enabled.
+    function instantDoubleSource(targetDeck, filePath) {
+        if (typeof settingsManager === "undefined" || !settingsManager
+                || !settingsManager.instantDoubles)
+            return null
+        var decks = [deckA, deckB,
+                     typeof deckC !== "undefined" ? deckC : null,
+                     typeof deckD !== "undefined" ? deckD : null]
+        var fallback = null
+        for (var i = 0; i < decks.length; ++i) {
+            var d = decks[i]
+            if (!d || d === targetDeck || !d.hasTrack || d.trackFilePath !== filePath)
+                continue
+            if (d.isPlaying)
+                return d
+            if (!fallback)
+                fallback = d
+        }
+        return fallback
     }
 
     function usbPlaylistChildren(parentId) {
@@ -1199,6 +1237,7 @@ Rectangle {
     function refreshReferenceKeys() {
         referenceKeysTick++
         var keys = []
+        var bpms = []
         var decks = [deckA, deckB, deckC, deckD]
         for (var i = 0; i < decks.length; ++i) {
             var d = decks[i]
@@ -1206,9 +1245,13 @@ Rectangle {
                 var k = (d.trackKey || "").trim()
                 if (k.length > 0 && keys.indexOf(k) < 0)
                     keys.push(k)
+                if (d.currentBpm > 0)
+                    bpms.push(d.currentBpm)
             }
         }
         referenceKeys = keys
+        if (libraryModel)
+            libraryModel.setSearchDeckContext(keys, bpms)
     }
 
     function parseCamelotKey(key) {
@@ -1498,6 +1541,7 @@ Rectangle {
         var bottomStart = sidebarTopNavCount + sidebarSmartCollCount + visiblePlaylists.length
         if (tab === "files")      return bottomStart
         if (tab === "streaming")  return bottomStart + 1
+        if (tab === "health")     return bottomStart + 2
         return -1
     }
 
@@ -1540,6 +1584,7 @@ Rectangle {
         var bottomIndex = index - bottomStart
         if (bottomIndex === 0) return { type: "nav", tab: "files",     item: navFiles }
         if (bottomIndex === 1) return { type: "nav", tab: "streaming", item: navStreaming }
+        if (bottomIndex === 2) return { type: "nav", tab: "health",    item: navHealth }
         return null
     }
 
@@ -2172,6 +2217,131 @@ Rectangle {
                     libraryRoot.togglePlaylistSort(sh.field)
                 else if (libraryModel)
                     libraryModel.toggleSort(sh.field)
+            }
+        }
+    }
+
+    // Small flat toggle/button used by AutomixBar.
+    component AutomixStripButton: Rectangle {
+        id: stripBtn
+        property string label: ""
+        property bool checked: false
+        property color accent: libraryRoot.accentBlue
+        signal clicked()
+        implicitWidth: stripLbl.implicitWidth + 16
+        implicitHeight: 22
+        Layout.alignment: Qt.AlignVCenter
+        radius: 0
+        opacity: enabled ? 1.0 : 0.4
+        color: checked ? Qt.rgba(accent.r, accent.g, accent.b, 0.25)
+                       : stripMa.containsMouse ? Design.UiTheme.panelRaised : "transparent"
+        border.color: checked || stripMa.containsMouse ? accent : libraryRoot.borderSub
+        border.width: 1
+        Text {
+            id: stripLbl
+            anchors.centerIn: parent
+            text: stripBtn.label
+            color: stripBtn.checked ? libraryRoot.accentBlueLt : libraryRoot.textDim
+            font.pixelSize: window.sp(9)
+            font.bold: stripBtn.checked
+        }
+        MouseArea {
+            id: stripMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: stripBtn.clicked()
+        }
+    }
+
+    // ── Automix control strip (Queue tab) ──────────────────────────────────
+    component AutomixBar: Rectangle {
+        id: automixBar
+        readonly property var ctl: typeof automix !== "undefined" ? automix : null
+        readonly property bool active: ctl !== null && ctl.enabled
+        readonly property bool mixing: active && ctl.state === "mixing"
+        visible: ctl !== null && libraryRoot.activeTab === "queue"
+        height: visible ? 34 : 0
+        color: active ? Design.UiTheme.blueDim : Design.UiTheme.panelInset
+        clip: true
+        objectName: "automixBar"
+
+        Rectangle {
+            anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.right: parent.right
+            height: 1; color: libraryRoot.borderMain
+        }
+        // Transition progress underline
+        Rectangle {
+            anchors.bottom: parent.bottom; anchors.left: parent.left
+            height: 2
+            width: automixBar.mixing ? parent.width * Math.max(0, Math.min(1, automixBar.ctl.mixProgress)) : 0
+            color: libraryRoot.accentBlue
+        }
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 10
+            anchors.rightMargin: 10
+            spacing: 6
+
+            AutomixStripButton {
+                objectName: "automixToggle"
+                label: automixBar.active ? "AUTOMIX AN" : "AUTOMIX"
+                checked: automixBar.active
+                onClicked: if (automixBar.ctl) automixBar.ctl.enabled = !automixBar.ctl.enabled
+            }
+
+            Text {
+                Layout.alignment: Qt.AlignVCenter
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                elide: Text.ElideRight
+                color: automixBar.active ? libraryRoot.accentBlueLt : libraryRoot.textDim
+                font.pixelSize: window.sp(9)
+                text: {
+                    var c = automixBar.ctl
+                    if (!c) return ""
+                    if (!c.enabled)
+                        return "Spielt die Queue automatisch mit Beat-Sync und Phrasen-Übergängen"
+                    var parts = [c.statusText]
+                    if (c.nextTitle.length > 0)
+                        parts.push("Nächster: " + c.nextTitle + (c.nextArtist.length > 0 ? " – " + c.nextArtist : ""))
+                    if (c.state === "playing" && c.secondsToMix > 0)
+                        parts.push("Mix in " + Math.ceil(c.secondsToMix) + " s")
+                    if (c.planText.length > 0)
+                        parts.push(c.planText)
+                    return parts.join("  ·  ")
+                }
+            }
+
+            Text {
+                Layout.alignment: Qt.AlignVCenter
+                text: "TAKTE"
+                color: libraryRoot.textDim
+                font.pixelSize: window.sp(8)
+                font.letterSpacing: 0.8
+            }
+            Repeater {
+                model: [8, 16, 32]
+                AutomixStripButton {
+                    required property int modelData
+                    label: String(modelData)
+                    checked: automixBar.ctl !== null && automixBar.ctl.transitionBars === modelData
+                    onClicked: if (automixBar.ctl) automixBar.ctl.transitionBars = modelData
+                }
+            }
+
+            AutomixStripButton {
+                objectName: "automixMixNow"
+                label: "▶ Mix jetzt"
+                enabled: automixBar.active && automixBar.ctl.state === "playing"
+                onClicked: if (automixBar.ctl) automixBar.ctl.mixNow()
+            }
+            AutomixStripButton {
+                objectName: "automixSkip"
+                label: "⏭ Überspringen"
+                enabled: automixBar.active && automixBar.ctl.nextTitle.length > 0 && !automixBar.mixing
+                onClicked: if (automixBar.ctl) automixBar.ctl.skipNext()
             }
         }
     }
@@ -3674,6 +3844,32 @@ Rectangle {
                                 }
                             }
                         }
+
+                        Rectangle {
+                            anchors.right: parent.right; anchors.rightMargin: 36
+                            anchors.bottom: parent.bottom; anchors.bottomMargin: 4
+                            width: 22; height: 22; radius: 0
+                            color: importPlaylistHover.containsMouse ? Design.UiTheme.panelRaised : Design.UiTheme.panelInset
+                            border.color: importPlaylistHover.containsMouse ? Design.UiTheme.borderHover : libraryRoot.borderSub
+                            border.width: 1
+
+                            Text {
+                                anchors.centerIn: parent; text: "\u2193"
+                                color: importPlaylistHover.containsMouse ? libraryRoot.textPrimary : libraryRoot.textSecond
+                                font.pixelSize: window.sp(12)
+                            }
+                            MouseArea {
+                                id: importPlaylistHover; anchors.fill: parent
+                                hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    importPlaylistFileDialog.parentId = ""
+                                    importPlaylistFileDialog.open()
+                                }
+                            }
+                            ToolTip.visible: importPlaylistHover.containsMouse
+                            ToolTip.delay: 500
+                            ToolTip.text: "Playlist importieren (M3U, M3U8, PLS, XSPF) oder Rekordbox-Sammlung (XML)"
+                        }
                     }
 
                     // ── Playlist tree ────────────────────────────────────────
@@ -3927,6 +4123,15 @@ Rectangle {
                         cursorIndex: libraryRoot.sidebarTopNavCount + libraryRoot.sidebarSmartCollCount + libraryRoot.visiblePlaylists.length + 1
                     }
 
+                    NavButton {
+                        id: navHealth
+                        objectName: "libraryNavHealth"
+                        tabKey: "health"
+                        btnIcon: "✚"
+                        btnLabel: "Sammlung prüfen"
+                        cursorIndex: libraryRoot.sidebarTopNavCount + libraryRoot.sidebarSmartCollCount + libraryRoot.visiblePlaylists.length + 2
+                    }
+
                     Item { width: parent.width; height: 12 }
                 }
             }
@@ -4175,6 +4380,7 @@ Rectangle {
                                     : libraryRoot.activeTab === "smartcoll"  ? "◈"
                                     : libraryRoot.activeTab === "files"      ? "≡"
                                     : libraryRoot.activeTab === "streaming"  ? "◎"
+                                    : libraryRoot.activeTab === "health"     ? "✚"
                                     : "⊕"
                                 color: libraryRoot.accentBlueLt
                                 font.pixelSize: window.sp(libraryRoot.touchMode ? 12 : 10)
@@ -4193,6 +4399,7 @@ Rectangle {
                                     : libraryRoot.activeTab === "smartcoll"  ? libraryRoot.currentSmartCollectionName
                                     : libraryRoot.activeTab === "files"      ? "File Browser"
                                     : libraryRoot.activeTab === "streaming"  ? "Streaming"
+                                    : libraryRoot.activeTab === "health"     ? "Sammlung prüfen"
                                     : "USB")
                             color: libraryRoot.textPrimary
                             font.pixelSize: window.sp(libraryRoot.touchMode ? 15 : 14)
@@ -4422,6 +4629,11 @@ Rectangle {
                             topPadding: 0; bottomPadding: 0
                             onTextEdited: libraryRoot.searchText = text
                             Component.onCompleted: text = libraryRoot.searchText
+                            ToolTip.visible: hovered && text.length === 0
+                            ToolTip.delay: 800
+                            ToolTip.text: "artist:  title:=  bpm:120-128  ~bpm:124  key:8A  ~key:8A  ~deck\n"
+                                        + "added:<7d  rating:>=4  color:rot  tag:  is:duplicate  is:missing  health:noinfo\n"
+                                        + "-ausschließen   a | b  oder   \"genaue phrase\""
                             background: Item {}
 
                             onActiveFocusChanged: {
@@ -5360,10 +5572,17 @@ Rectangle {
                         }
                     }
 
-                    AioLoadBar {
-                        id: varAioLoadBar
+                    AutomixBar {
+                        id: varAutomixBar
                         anchors.top: varlistActionBar.visible ? varlistActionBar.bottom
                                    : varlistHeader.visible ? varlistHeader.bottom : parent.top
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                    }
+
+                    AioLoadBar {
+                        id: varAioLoadBar
+                        anchors.top: varAutomixBar.bottom
                         anchors.left: parent.left
                         anchors.right: parent.right
                     }
@@ -6182,12 +6401,27 @@ Rectangle {
                 }
 
                 // ════════════════════════════════════════════════
+                // D2) COLLECTION HEALTH
+                // ════════════════════════════════════════════════
+                Design.CollectionHealthView {
+                    id: collectionHealthView
+                    objectName: "collectionHealthView"
+                    anchors.fill: parent
+                    visible: libraryRoot.activeTab === "health"
+                    database: typeof libraryDb !== "undefined" ? libraryDb : null
+                    analyzer: typeof libraryAnalyzer !== "undefined" ? libraryAnalyzer : null
+                    appWindow: window
+                    onShowRequested: query => libraryRoot.showHealthQuery(query)
+                }
+
+                // ════════════════════════════════════════════════
                 // E) PLACEHOLDER (Streaming)
                 // ════════════════════════════════════════════════
                 Rectangle {
                     anchors.fill: parent; color: libraryRoot.bgBase
                     visible: libraryRoot.activeTab !== "files" && libraryRoot.activeTab !== "library"
                              && libraryRoot.activeTab !== "playlist" && libraryRoot.activeTab !== "usb"
+                             && libraryRoot.activeTab !== "health"
                              && libraryRoot._varlistTabs.indexOf(libraryRoot.activeTab) < 0
 
                     Column {
@@ -6323,6 +6557,18 @@ Rectangle {
             onTriggered: {
                 if (libraryDb && libraryRoot.ctxTrackId)
                     libraryDb.removeTrackFromPlaylist(libraryRoot.currentPlaylistId, libraryRoot.ctxTrackId)
+            }
+        }
+        MenuItem {
+            objectName: "trackContextIgnoreHealth"
+            text: "Als in Ordnung markieren (" + libraryRoot.activeHealthCheck + ")"
+            visible: !trackContextMenu.externalTrack && libraryRoot.activeTab === "library"
+                     && libraryRoot.activeHealthCheck !== ""
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
+            onTriggered: {
+                if (libraryDb && libraryRoot.ctxTrackId)
+                    libraryDb.setHealthIssueIgnored(libraryRoot.ctxTrackId, libraryRoot.activeHealthCheck, true)
             }
         }
         MenuItem {
@@ -6535,6 +6781,26 @@ Rectangle {
                     { [playlistContextMenu.targetId]: true })
             }
         }
+        MenuItem {
+            text: "Exportieren…"
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
+            onTriggered: {
+                exportPlaylistFileDialog.playlistId = playlistContextMenu.targetId
+                exportPlaylistFileDialog.selectedFile = exportPlaylistFileDialog.currentFolder + "/"
+                    + encodeURIComponent(libraryRoot._playlistFileBaseName(playlistContextMenu.targetName)) + ".m3u8"
+                exportPlaylistFileDialog.open()
+            }
+        }
+        MenuItem {
+            text: "Hier importieren…"
+            contentItem: Text { text: parent.text; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11); leftPadding: 12 }
+            background: Rectangle { color: parent.highlighted ? Design.UiTheme.blueDim : "transparent" }
+            onTriggered: {
+                importPlaylistFileDialog.parentId = playlistContextMenu.targetId
+                importPlaylistFileDialog.open()
+            }
+        }
         MenuSeparator { contentItem: Rectangle { height: 1; color: libraryRoot.borderSub } }
         MenuItem {
             text: "Löschen"
@@ -6551,6 +6817,144 @@ Rectangle {
     // ════════════════════════════════════════════════════════════════════════
     // DIALOGS
     // ════════════════════════════════════════════════════════════════════════
+
+    function _playlistFileBaseName(name) {
+        var cleaned = String(name || "").replace(/[\\/:*?"<>|]+/g, "_").trim()
+        return cleaned.length > 0 ? cleaned : "Playlist"
+    }
+
+    function _showPlaylistFileResult(title, message, isError) {
+        playlistFileResultPopup.title = title
+        playlistFileResultPopup.message = message
+        playlistFileResultPopup.isError = isError
+        playlistFileResultPopup.open()
+    }
+
+    FileDialog {
+        id: exportPlaylistFileDialog
+        property string playlistId: ""
+        title: "Playlist exportieren"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "m3u8"
+        nameFilters: ["M3U8 (*.m3u8)", "M3U (*.m3u)", "PLS (*.pls)", "XSPF (*.xspf)"]
+        onAccepted: {
+            if (!libraryDb || !playlistId)
+                return
+            var error = libraryDb.exportPlaylistToFile(playlistId, selectedFile.toString())
+            if (error)
+                libraryRoot._showPlaylistFileResult("Export fehlgeschlagen", error, true)
+            else
+                libraryRoot._showPlaylistFileResult("Playlist exportiert",
+                    decodeURIComponent(selectedFile.toString().replace(/^file:\/\//, "")), false)
+        }
+    }
+
+    FileDialog {
+        id: importPlaylistFileDialog
+        property string parentId: ""
+        title: "Playlist importieren"
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["Playlists (*.m3u *.m3u8 *.pls *.xspf)", "Rekordbox-Sammlung (*.xml)", "Alle Dateien (*)"]
+        onAccepted: {
+            if (!libraryDb)
+                return
+            if (/\.xml$/i.test(selectedFile.toString())) {
+                if (!libraryDb.importRekordboxXml(selectedFile.toString()))
+                    libraryRoot._showPlaylistFileResult("Import fehlgeschlagen",
+                        "Es läuft bereits eine Bibliotheksaufgabe – bitte gleich nochmal versuchen.", true)
+                return
+            }
+            var result = libraryDb.importPlaylistFile(selectedFile.toString(), parentId)
+            if (!result.ok) {
+                libraryRoot._showPlaylistFileResult("Import fehlgeschlagen", result.error || "", true)
+                return
+            }
+            var missing = result.missing || []
+            var lines = [result.imported + " Tracks in \u201e" + result.name + "\u201c"]
+            if (result.added > 0)
+                lines.push(result.added + " neu zur Bibliothek hinzugefügt")
+            if (missing.length > 0) {
+                lines.push(missing.length + " Dateien nicht gefunden:")
+                for (var i = 0; i < Math.min(missing.length, 5); ++i)
+                    lines.push("  " + missing[i])
+                if (missing.length > 5)
+                    lines.push("  \u2026")
+            }
+            libraryRoot._showPlaylistFileResult("Playlist importiert", lines.join("\n"), false)
+            if (parentId)
+                libraryRoot.expandedPlaylists = Object.assign({}, libraryRoot.expandedPlaylists, { [parentId]: true })
+        }
+    }
+
+    function _rekordboxImportSummary(result) {
+        var lines = [result.tracks + " Tracks gelesen: " + result.added + " neu, " + result.updated + " ergänzt"]
+        if (result.cues > 0 || result.loops > 0)
+            lines.push(result.cues + " Hot Cues, " + result.loops + " Loops übernommen")
+        if (result.grids > 0)
+            lines.push(result.grids + " Beatgrids übernommen (gesperrt)")
+        if (result.playlists > 0)
+            lines.push(result.playlists + " Playlists/Ordner unter \u201eRekordbox\u201c")
+        if (result.missingFiles > 0)
+            lines.push(result.missingFiles + " Dateien nicht gefunden \u2013 \u201eSammlung prüfen\u201c hilft beim Wiederfinden")
+        return lines.join("\n")
+    }
+
+    Connections {
+        target: libraryDb
+        ignoreUnknownSignals: true
+        function onHealthTaskFinished(task, result) {
+            if (task !== "rekordbox")
+                return
+            if (result.ok)
+                libraryRoot._showPlaylistFileResult("Rekordbox importiert", libraryRoot._rekordboxImportSummary(result), false)
+            else
+                libraryRoot._showPlaylistFileResult("Import fehlgeschlagen", result.error || "", true)
+        }
+    }
+
+    Popup {
+        id: playlistFileResultPopup
+        property string title: ""
+        property string message: ""
+        property bool isError: false
+        modal: true; focus: true
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        width: 380
+        x: (parent.width  - width)  / 2
+        y: (parent.height - height) / 2
+        padding: 16
+        background: Rectangle { color: Design.UiTheme.panelRaised; border.color: libraryRoot.borderMain; border.width: 1 }
+
+        contentItem: Column {
+            spacing: 10
+            Text {
+                text: playlistFileResultPopup.title
+                color: playlistFileResultPopup.isError ? libraryRoot.accentRed : libraryRoot.textPrimary
+                font.pixelSize: window.sp(13); font.bold: true
+            }
+            Text {
+                width: parent.width
+                text: playlistFileResultPopup.message
+                color: libraryRoot.textSecond
+                font.pixelSize: window.sp(11)
+                wrapMode: Text.WrapAnywhere
+                maximumLineCount: 12
+                elide: Text.ElideRight
+            }
+            Rectangle {
+                anchors.right: parent.right
+                width: 72; height: 26
+                color: okResultHover.containsMouse ? Design.UiTheme.blueDim : Design.UiTheme.panelInset
+                border.color: libraryRoot.borderSub; border.width: 1
+                Text { anchors.centerIn: parent; text: "OK"; color: libraryRoot.textPrimary; font.pixelSize: window.sp(11) }
+                MouseArea {
+                    id: okResultHover; anchors.fill: parent
+                    hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                    onClicked: playlistFileResultPopup.close()
+                }
+            }
+        }
+    }
 
     // Create playlist / sub-crate dialog
     Popup {

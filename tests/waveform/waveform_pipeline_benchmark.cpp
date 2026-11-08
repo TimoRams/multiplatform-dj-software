@@ -301,6 +301,11 @@ int main(int argc, char** argv)
               << " spectral-frames=" << cached.spectral.size()
               << " overview-frames=" << cached.overview.size()
               << '\n';
+    if (environmentInt("BROCKDJ_WAVEFORM_BENCHMARK_PRINT_PARTS", 0, 0, 1) != 0) {
+        for (const auto& part : result->phrases)
+            std::cout << "part " << part.label.toStdString() << ' ' << part.startTime
+                      << ' ' << part.endTime << '\n';
+    }
 
     return playbackStats.diskReadsFromAudioThread == 0
             && playbackStats.decoderCallsFromAudioThread == 0

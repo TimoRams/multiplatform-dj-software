@@ -11,6 +11,7 @@
 
 class DjEngine;
 class LinkManager;
+class MidiClockController;
 namespace engine::sync { class SyncCoordinator; }
 
 class SamplerController final : public QObject {
@@ -31,6 +32,10 @@ class SamplerController final : public QObject {
     Q_PROPERTY(int sequencerActiveBank READ sequencerActiveBank NOTIFY playbackChanged)
     Q_PROPERTY(int sequencerPendingBank READ sequencerPendingBank NOTIFY playbackChanged)
     Q_PROPERTY(bool sequencerRunning READ sequencerRunning NOTIFY playbackChanged)
+    Q_PROPERTY(int sequencerFillEvery READ sequencerFillEvery WRITE setSequencerFillEvery NOTIFY changed)
+    Q_PROPERTY(int sequencerFillDensity READ sequencerFillDensity WRITE setSequencerFillDensity NOTIFY changed)
+    Q_PROPERTY(bool sequencerFillActive READ sequencerFillActive NOTIFY playbackChanged)
+    Q_PROPERTY(int sequencerRoll READ sequencerRoll WRITE setSequencerRoll NOTIFY changed)
     Q_PROPERTY(double internalBpm READ internalBpm WRITE setInternalBpm NOTIFY changed)
     Q_PROPERTY(QString clockSource READ clockSource NOTIFY changed)
     Q_PROPERTY(double bpm READ bpm NOTIFY changed)
@@ -84,6 +89,10 @@ public:
     int sequencerActiveBank() const { return m_audio.sequencerBank(); }
     int sequencerPendingBank() const { return m_audio.sequencerPendingBank(); }
     bool sequencerRunning() const { return m_audio.sequencerRunning(); }
+    int sequencerFillEvery() const { return m_fillEvery; }
+    int sequencerFillDensity() const { return m_fillDensity; }
+    bool sequencerFillActive() const { return m_audio.sequencerFillActive(); }
+    int sequencerRoll() const { return m_roll; }
     double internalBpm() const { return m_internalBpm; }
     QString clockSource() const { return m_clockSource; }
     double bpm() const { return m_clock.bpm; }
@@ -99,6 +108,10 @@ public:
     void setSequencerSwing(double swing);
     void setSequencerLength(int steps);
     void setInternalBpm(double bpm);
+    void setSequencerFillEvery(int bars);
+    void setSequencerFillDensity(int density);
+    void setSequencerRoll(int steps);
+    void attachMidiClock(MidiClockController* midiClock) { m_midiClock = midiClock; }
     void attachDecks(const std::array<DjEngine*, 4>& decks,
                      engine::sync::SyncCoordinator* sync, LinkManager* link);
     Q_INVOKABLE void trigger(int pad);
@@ -186,11 +199,14 @@ private:
     std::array<DjEngine*, 4> m_decks {};
     engine::sync::SyncCoordinator* m_sync = nullptr;
     LinkManager* m_link = nullptr;
+    MidiClockController* m_midiClock = nullptr;
+    std::uint64_t m_externalClockGeneration = 0;
     std::vector<QFutureWatcher<std::shared_ptr<Loaded>>*> m_jobs;
     QVariantMap m_fileInfo;
     std::vector<QFutureWatcher<QVariantMap>*> m_probes;
     std::uint64_t m_probeGeneration = 0;
     int m_bank = 0, m_selectedSlot = 0, m_quantize = 1;
+    int m_fillEvery = 0, m_fillDensity = 50, m_roll = 0;
     double m_gain = 0.72, m_sequencerSwing = 0, m_internalBpm = 120;
     bool m_sequencerEnabled = false;
     bool m_cue = false, m_stopped = false;

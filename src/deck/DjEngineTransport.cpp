@@ -6,6 +6,7 @@
 #include "audio/TimeStretchProcessor.h"
 #include "audio/cache/CachedPlaybackAudioSource.h"
 #include "deck/DeckTransport.h"
+#include "deck/PhraseCounter.h"
 #include "domain/BeatGridTiming.h"
 #include "app/SettingsManager.h"
 #include "library/CoverArtExtractor.h"
@@ -884,6 +885,8 @@ void DjEngine::ejectExternalSource(const QString& sourceId)
 void DjEngine::beginTrackLoad(
     QString rawPath, std::optional<ExternalTrackLoadSnapshot> external)
 {
+    // Any newer load supersedes a pending Instant Double.
+    m_instantDoubleSource.clear();
     if (m_hasTrack && isPlaying() && SettingsManager::getInstance().loadLock()) {
         m_trackLoadError = QStringLiteral("Load lock: stop this deck before loading another track");
         emit trackLoadErrorChanged();
@@ -1053,6 +1056,40 @@ void DjEngine::applyPreparedTrack(TrackLoadResult result)
 
     emit trackMetadataChanged();
     emit trackLoaded();
+
+    if (m_instantDoubleSource && result.generation == m_instantDoubleGeneration) {
+        const QPointer<DjEngine> source = m_instantDoubleSource;
+        m_instantDoubleSource.clear();
+        if (source && source->hasTrack())
+            applyInstantDouble(*source);
+    }
+}
+
+bool DjEngine::instantDoubleFrom(DjEngine* source)
+{
+    if (!source || source == this || !source->hasTrack() || source->trackFilePath().isEmpty())
+        return false;
+    const auto before = m_trackLoader.currentGeneration();
+    beginTrackLoad(source->trackFilePath());
+    const auto after = m_trackLoader.currentGeneration();
+    if (after == before)
+        return false;
+    m_instantDoubleSource = source;
+    m_instantDoubleGeneration = after;
+    return true;
+}
+
+void DjEngine::applyInstantDouble(DjEngine& source)
+{
+    setKeylock(source.keylock());
+    setKeySemitoneOffset(source.keySemitoneOffset());
+    if (!syncEnabled())
+        setTempoPercent(source.getTempoPercent());
+    const double length = m_transport->trackLengthSeconds();
+    if (length > 0.0)
+        setPositionInternal(source.getVisualPosition() / length, true);
+    if (source.isPlaying())
+        play();
 }
 
 void DjEngine::applyPreparedTrackVisuals(TrackVisualResult result)
@@ -1211,24 +1248,61 @@ QVariantMap DjEngine::beatDisplayInfo() const
     const auto grid = m_trackData->getBeatGridSnapshot();
     const double position = getPlayheadPositionAtomic();
     const double bpm = m_trackData->getBpm();
-    if (grid->size() >= 2) {
+    const bool elastic = grid->size() >= 2;
+    if (!elastic && (!std::isfinite(bpm) || bpm <= 0.0))
+        return {{QStringLiteral("valid"), false}};
+
+    const double rate = m_trackData->getSampleRate();
+    const double anchor = rate > 0.0 ? m_trackData->getFirstBeatSample() / rate : 0.0;
+    const auto beatAt = [&](double seconds) {
+        return elastic ? beatgrid::beatPosition(*grid, seconds, bpm) : (seconds - anchor) * bpm / 60.0;
+    };
+
+    int beatInBar = 1;
+    int barNumber = 1;
+    if (elastic) {
         const auto interval = beatgrid::intervalAt(*grid, position, bpm);
         const auto& marker = (*grid)[interval.index];
         const int extra = static_cast<int>(std::floor((position - interval.start) / interval.duration));
         const int beat = marker.beatInBar - 1 + extra;
-        return {{QStringLiteral("valid"), true},
-                {QStringLiteral("beatInBar"), (beat % 4 + 4) % 4 + 1},
-                {QStringLiteral("barNumber"), marker.barNumber
-                    + static_cast<int>(std::floor(static_cast<double>(beat) / 4.0))}};
+        beatInBar = (beat % 4 + 4) % 4 + 1;
+        barNumber = marker.barNumber + static_cast<int>(std::floor(static_cast<double>(beat) / 4.0));
+    } else {
+        const int beat = static_cast<int>(std::floor(beatAt(position)));
+        beatInBar = (beat % 4 + 4) % 4 + 1;
+        barNumber = static_cast<int>(std::floor(beat / 4.0)) + 1;
     }
-    if (!std::isfinite(bpm) || bpm <= 0.0)
-        return {{QStringLiteral("valid"), false}};
-    const double rate = m_trackData->getSampleRate();
-    const double anchor = rate > 0.0 ? m_trackData->getFirstBeatSample() / rate : 0.0;
-    const int beat = static_cast<int>(std::floor((position - anchor) * bpm / 60.0));
-    return {{QStringLiteral("valid"), true},
-            {QStringLiteral("beatInBar"), (beat % 4 + 4) % 4 + 1},
-            {QStringLiteral("barNumber"), static_cast<int>(std::floor(beat / 4.0)) + 1}};
+
+    const auto phrase = brockdj::phrase::fromBar(barNumber);
+    QVariantMap info {{QStringLiteral("valid"), true},
+                      {QStringLiteral("beatInBar"), beatInBar},
+                      {QStringLiteral("barNumber"), barNumber},
+                      {QStringLiteral("barInPhrase"), phrase.barInPhrase},
+                      {QStringLiteral("phraseNumber"), phrase.phraseNumber},
+                      {QStringLiteral("barsPerPhrase"), brockdj::phrase::kBarsPerPhrase}};
+
+    // Phrase analysis segments (intro/build/drop …): current label and bars to the next one.
+    std::vector<brockdj::phrase::SegmentStart> spans;
+    spans.reserve(static_cast<std::size_t>(m_currentSegments.size()));
+    for (const QVariant& value : m_currentSegments) {
+        const QVariantMap map = value.toMap();
+        spans.push_back({map.value(QStringLiteral("startTime")).toDouble(),
+                         map.value(QStringLiteral("endTime")).toDouble()});
+    }
+    const auto location = brockdj::phrase::locateSegment(spans, position);
+    const auto labelAt = [this](int index) {
+        return m_currentSegments.at(index).toMap().value(QStringLiteral("label")).toString();
+    };
+    info.insert(QStringLiteral("segmentLabel"), location.current >= 0 ? labelAt(location.current) : QString());
+    if (location.next >= 0) {
+        const double beats = beatAt(spans[static_cast<std::size_t>(location.next)].startSeconds) - beatAt(position);
+        info.insert(QStringLiteral("nextSegmentLabel"), labelAt(location.next));
+        info.insert(QStringLiteral("barsToNextSegment"), brockdj::phrase::barsUntil(beats));
+    } else {
+        info.insert(QStringLiteral("nextSegmentLabel"), QString());
+        info.insert(QStringLiteral("barsToNextSegment"), -1);
+    }
+    return info;
 }
 
 engine::sync::DeckSyncInputSnapshot DjEngine::buildSyncInputSnapshot() const

@@ -1,4 +1,5 @@
 #include "FeatureAnalysis.h"
+#include "analysis/SongParts.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <algorithm>
@@ -302,7 +303,7 @@ std::vector<TrackSegment> PhraseAnalyzer::analyze(juce::AudioFormatReader& reade
 
     extractFeatures(reader, blocks);
     normalizeAndLabel(blocks);
-    return smoothAndMergeSegments(blocks, durationSec);
+    return analysis::toSongParts(smoothAndMergeSegments(blocks, durationSec));
 }
 
 std::vector<TrackSegment> PhraseAnalyzer::analyze(const analysis::AnalysisFeatures& features,
@@ -358,8 +359,9 @@ std::vector<TrackSegment> PhraseAnalyzer::analyze(const analysis::AnalysisFeatur
             energy += features.rms[i];
         segment.confidence = static_cast<float>(std::clamp(energy / static_cast<double>(endFrame - startFrame), 0.0, 1.0));
     }
-    return segments;
+    return analysis::toSongParts(segments);
 }
+
 
 std::vector<PhraseAnalyzer::PhraseBlock> PhraseAnalyzer::buildBlocks(
     const std::vector<double>& beatTimestamps, double durationSec) const
@@ -459,23 +461,20 @@ void PhraseAnalyzer::normalizeAndLabel(std::vector<PhraseBlock>& blocks) const
         block.hasSignal = (block.overallNorm >= kSignalFloorNorm);
     }
 
-    for (auto& block : blocks) {
-        const float confidence = std::abs(block.overallNorm - 0.50f) * 1.35f
-            + std::abs(block.lowBandNorm - 0.50f) * 0.65f;
-        if (!block.hasSignal || block.overallNorm < 0.055f) {
-            block.label = QStringLiteral("SilenceOrOutro");
-        } else if (confidence < 0.42f) {
-            block.label = QStringLiteral("Unknown");
-        } else if (block.overallNorm > 0.68f && block.lowBandNorm > 0.52f) {
-            block.label = QStringLiteral("HighEnergy");
-        } else if (block.overallNorm < 0.28f || block.lowBandNorm < 0.22f) {
-            block.label = QStringLiteral("LowEnergy");
-        } else if (confidence >= 0.50f) {
-            block.label = QStringLiteral("MediumEnergy");
-        } else {
-            block.label = QStringLiteral("Unknown");
+    namespace st = brockdj::structure;
+    std::vector<st::BlockEnergy> energies;
+    energies.reserve(blocks.size());
+    for (const auto& block : blocks)
+        energies.push_back({block.overallNorm, block.lowBandNorm, block.hasSignal});
+    const auto levels = st::assignLevels(energies);
+    for (std::size_t i = 0; i < blocks.size(); ++i) {
+        switch (levels[i]) {
+        case st::Level::Silence: blocks[i].label = QStringLiteral("SilenceOrOutro"); break;
+        case st::Level::Low: blocks[i].label = QStringLiteral("LowEnergy"); break;
+        case st::Level::Mid: blocks[i].label = QStringLiteral("MediumEnergy"); break;
+        case st::Level::High: blocks[i].label = QStringLiteral("HighEnergy"); break;
         }
-        block.colorHex = colorForLabel(block.label);
+        blocks[i].colorHex = colorForLabel(blocks[i].label);
     }
 }
 

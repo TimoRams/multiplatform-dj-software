@@ -21,10 +21,14 @@ Item {
     property bool hotCueHoldHadCue: false
     property bool hotCueHoldReturnOnRelease: false
 
-    readonly property var tabs: hotCueOnly ? ["HOT CUE"] : ["HOT CUE", "PAD FX", "BEATJUMP", "SAMPLER"]
+    readonly property var tabs: hotCueOnly ? ["HOT CUE"] : ["HOT CUE", "PAD FX", "BEATJUMP", "SAMPLER", "BEAT LOOP", "SLIP LOOP"]
     readonly property real tabBarHeight: 28
     readonly property real padsContentHeight: Math.max(0, root.height - tabBarHeight - 9)
     readonly property var beatJumpPads: [-16, -8, -4, -2, 2, 4, 8, 16]
+    // CDJ-3000 BEAT LOOP / SLIP LOOP lengths in beats (mirrors the C++ router).
+    readonly property var beatLoopPads: [0.25, 0.5, 1, 2, 4, 8, 16, 32]
+    readonly property var slipLoopPads: [1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4]
+    property int slipLoopHeld: -1
     readonly property bool usesSharedPadRouter:
         (deckId === "deckA" || deckId === "deckB")
         && typeof midiManager !== "undefined" && midiManager
@@ -56,7 +60,9 @@ Item {
             : midiManager.deckAPadMode
         // Key Shift is the shifted SAMPLER hardware bank, represented by the
         // fourth tab even though it has its own semantic mode value.
-        var nextTab = nextMode === 4 ? 3 : nextMode
+        // BEAT LOOP (5) and SLIP LOOP (6) follow Key Shift's slot, so their
+        // tabs sit one below their mode value.
+        var nextTab = nextMode === 4 ? 3 : nextMode > 4 ? nextMode - 1 : nextMode
         if (nextTab >= 0 && nextTab < root.tabs.length && root.activeTab !== nextTab)
             root.activeTab = nextTab
     }
@@ -66,6 +72,7 @@ Item {
             return
         root.padFxMomentaryHeld = midiManager.performancePadFxMomentary(root.deckId)
         root.padFxActiveToggle = midiManager.performancePadFxToggle(root.deckId)
+        root.slipLoopHeld = midiManager.performanceSlipLoopPad(root.deckId)
     }
 
     function selectPadPage(index) {
@@ -73,7 +80,7 @@ Item {
             return
         root.activeTab = index
         if (root.usesSharedPadRouter)
-            midiManager.selectPerformancePadMode(root.deckId, index)
+            midiManager.selectPerformancePadMode(root.deckId, index >= 4 ? index + 1 : index)
     }
 
     Component.onCompleted: {
@@ -119,8 +126,11 @@ Item {
     onActiveTabChanged: {
         if (root.usesSharedPadRouter)
             root.syncSharedPadState()
-        else
+        else {
             root.padFxClearAll()
+            if (root.activeTab !== 5)
+                root.releaseLocalSlipLoop()
+        }
     }
     onHotCueOnlyChanged: {
         if (hotCueOnly)
@@ -248,6 +258,26 @@ Item {
     readonly property bool isKeyShiftSelectionAvailable:
         root.keyShiftMode && root.engine && root.engine.keySemitoneOffset !== undefined
 
+    function loopLengthLabel(beats) {
+        if (beats >= 1)
+            return beats.toString()
+        return "1/" + Math.round(1 / beats)
+    }
+
+    function beatLoopPadActive(index) {
+        if (!root.engine || !root.engine.loopActive)
+            return false
+        const beats = root.beatLoopPads[index]
+        return Math.abs(root.engine.loopLengthBeats - beats) <= Math.max(0.01, beats * 0.03)
+    }
+
+    function releaseLocalSlipLoop() {
+        if (root.slipLoopHeld < 0)
+            return
+        root.slipLoopHeld = -1
+        if (root.engine) root.engine.endSlipLoop()
+    }
+
     function doBeatJump(beats) {
         if (!root.engine) return
         root.engine.beatJump(beats)
@@ -311,6 +341,12 @@ Item {
 
         if (root.activeTab === 2)
             root.doBeatJump(root.beatJumpPads[index])
+        else if (root.activeTab === 4)
+            root.engine.setBeatLoop(root.beatLoopPads[index])
+        else if (root.activeTab === 5) {
+            root.slipLoopHeld = index
+            root.engine.beginSlipLoop(root.slipLoopPads[index])
+        }
     }
 
     function endPadPress(index) {
@@ -335,6 +371,12 @@ Item {
                 }
             }
             root.clearHotCueHoldState()
+            return
+        }
+
+        if (root.activeTab === 5) {
+            if (root.slipLoopHeld === index)
+                root.releaseLocalSlipLoop()
             return
         }
 
@@ -495,6 +537,8 @@ Item {
                         readonly property bool isBeatJumpTab: root.activeTab === 2
                         readonly property bool isKeyShiftTab: root.activeTab === 3 && root.keyShiftMode
                         readonly property bool isSamplerTab:  root.activeTab === 3 && !isKeyShiftTab
+                        readonly property bool isBeatLoopTab: root.activeTab === 4
+                        readonly property bool isSlipLoopTab: root.activeTab === 5
                         readonly property bool isCuePlaybackTab: isHotCueTab
                         readonly property var sample: root.sampleEntries[index] || ({})
                         readonly property string kind:        root.padKind(index)
@@ -512,6 +556,8 @@ Item {
                             if (isSamplerTab && sample.color) return sample.color
                             if (padSet)        return root.padColor(index)
                             if (isBeatJumpTab) return UiTheme.cue
+                            if (isBeatLoopTab) return UiTheme.play
+                            if (isSlipLoopTab) return UiTheme.sync
                             if (isPadFxTab)    return root.padFxDefs[index].accent
                             return root.accentColor
                         }
@@ -519,7 +565,10 @@ Item {
                             || (isCuePlaybackTab && root.hotCueHoldPressedIndex === index)
                         readonly property bool padActive: padHeld || padFxLit || (isSamplerTab && (sample.state === "PLAYING" || sample.state === "QUEUED"))
                             || (isKeyShiftTab && root.keyShiftPadSelected(index))
-                        readonly property bool populated: padSet || isPadFxTab || isBeatJumpTab || isKeyShiftTab || (isSamplerTab && !!sample.loaded)
+                            || (isBeatLoopTab && root.beatLoopPadActive(index))
+                            || (isSlipLoopTab && root.slipLoopHeld === index)
+                        readonly property bool populated: padSet || isPadFxTab || isBeatJumpTab || isKeyShiftTab
+                            || isBeatLoopTab || isSlipLoopTab || (isSamplerTab && !!sample.loaded)
 
                         radius: 0
                         color: UiTheme.padBackground(padAccent, populated, padActive, padMouse.containsMouse)
@@ -583,6 +632,8 @@ Item {
                                 if (isSamplerTab)  return sample.name || "EMPTY"
                                 if (isBeatJumpTab) return root.beatJumpLabel(index)
                                 if (isPadFxTab)    return root.padFxDefs[index].name
+                                if (isBeatLoopTab) return root.loopLengthLabel(root.beatLoopPads[index])
+                                if (isSlipLoopTab) return root.loopLengthLabel(root.slipLoopPads[index])
                                 return "—"
                             }
                             color: populated || padActive ? UiTheme.textPrimary : UiTheme.textSecondary

@@ -10,6 +10,7 @@
 #include "fx/FxTypes.h"
 
 #include <QObject>
+#include <QPointer>
 #include <QImage>
 #include <QString>
 #include <QStringList>
@@ -232,6 +233,15 @@ public:
     Q_INVOKABLE void setLoop4Beats();
     Q_INVOKABLE void toggleLoop4Beats();
     Q_INVOKABLE void toggleLoopThreeQuarter();
+    // BEAT LOOP pads: an N-beat loop from the (quantized) playhead. Pressing
+    // the length that is already looping exits it; another length keeps the
+    // loop-in point and resizes the loop.
+    Q_INVOKABLE void setBeatLoop(double beats);
+    // SLIP LOOP / loop roll: holds an N-beat loop with slip engaged while the
+    // pad is held; on release playback resumes where it would have been.
+    Q_INVOKABLE void beginSlipLoop(double beats);
+    Q_INVOKABLE void endSlipLoop();
+    [[nodiscard]] bool slipLoopActive() const { return m_slipLoopActive; }
     Q_INVOKABLE void halveLoopLength();
     Q_INVOKABLE void doubleLoopLength();
     Q_INVOKABLE void clearLoop();
@@ -461,6 +471,16 @@ public slots:
     // toggle. Absolute, not additive — setting it again replaces the offset.
     [[nodiscard]] double keySemitoneOffset() const { return m_keySemitoneOffset; }
     Q_INVOKABLE void setKeySemitoneOffset(double semitones);
+    // Pitch the deck currently applies to its track (Key Shift + varispeed).
+    [[nodiscard]] double audiblePitchSemitones() const;
+    // KEY SYNC: engages keylock and sets the smallest Key Shift that makes
+    // this deck harmonically compatible with `target`. Returns false (and
+    // changes nothing) when either key is unknown.
+    Q_INVOKABLE bool syncKeyTo(DjEngine* target);
+    // INSTANT DOUBLES: loads `source`'s track and, once loaded, mirrors its
+    // playhead, tempo, keylock, Key Shift and play state. Returns false when
+    // the load could not start (no source track, load lock, same deck).
+    Q_INVOKABLE bool instantDoubleFrom(DjEngine* source);
 
     // FX chain
     // Color FX (Sound Color) slot
@@ -579,6 +599,7 @@ private:
     void resetTrackLoadState();
     void publishCombinedWaveformDemand();
     void setPositionInternal(double progress, bool resetSlipPosition);
+    void applyInstantDouble(DjEngine& source);
     void beginExternalCache(AudioCacheHandle handle);
     void updateExternalCache();
     void resetExternalCache();
@@ -698,6 +719,12 @@ private:
     std::atomic<double> m_fastSearchPublishedPositionSeconds { 0.0 };
     double m_fastSearchPositionSeconds = 0.0;
 
+    bool m_slipLoopActive = false;
+    QPointer<DjEngine> m_instantDoubleSource;
+    std::uint64_t m_instantDoubleGeneration = 0;
+    double m_beatLoopRequestedBeats = 0.0;
+    double m_beatLoopOutSec = -1.0;
+    bool m_slipLoopRestoreSlip = false;
     bool m_vinylBrakeActive = false;
     bool m_echoOutActive    = false;
     bool m_backspinActive   = false;

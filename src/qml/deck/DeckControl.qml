@@ -34,6 +34,21 @@ Item {
     property string _currentBpm:    ""
     readonly property bool linkAvailable: (typeof linkManager !== "undefined" && linkManager !== null && linkManager.enabled)
     readonly property bool linkMode: deck.hostWindow !== null && deck.hostWindow.linkedDeckName === deck.deckName
+    // KEY SYNC partner: the sync master, else a playing deck, else any loaded
+    // deck with an analysed key.
+    function keySyncTarget() {
+        const decks = []
+        if (typeof deckA !== "undefined" && deckA) decks.push(deckA)
+        if (typeof deckB !== "undefined" && deckB) decks.push(deckB)
+        if (typeof deckC !== "undefined" && deckC) decks.push(deckC)
+        if (typeof deckD !== "undefined" && deckD) decks.push(deckD)
+        const candidates = decks.filter(d => d !== deck.engine && d.hasTrack && d.trackKey)
+        return candidates.find(d => d.syncMaster)
+            || candidates.find(d => d.isPlaying)
+            || candidates[0]
+            || null
+    }
+
     readonly property bool sameTrackDoubleWarning: {
         if (!deck.engine || !deck.engine.hasTrack || !deck.engine.isPlaying || !deck.engine.trackFilePath)
             return false
@@ -926,6 +941,22 @@ Item {
                             fbAccent: deck.accent
                             fbActiveText: deck.accent
                             onClicked: { if (deck.engine) deck.engine.keylock = !deck.engine.keylock }
+                        }
+                        FlatBtn {
+                            objectName: "deckKeySyncButton"
+                            btnText: "KEY"
+                            Layout.preferredWidth: deck.wBtn
+                            Layout.minimumWidth: deck.wBtn
+                            Layout.maximumWidth: deck.wBtn
+                            fbActive: deck.engine ? Math.abs(deck.engine.keySemitoneOffset) > 0.001 : false
+                            fbAccent: UiTheme.sync
+                            fbActiveText: UiTheme.sync
+                            // KEY SYNC to the master deck; right-click resets Key Shift.
+                            onClicked: {
+                                const target = deck.keySyncTarget()
+                                if (deck.engine && target) deck.engine.syncKeyTo(target)
+                            }
+                            onRightClicked: { if (deck.engine) deck.engine.setKeySemitoneOffset(0) }
                         }
                         FlatBtn {
                             btnText: "SLIP"

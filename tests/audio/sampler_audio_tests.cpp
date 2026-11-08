@@ -178,6 +178,57 @@ int main() {
     }
 
     {
+        bool deterministic = true, fullOnLastStep = true;
+        int hits = 0;
+        for (int bar = 0; bar < 2000; ++bar) {
+            deterministic &= SamplerAudioEngine::fillVelocity(bar, 1, 3, 70, 100)
+                == SamplerAudioEngine::fillVelocity(bar, 1, 3, 70, 100);
+            fullOnLastStep &= SamplerAudioEngine::fillVelocity(bar, 3, bar % 8, 100, 90) > 0;
+            hits += SamplerAudioEngine::fillVelocity(bar, 0, 2, 50, 100) > 0;
+        }
+        require(deterministic, "fill decisions are deterministic per bar, step and track");
+        require(fullOnLastStep, "full density always fills the last sixteenth before the downbeat");
+        require(hits > 300 && hits < 500, "fill density scales the hit probability");
+        require(SamplerAudioEngine::fillVelocity(5, 3, 0, 0, 127) == 0
+            && SamplerAudioEngine::fillVelocity(5, 3, 0, 100, 0) == 0,
+            "fills stay silent without density or on empty tracks");
+        require(SamplerAudioEngine::fillVelocity(7, 3, 0, 100, 100) <= 100,
+            "fill hits never exceed the track's own peak velocity");
+
+        auto positionAfterStep = [](int roll, int fillEvery, int targetStep, bool* fillActive) {
+            SamplerAudioEngine sequencer;
+            sequencer.prepare(128, 48000);
+            sequencer.install(0, sample(false));
+            sequencer.publishClock({120, 0, 0, 40});
+            sequencer.setSequencerPattern(0, 0, 1u << 0);
+            sequencer.setSequencerFill(fillEvery, 100);
+            sequencer.setSequencerRoll(roll);
+            sequencer.setSequencerEnabled(true);
+            juce::AudioBuffer<float> bus(2, 128), phones(2, 128);
+            int frames = 0;
+            while (frames < targetStep * 6000 + 256) {
+                bus.clear(); phones.clear();
+                sequencer.render(bus, phones, 128, frames / 48000.0);
+                frames += 128;
+            }
+            if (fillActive) *fillActive = sequencer.sequencerFillActive();
+            const double position = sequencer.playback(0).positionSeconds;
+            sequencer.setSequencerEnabled(false);
+            sequencer.release();
+            return position;
+        };
+        require(positionAfterStep(0, 0, 2, nullptr) > 0.2,
+            "without roll an empty step leaves the first hit ringing");
+        require(positionAfterStep(2, 0, 2, nullptr) < 0.05,
+            "a two-step roll repeats the captured hit");
+        bool fillActive = false;
+        require(positionAfterStep(0, 0, 15, &fillActive) > 1.5 && !fillActive,
+            "without fills the last beat stays empty");
+        require(positionAfterStep(0, 1, 15, &fillActive) < 0.05 && fillActive,
+            "an auto-fill adds a hit in the last beat of the bar");
+    }
+
+    {
         SamplerAudioEngine sequencer;
         sequencer.prepare(2048, 48000);
         sequencer.setGain(1);

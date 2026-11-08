@@ -96,6 +96,8 @@ public:
     Q_INVOKABLE void setFilterGenre(const QString& v);
     Q_INVOKABLE void setFilterRatingMin(int v);
     Q_INVOKABLE void setFilterEnergyMin(int v);
+    // Keys/BPMs of loaded decks, used by the `~deck` search term.
+    Q_INVOKABLE void setSearchDeckContext(const QStringList& keys, const QVariantList& bpms);
     Q_INVOKABLE void applyAioBrowseFilter(const QString& field, const QString& value,
                                           const QStringList& keys = {});
     Q_INVOKABLE QString filePathAtRow(int row) const;
@@ -123,6 +125,7 @@ signals:
 
 private:
     QString sortColumnSql() const;
+    void requestPage(bool loosenSearch);
     bool aioBrowseFiltersEqual(const QString& field, const QString& value,
                                const QStringList& keys) const;
     void clearAioBrowseFilterFields();
@@ -145,4 +148,8 @@ private:
     QString m_filterGenre;
     int     m_filterRatingMin = 0;
     int     m_filterEnergyMin = 0;
+    QStringList m_searchDeckKeys;
+    QList<double> m_searchDeckBpms;
+    bool m_searchCanLoosen = false;
+    bool m_pageIsLoosened = false;
 };

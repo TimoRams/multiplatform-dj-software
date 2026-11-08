@@ -51,7 +51,9 @@ enum class MidiPadMode {
     PadFx,
     BeatJump,
     Sampler,
-    KeyShift
+    KeyShift,
+    BeatLoop, // UI tab: 1/4 … 32-beat loops (CDJ-3000 BEAT LOOP)
+    SlipLoop  // UI tab: momentary loop roll with slip (CDJ-3000 SLIP LOOP)
 };
 
 // Key Shift's three fixed, non-overlapping 8-pad ranges. PAGE navigates
@@ -142,6 +144,8 @@ public:
     Q_INVOKABLE bool consumePerformancePadPlayLatch(const QString& deckId);
     Q_INVOKABLE int performancePadFxMomentary(const QString& deckId) const;
     Q_INVOKABLE int performancePadFxToggle(const QString& deckId) const;
+    // Pad currently holding a SLIP LOOP roll, or -1.
+    Q_INVOKABLE int performanceSlipLoopPad(const QString& deckId) const;
 
     Q_INVOKABLE bool isMappingInverted(const QString& paramId) const;
     Q_INVOKABLE void setMappingInverted(const QString& paramId, bool inverted);
@@ -275,6 +279,8 @@ private:
     int m_deckBPadFxMomentary = -1;
     int m_deckAPadFxToggle = -1;
     int m_deckBPadFxToggle = -1;
+    int m_deckASlipLoopPad = -1;
+    int m_deckBSlipLoopPad = -1;
     struct HotCueHoldState {
         int padIndex = -1;
         double returnPositionSeconds = 0.0;

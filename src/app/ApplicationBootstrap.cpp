@@ -1,6 +1,9 @@
 #include "ApplicationBootstrap.h"
 #include "ApplicationLifecycle.h"
 #include "audio/SamplerController.h"
+#include "app/AutomixController.h"
+#include "app/MidiClockController.h"
+#include "app/MixTracklistController.h"
 #include "platform/PosixSignalHandler.h"
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
@@ -360,7 +363,14 @@ int runApplication(int argc, char *argv[])
     PosixSignalHandler posixSignals;
     if (posixSignals.initialize()) {
         QObject::connect(&posixSignals, &PosixSignalHandler::shutdownRequested,
-                         &app, &QCoreApplication::quit, Qt::QueuedConnection);
+                         &app, [] {
+            // main.qml rejects onClosing to show the interactive exit prompt, which
+            // would cancel Qt 6's quit(). SIGINT/SIGTERM must terminate without a
+            // prompt; ordered teardown still runs in shutdownApplication().
+            for (QWindow* window : QGuiApplication::topLevelWindows())
+                window->setProperty("allowDirectClose", true);
+            QCoreApplication::quit();
+        }, Qt::QueuedConnection);
     } else {
         qWarning() << "[startup] POSIX signal integration unavailable:"
                    << posixSignals.errorString();
@@ -807,11 +817,21 @@ int runApplication(int argc, char *argv[])
                              });
             ApplicationLifecycle::setQmlContextProperty(engine, QmlContextProperty::SetRecorder,
                                                        &runtime.audioEngine->recorder());
+            runtime.mixTracklist = std::make_unique<MixTracklistController>(
+                runtime.audioEngine->recorder(),
+                std::array<DjEngine*, 4> {runtime.deckA.get(), runtime.deckB.get(),
+                                          runtime.deckC.get(), runtime.deckD.get()},
+                &settingsManager);
+            ApplicationLifecycle::setQmlContextProperty(engine, QmlContextProperty::MixTracklist,
+                                                       runtime.mixTracklist.get());
             runtime.sampler = std::make_unique<SamplerController>(runtime.audioEngine->sampler(),
                 *runtime.controlClock, settingsManager.getConfigDirectoryPath() + "/Sampler", &app);
             runtime.sampler->attachDecks({runtime.deckA.get(), runtime.deckB.get(), runtime.deckC.get(), runtime.deckD.get()},
                                          runtime.syncCoordinator.get(), runtime.linkManager.get());
             ApplicationLifecycle::setQmlContextProperty(engine, QmlContextProperty::Sampler, runtime.sampler.get());
+            runtime.midiClock = std::make_unique<MidiClockController>(&settingsManager);
+            runtime.sampler->attachMidiClock(runtime.midiClock.get());
+            ApplicationLifecycle::setQmlContextProperty(engine, QmlContextProperty::MidiClock, runtime.midiClock.get());
             if (runtime.midiManager) runtime.midiManager->connectSampler(runtime.sampler.get());
             QObject::connect(runtime.parameterStore.get(), &ParameterStore::parameterChanged, &app,
                              [&runtime](const QString& id, float value) {
@@ -839,6 +859,11 @@ int runApplication(int argc, char *argv[])
                 engine, QmlContextProperty::LibraryPreview, runtime.libraryPreviewPlayer.get());
             runtime.mixerControl->setDecks(runtime.deckA.get(), runtime.deckB.get(),
                                            runtime.deckC.get(), runtime.deckD.get());
+            runtime.automix = std::make_unique<AutomixController>();
+            runtime.automix->attach(runtime.deckA.get(), runtime.deckB.get(), runtime.mixerControl.get(),
+                                    runtime.libraryDb.get(), &settingsManager);
+            ApplicationLifecycle::setQmlContextProperty(engine, QmlContextProperty::Automix,
+                                                       runtime.automix.get());
 
             // Register the source player before opening the hardware. In
             // particular, JACK may not fully activate a callback that is added
